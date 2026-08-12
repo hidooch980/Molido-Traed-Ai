@@ -103,7 +103,7 @@ export default function Shell({
 
         <div className="flex-1" />
 
-        <span className="pill hidden lg:inline-flex" style={{ color: "var(--ink-3)" }}>
+        <span className="pill hidden md:inline-flex" style={{ color: "var(--ink-3)" }}>
           {t("app.phase")}
         </span>
 
@@ -174,7 +174,25 @@ export default function Shell({
           </p>
         </nav>
 
-        <main className="flex-1 min-w-0 p-3 md:p-5 overflow-y-auto">{children}</main>
+        <div className="flex-1 min-w-0 flex flex-col overflow-y-auto">
+          <main className="flex-1 p-3 md:p-5">{children}</main>
+
+          {/* Build stamp. Deliberately always visible and never breakpoint-hidden:
+              its only job is to answer "did my deploy land?", and it cannot do
+              that from behind a media query. */}
+          <footer
+            className="px-3 md:px-5 py-2.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[0.6875rem] ink-3"
+            style={{ borderTop: "1px solid var(--border)" }}
+          >
+            <span className="font-semibold">MolidoTrade AI</span>
+            <span>{t("app.phase")}</span>
+            <span className="num" title="build timestamp (UTC)">
+              build {process.env.NEXT_PUBLIC_BUILD || "dev"}
+            </span>
+            <span className="flex-1" />
+            <span>{t("app.noExecution")}</span>
+          </footer>
+        </div>
       </div>
     </div>
   );

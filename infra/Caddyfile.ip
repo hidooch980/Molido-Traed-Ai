@@ -37,6 +37,11 @@
 	# }
 
 	handle {
+		# Server-rendered HTML must not be cached by the browser: every page is
+		# dynamic and a stale shell makes a deployed change look like it never
+		# happened. Next.js already fingerprints its JS and CSS, so those stay
+		# cacheable and only the shell is revalidated.
+		header Cache-Control "no-cache, must-revalidate"
 		reverse_proxy web:3000
 	}
 }

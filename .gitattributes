@@ -1,0 +1,5 @@
+# Shell scripts must keep LF endings: a CRLF shebang is not executable on
+# Linux, and the failure message ("bash: No such file or directory") points
+# nowhere near the cause.
+*.sh text eol=lf
+Dockerfile text eol=lf

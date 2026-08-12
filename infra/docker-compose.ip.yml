@@ -19,3 +19,8 @@ services:
       - ./Caddyfile.ip:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
       - caddy-config:/config
+
+  web:
+    build:
+      args:
+        BUILD_STAMP: ${BUILD_STAMP:-unset}

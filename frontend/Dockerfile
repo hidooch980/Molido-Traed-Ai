@@ -13,6 +13,11 @@ COPY . .
 # Changing the API URL therefore means a rebuild, not just a restart.
 ARG NEXT_PUBLIC_API_URL=http://api:8000
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+# Passed in by compose so the running build is identifiable in the UI. Computing
+# it inside next.config would be evaluated per build too, but an explicit arg is
+# visible in the deploy command and cannot be silently cached away by a layer.
+ARG BUILD_STAMP=dev
+ENV NEXT_PUBLIC_BUILD=$BUILD_STAMP
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN npm run build
 

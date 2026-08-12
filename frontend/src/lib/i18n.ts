@@ -23,7 +23,8 @@ type Dictionary = Record<string, string>;
 
 const en: Dictionary = {
   "app.tagline": "Trading intelligence, risk and execution",
-  "app.phase": "phase 11 / 53",
+  "app.phase": "phase 20 / 53",
+  "app.noExecution": "no execution path built — nothing here places orders",
 
   "nav.overview": "Overview",
   "nav.market": "Market",
@@ -339,7 +340,8 @@ const en: Dictionary = {
 
 const fa: Dictionary = {
   "app.tagline": "هوش معاملاتی، ریسک و اجرا",
-  "app.phase": "فاز ۱۱ از ۵۳",
+  "app.phase": "فاز ۲۰ از ۵۳",
+  "app.noExecution": "مسیر اجرا ساخته نشده — هیچ چیز اینجا سفارش نمی‌گذارد",
 
   "nav.overview": "نمای کلی",
   "nav.market": "بازار",
