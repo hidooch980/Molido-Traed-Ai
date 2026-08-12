@@ -7,11 +7,12 @@ the dashboard all pass through the same gate, without inventing a session
 system nothing uses yet.
 
 **Read stays open while nothing mutates.** `MOLIDO_REQUIRE_AUTH` defaults to
-false, so the current read-only deployment keeps working. The moment a route
-mutates state — the first order endpoint, the first broker credential — that
-flag must be flipped and the route must require EXECUTE. `require(...)` is
-written so a protected route cannot accidentally be reachable without a key:
-the check is on the dependency, not on a caller remembering to call it.
+false, so the current read-only public deployment keeps working. The moment a
+route mutates state — the first order endpoint, the first broker credential —
+that flag must be on and the route must require EXECUTE. That is not left to
+memory: `app.api.guard` walks the router table at import and refuses to start
+the application if any mutating route is reachable without a permission, so
+the openness above is bounded by a check rather than by good intentions.
 
 **Tenant isolation is carried, not assumed.** The resolved principal carries
 its tenant id, and any route touching tenant-scoped data must filter on it
@@ -28,6 +29,7 @@ from fastapi import Depends, Header
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.api.guard import PERMISSION_ATTR
 from app.core.config import get_settings
 from app.core.enums import Permission, UserRole
 from app.core.errors import MolidoError
@@ -140,10 +142,19 @@ def require(permission: Permission):
 
     Attaching the check to the dependency rather than to route code means a new
     protected endpoint cannot forget it — the permission is part of the
-    signature.
+    signature. `app.api.guard` then reads the stamped marker to prove, at
+    startup, that no mutating route was declared without one.
     """
 
     def dependency(principal: Principal = Depends(resolve_principal)) -> Principal:
+        # Anything beyond reading must be attributable to someone. ANONYMOUS
+        # holds READ alone, so today this branch is unreachable — it exists so
+        # that widening the anonymous principal later cannot quietly open an
+        # unauthenticated path to simulation or execution.
+        if permission is not Permission.READ and not principal.authenticated:
+            raise AuthenticationError(
+                f"The {permission.value} permission requires an authenticated API key."
+            )
         if not principal.can(permission):
             raise AuthorizationError(
                 f"This action requires the {permission.value} permission.",
@@ -152,4 +163,5 @@ def require(permission: Permission):
             )
         return principal
 
+    setattr(dependency, PERMISSION_ATTR, permission)
     return dependency

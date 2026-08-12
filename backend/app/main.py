@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app import __version__
+from app.api.guard import assert_execution_gate
 from app.api.v1 import api_router
 from app.api.v1.health import router as health_router
 from app.core.config import get_settings
@@ -71,6 +72,10 @@ async def domain_error_handler(_: Request, exc: MolidoError) -> JSONResponse:
 
 app.include_router(health_router)
 app.include_router(api_router)
+
+# Checked at import, not at first request: a hole that only appears under load
+# is a hole that ships. See app/api/guard.py for what this refuses to allow.
+assert_execution_gate(app, require_auth=get_settings().require_auth)
 
 
 @app.get("/", include_in_schema=False)

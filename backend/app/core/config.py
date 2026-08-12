@@ -43,8 +43,10 @@ class Settings(BaseSettings):
     ingest_backoff_base_seconds: float = 1.0
     ingest_chunk_days: int = 30
 
-    # Security. Off by default while every route is read-only; the first
-    # mutating endpoint must flip this on and keep it on.
+    # Security. Off by default while every route is read-only, which keeps the
+    # public dashboard reachable. This is not an honour system: app.api.guard
+    # refuses to start the application if an execute route exists while it is
+    # false, so the first execution endpoint cannot ship without it.
     require_auth: bool = False
     rate_limit_per_minute: int = 120
 
