@@ -1,0 +1,145 @@
+# Production stack for a single VPS.
+#
+#   caddy → web (Next.js) and api (FastAPI)
+#   collector → the long-running data-gathering worker
+#   postgres (TimescaleDB) + redis
+#
+# Postgres and Redis publish **no host ports**: they are reachable only on the
+# compose network. A database exposed on a public IP with a weak password is
+# the single most common way a VPS gets taken over, and there is no reason to
+# expose them — every client lives in this file.
+#
+#   docker compose -f infra/docker-compose.prod.yml --env-file infra/.env.prod up -d
+
+name: molidotrade
+
+x-backend-env: &backend-env
+  MOLIDO_ENV: production
+  MOLIDO_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+  MOLIDO_REDIS_URL: redis://redis:6379/0
+  MOLIDO_LOG_LEVEL: ${MOLIDO_LOG_LEVEL:-INFO}
+  MOLIDO_LOG_JSON: "true"
+  MOLIDO_MIN_QUALITY_SCORE: ${MOLIDO_MIN_QUALITY_SCORE:-0.80}
+  MOLIDO_COLLECTOR_PROVIDER: ${MOLIDO_COLLECTOR_PROVIDER:-yfinance}
+  MOLIDO_COLLECTOR_INTERVAL_SECONDS: ${MOLIDO_COLLECTOR_INTERVAL_SECONDS:-900}
+  MOLIDO_WATCHLIST: ${MOLIDO_WATCHLIST}
+  TZ: UTC
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+services:
+  postgres:
+    image: timescale/timescaledb:2.17.2-pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./backups:/backups
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    logging: *logging
+
+  redis:
+    image: redis:7.4-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 20
+    logging: *logging
+
+  # Runs migrations to completion, then exits. Everything else waits on it, so
+  # no service can ever start against a schema it does not understand.
+  migrate:
+    build:
+      context: ../backend
+    restart: "no"
+    environment: *backend-env
+    command: ["alembic", "upgrade", "head"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    logging: *logging
+
+  api:
+    build:
+      context: ../backend
+    restart: unless-stopped
+    environment: *backend-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    expose:
+      - "8000"
+    logging: *logging
+
+  collector:
+    build:
+      context: ../backend
+    restart: unless-stopped
+    environment: *backend-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    command: ["arq", "app.workers.collector.WorkerSettings"]
+    logging: *logging
+
+  web:
+    build:
+      context: ../frontend
+      args:
+        # Server-side rendering calls the API over the compose network; the
+        # browser never talks to it directly, so this stays internal.
+        NEXT_PUBLIC_API_URL: http://api:8000
+    restart: unless-stopped
+    depends_on:
+      - api
+    expose:
+      - "3000"
+    logging: *logging
+
+  caddy:
+    image: caddy:2.8-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - web
+      - api
+    logging: *logging
+
+volumes:
+  postgres-data:
+  redis-data:
+  caddy-data:
+  caddy-config:

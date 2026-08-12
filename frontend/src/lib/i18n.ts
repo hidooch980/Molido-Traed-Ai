@@ -1,0 +1,680 @@
+/**
+ * Localization (spec §51).
+ *
+ * Persian is the default. Strings live here rather than in the pages so a
+ * server render and a client toggle read the same table, and so a missing
+ * translation is visible as an English fallback rather than as a crash.
+ */
+
+export const LOCALES = [
+  "fa", "en", "ar", "tr", "de", "nl", "fr", "es",
+  "it", "pt", "ru", "zh", "ja", "ko", "hi", "ur",
+] as const;
+
+export type Locale = (typeof LOCALES)[number];
+
+const RTL_LOCALES = new Set<Locale>(["fa", "ar", "ur"]);
+
+export function direction(locale: Locale): "rtl" | "ltr" {
+  return RTL_LOCALES.has(locale) ? "rtl" : "ltr";
+}
+
+type Dictionary = Record<string, string>;
+
+const en: Dictionary = {
+  "app.tagline": "Trading intelligence, risk and execution",
+  "app.phase": "phase 11 / 53",
+
+  "nav.overview": "Overview",
+  "nav.market": "Market",
+  "nav.trading": "Trading",
+  "nav.intelligence": "Intelligence",
+  "nav.operations": "Operations",
+  "nav.home": "Home",
+  "nav.markets": "Markets",
+  "nav.sessions": "Sessions",
+  "nav.features": "Features",
+  "nav.symbolDna": "Symbol DNA",
+  "nav.memory": "Market memory",
+  "nav.episodes": "Episodes",
+  "nav.dataQuality": "Data quality",
+  "nav.aiHealth": "System health",
+  "nav.aiBrain": "AI Brain",
+  "nav.situationRoom": "Situation Room",
+  "nav.marketMap": "Market Map",
+  "nav.scanner": "Scanner",
+  "nav.charts": "Charts",
+  "nav.signals": "Signals",
+  "nav.positions": "Positions",
+  "nav.orders": "Orders",
+  "nav.portfolio": "Portfolio",
+  "nav.risk": "Risk",
+  "nav.challenge": "Challenge",
+  "nav.execution": "Execution",
+  "nav.journal": "AI Journal",
+  "nav.lab": "AI Lab",
+  "nav.backtest": "Backtest",
+  "nav.research": "Research",
+  "nav.benchmark": "Benchmark",
+  "nav.registry": "Model Registry",
+  "nav.accounts": "Accounts",
+  "nav.brokers": "Brokers",
+  "nav.telegram": "Telegram",
+  "nav.automation": "Automation",
+  "nav.security": "Security",
+  "nav.settings": "Settings",
+
+
+  "home.engaged": "engaged",
+  "home.clear": "clear",
+  "home.notBuiltSubtitle": "Shown so the gap is visible, not hidden",
+
+  "live.ingestion": "Ingestion",
+  "live.ingestionBody": "adapters, checkpointed resume, retry, idempotency",
+  "live.quality": "Data quality",
+  "live.qualityBody": "14 detectors, per-dataset training-eligibility gate",
+  "live.pit": "Point-in-time",
+  "live.pitBody": "no bar visible before it closed and was known",
+  "live.calendar": "Session calendar",
+  "live.calendarBody": "DST-correct hours and holidays, not a weekday guess",
+  "live.features": "Feature store",
+  "live.featuresBody": "12 versioned features, reproducible by construction",
+  "live.dna": "Symbol DNA",
+  "live.dnaBody": "measured behaviour; unmeasurable facets named, not invented",
+  "live.memory": "Market memory",
+  "live.memoryBody": "three horizons, trend labels that must be earned",
+  "live.episodes": "Episodes",
+  "live.episodesBody": "state paired with outcome, gated on window maturity",
+  "live.similarity": "Similarity",
+  "live.similarityBody": "nearest neighbours, scaled only on visible history",
+
+  "severity.info": "info",
+  "severity.warning": "warning",
+  "severity.error": "error",
+  "severity.critical": "critical",
+  "severity.good": "ok",
+
+  "session.sydney": "Sydney",
+  "session.tokyo": "Tokyo",
+  "session.london": "London",
+  "session.new_york": "New York",
+  "session.off": "closed",
+
+  "issue.missing_candle": "missing candle",
+  "issue.duplicate_bar": "duplicate bar",
+  "issue.duplicate_tick": "duplicate tick",
+  "issue.invalid_timestamp": "invalid timestamp",
+  "issue.non_monotonic_timestamp": "out-of-order timestamp",
+  "issue.price_gap": "price gap",
+  "issue.abnormal_spread": "abnormal spread",
+  "issue.abnormal_volume": "abnormal volume",
+  "issue.outlier": "outlier",
+  "issue.invalid_ohlc_relation": "invalid OHLC relation",
+  "issue.non_positive_price": "non-positive price",
+  "issue.provider_conflict": "provider conflict",
+  "issue.session_mismatch": "outside trading hours",
+  "issue.stale_data": "stale data",
+
+  "asset.forex": "forex",
+  "asset.metal": "metal",
+  "asset.index": "index",
+  "asset.stock": "stock",
+  "asset.future": "future",
+  "asset.crypto": "crypto",
+  "asset.commodity": "commodity",
+  "asset.bond": "bond",
+  "asset.other": "other",
+
+  "detail.closeOverSma": "Close / SMA20",
+  "detail.rsi": "RSI(14)",
+  "detail.atrPct": "ATR(14) %",
+  "detail.rangePosition": "Range position",
+  "detail.featureValues": "Feature values",
+  "detail.bar": "Bar (UTC)",
+  "detail.notMaterialized": "not materialized",
+  "detail.materializedPoints": "materialized points",
+  "detail.insufficient": "Insufficient history to compute",
+  "detail.findingsFor": "Findings for this instrument",
+  "detail.barsVisible": "bars visible",
+  "detail.nothingMaterialized": "Nothing materialized yet.",
+
+  "nav.planned": "Planned — not built yet",
+  "nav.note":
+    "Greyed items are later phases. They are shown so the intended shape of the system is visible, and disabled so nothing pretends to work.",
+
+  "common.language": "English",
+  "common.theme.light": "Light",
+  "common.theme.dark": "Dark",
+  "common.bars": "bars",
+  "common.samples": "samples",
+  "common.none": "none",
+  "common.notAvailable": "not available",
+  "common.open": "open",
+  "common.closed": "closed",
+  "common.detail": "Detail",
+  "common.back": "Back",
+  "common.empty": "Nothing recorded.",
+  "common.unreachable": "Backend unreachable",
+  "common.unreachableHelp":
+    "Start it with uvicorn on port 8000, and check that the database container is running.",
+
+  "home.title": "Command Center",
+  "home.subtitle":
+    "Data layer online · point-in-time enforced · no execution path built yet",
+  "home.backend": "Backend",
+  "home.quality": "Data quality",
+  "home.barsStored": "Bars stored",
+  "home.safeMode": "Safe mode",
+  "home.marketOpen": "Market open",
+  "home.marketClosed": "Market closed",
+  "home.eligible": "training-eligible",
+  "home.blocked": "blocked by error-level findings",
+  "home.notEvaluated": "nothing evaluated yet",
+  "home.safeClear": "no risk-increasing action is blocked",
+  "home.priceTitle": "close price",
+  "home.priceSubtitle":
+    "Read through the point-in-time API — only bars closed and known at the cutoff",
+  "home.openInstrument": "Open instrument",
+  "home.findings": "Open data-quality findings",
+  "home.findingsSubtitle": "Detected defects, newest window first",
+  "home.live": "What is live",
+  "home.notBuilt": "Not built yet",
+  "home.notBuiltBody":
+    "The cognitive brain, AI council, risk brain, execution engine and position guardian are later phases. Their menu entries are disabled rather than linking to empty pages. There is also no authentication yet — deliberate while nothing mutates state and no broker credential exists, but it must ship before the first endpoint that changes anything.",
+
+  "markets.title": "Instruments",
+  "markets.subtitle":
+    "Canonical instruments. Broker-specific contract properties live per tenant and are never inferred from these.",
+  "markets.universe": "Universe",
+  "markets.empty": "No instruments yet. Run the demo seed to load one.",
+  "markets.symbol": "Symbol",
+  "markets.name": "Name",
+  "markets.class": "Class",
+  "markets.quote": "Quote",
+  "markets.marketCode": "Market",
+  "markets.session": "Session",
+
+  "quality.title": "Data quality",
+  "quality.subtitle":
+    "Findings are facts, not opinions: each records what was expected and what was observed. Nothing is auto-repaired — a silently fixed bad candle hides an unreliable feed.",
+  "quality.score": "Score",
+  "quality.findings": "Findings",
+  "quality.issue": "Issue",
+  "quality.severity": "Severity",
+  "quality.windowStart": "Window start",
+  "quality.rows": "Rows",
+  "quality.expected": "Expected",
+  "quality.observed": "Observed",
+  "quality.eligible": "eligible",
+  "quality.blocked": "blocked",
+  "quality.coverage": "of expected bars stored",
+  "quality.notEvaluated":
+    "No dataset has been evaluated yet — and an unevaluated dataset is treated as ineligible, not as passing.",
+
+  "sessions.title": "Sessions & calendar",
+  "sessions.subtitle":
+    "Every boundary resolves through the IANA timezone database, so London and New York follow their own DST rules instead of a fixed offset.",
+  "sessions.liquidity": "Liquidity sessions",
+  "sessions.overlap":
+    "Sessions overlap — the London/New York window is the busiest of the day",
+  "sessions.openNow": "open now",
+  "sessions.state": "market state",
+  "sessions.status": "Status",
+  "sessions.calendar": "Calendar",
+  "sessions.timezone": "Timezone",
+  "sessions.holiday": "Holiday",
+  "sessions.nextOpen": "Next open",
+  "sessions.nextClose": "Next close",
+  "sessions.never": "never (24/7 market)",
+  "sessions.nullNote":
+    "A null next-close means the market genuinely never closes — it is not an unknown value, and not a far-future placeholder.",
+  "sessions.holidays": "Holiday calendar",
+  "sessions.holidaysSubtitle":
+    "Only unambiguous closures are seeded — a wrong entry would mask a real outage.",
+  "sessions.date": "Date",
+  "sessions.kind": "Kind",
+  "sessions.closes": "Closes",
+  "sessions.noHolidays": "No holidays loaded.",
+
+  "features.title": "Feature catalog",
+  "features.subtitle":
+    "Every feature is a pure function of a bar window. The declared version is stored with each value, so a model trained on v1 can never be silently fed v2.",
+  "features.registered": "registered",
+  "features.values": "materialized values",
+  "features.count": "materialized features",
+  "features.feature": "Feature",
+  "features.version": "Version",
+  "features.lookback": "Lookback",
+  "features.description": "Description",
+  "features.enforced": "How lookback is enforced",
+  "features.enforcedBody":
+    "A feature that cannot warm up reports a dash rather than a value computed from too little history. The store fetches exactly the declared window plus a small margin, so an indicator can never quietly depend on more data than it asked for.",
+
+  "dna.title": "Symbol DNA",
+  "dna.subtitle":
+    "What this instrument actually does, measured from stored history. Every figure carries the number of bars behind it.",
+  "dna.volatility": "Volatility",
+  "dna.structure": "Structure",
+  "dna.tendency": "tendency",
+  "dna.autocorr": "lag-1 autocorrelation",
+  "dna.upBars": "up bars",
+  "dna.body": "candle body ratio",
+  "dna.measureNote":
+    "The tendency is a measurement, not a signal. Turning it into a trade is the strategy engine's job, which does not exist yet.",
+  "dna.sessionActivity": "Session activity",
+  "dna.sessionNote": "Sessions overlap, so a bar can count toward two",
+  "dna.busiest": "busiest",
+  "dna.share": "Share",
+  "dna.meanRange": "Mean range",
+  "dna.liquidity": "Liquidity",
+  "dna.liquiditySubtitle": "Reported only where the feed supplies it",
+  "dna.available": "available",
+  "dna.notReported": "not reported",
+  "dna.notComputed": "Not computed",
+  "dna.notComputedSubtitle": "Named rather than left blank, so the gap is visible",
+  "dna.notComputedBody":
+    "These are facets the specification asks for that stored bars alone cannot answer. An invented number here would be inherited by every later phase.",
+  "dna.distributionNote":
+    "Bars show the 5th–95th percentile range; the shaded band is the interquartile range and the line is the median.",
+  "dna.emptyTitle": "No profile stored",
+  "dna.empty": "Nothing computed yet. It needs at least 200 bars of history.",
+
+  "memory.title": "Market memory",
+  "memory.subtitle":
+    "The same question at three horizons: what has this market been doing? Short is three days, medium ninety, long three years.",
+  "memory.short": "Short term",
+  "memory.medium": "Medium term",
+  "memory.long": "Long term",
+  "memory.return": "Return",
+  "memory.vol": "Realized volatility",
+  "memory.position": "Position in range",
+  "memory.drawdown": "Max drawdown",
+  "memory.runup": "Max run-up",
+  "memory.trend": "Trend",
+  "memory.strength": "Strength",
+  "memory.agreement": "Horizon agreement",
+  "memory.aligned": "aligned",
+  "memory.conflict": "conflicting",
+  "memory.agreementNote":
+    "A short-term move against the long-term trend is the most common shape in markets. Whether that is a pullback or a reversal is a judgement this layer has no evidence to make.",
+  "memory.unavailable": "not enough history",
+
+  "episodes.title": "Historical episodes",
+  "episodes.subtitle":
+    "A moment in history paired with what happened after it. An episode is not evidence until its forward window has closed.",
+  "episodes.stored": "stored",
+  "episodes.matured": "matured",
+  "episodes.visible": "visible at cutoff",
+  "episodes.time": "Moment",
+  "episodes.ready": "Evidence from",
+  "episodes.entry": "Entry",
+  "episodes.maxUp": "Max up",
+  "episodes.maxDown": "Max down",
+  "episodes.forward": "Forward return",
+  "episodes.distribution": "Outcome distribution",
+  "episodes.insufficient": "Too few matured episodes to summarise",
+  "episodes.positiveShare": "closed higher",
+  "episodes.directionNote":
+    "Outcomes are direction-agnostic: favourable and adverse are undefined until something decides to be long or short, and nothing does yet.",
+  "episodes.empty": "No episodes built yet.",
+
+  "health.title": "System health",
+  "health.subtitle":
+    "Readiness touches every dependency on each request — it is not a constant.",
+  "health.status": "Status",
+  "health.version": "Version",
+  "health.environment": "Environment",
+  "health.dependencies": "Dependencies",
+  "health.dependenciesSubtitle": "Checked live on every readiness probe",
+  "health.dependency": "Dependency",
+  "health.state": "State",
+  "health.latency": "Latency",
+  "health.detail": "Detail",
+  "health.healthy": "healthy",
+  "health.down": "down",
+  "health.notMeasured": "Not measured yet",
+  "health.notMeasuredBody":
+    "Model health, calibration, drift and AI agreement arrive with the Learning Lab phase. Nothing is shown here that is not actually measured — an AI-health panel full of placeholder gauges would be worse than an absent one.",
+};
+
+const fa: Dictionary = {
+  "app.tagline": "هوش معاملاتی، ریسک و اجرا",
+  "app.phase": "فاز ۱۱ از ۵۳",
+
+  "nav.overview": "نمای کلی",
+  "nav.market": "بازار",
+  "nav.trading": "معاملات",
+  "nav.intelligence": "هوش",
+  "nav.operations": "عملیات",
+  "nav.home": "خانه",
+  "nav.markets": "بازارها",
+  "nav.sessions": "سشن‌ها",
+  "nav.features": "ویژگی‌ها",
+  "nav.symbolDna": "DNA نماد",
+  "nav.memory": "حافظه بازار",
+  "nav.episodes": "اپیزودها",
+  "nav.dataQuality": "کیفیت داده",
+  "nav.aiHealth": "سلامت سامانه",
+  "nav.aiBrain": "مغز هوش مصنوعی",
+  "nav.situationRoom": "اتاق وضعیت",
+  "nav.marketMap": "نقشه بازار",
+  "nav.scanner": "اسکنر",
+  "nav.charts": "نمودارها",
+  "nav.signals": "سیگنال‌ها",
+  "nav.positions": "پوزیشن‌ها",
+  "nav.orders": "سفارش‌ها",
+  "nav.portfolio": "پورتفولیو",
+  "nav.risk": "ریسک",
+  "nav.challenge": "چلنج",
+  "nav.execution": "اجرا",
+  "nav.journal": "دفترچه هوش مصنوعی",
+  "nav.lab": "آزمایشگاه هوش مصنوعی",
+  "nav.backtest": "بک‌تست",
+  "nav.research": "پژوهش",
+  "nav.benchmark": "سنجه‌ها",
+  "nav.registry": "رجیستری مدل",
+  "nav.accounts": "حساب‌ها",
+  "nav.brokers": "بروکرها",
+  "nav.telegram": "تلگرام",
+  "nav.automation": "اتوماسیون",
+  "nav.security": "امنیت",
+  "nav.settings": "تنظیمات",
+
+
+  "home.engaged": "فعال",
+  "home.clear": "پاک",
+  "home.notBuiltSubtitle": "نمایش داده می‌شود تا شکاف پیدا باشد، نه پنهان",
+
+  "live.ingestion": "دریافت داده",
+  "live.ingestionBody": "آداپتورها، ازسرگیری با نقطه‌بازگشت، تلاش مجدد، تک‌باره‌بودن",
+  "live.quality": "کیفیت داده",
+  "live.qualityBody": "۱۴ آشکارساز، دروازه مجوز آموزش برای هر مجموعه‌داده",
+  "live.pit": "یکپارچگی نقطه‌زمانی",
+  "live.pitBody": "هیچ کندلی پیش از بسته‌شدن و دانسته‌شدن دیده نمی‌شود",
+  "live.calendar": "تقویم سشن",
+  "live.calendarBody": "ساعات و تعطیلات با ساعت تابستانی درست، نه حدس روز هفته",
+  "live.features": "انبار ویژگی",
+  "live.featuresBody": "۱۲ ویژگی نسخه‌دار، بازتولیدپذیر به‌طور ساختاری",
+  "live.dna": "DNA نماد",
+  "live.dnaBody": "رفتار اندازه‌گیری‌شده؛ وجوه غیرقابل‌سنجش نام‌برده می‌شوند نه ساخته",
+  "live.memory": "حافظه بازار",
+  "live.memoryBody": "سه افق، با برچسب روندی که باید کسب شود",
+  "live.episodes": "اپیزودها",
+  "live.episodesBody": "وضعیت جفت‌شده با نتیجه، مشروط به بلوغ پنجره",
+  "live.similarity": "شباهت",
+  "live.similarityBody": "نزدیک‌ترین همسایه‌ها، مقیاس‌شده فقط با تاریخچه قابل‌مشاهده",
+
+  "severity.info": "اطلاع",
+  "severity.warning": "هشدار",
+  "severity.error": "خطا",
+  "severity.critical": "بحرانی",
+  "severity.good": "سالم",
+
+  "session.sydney": "سیدنی",
+  "session.tokyo": "توکیو",
+  "session.london": "لندن",
+  "session.new_york": "نیویورک",
+  "session.off": "بسته",
+
+  "issue.missing_candle": "کندل گمشده",
+  "issue.duplicate_bar": "کندل تکراری",
+  "issue.duplicate_tick": "تیک تکراری",
+  "issue.invalid_timestamp": "زمان نامعتبر",
+  "issue.non_monotonic_timestamp": "زمان خارج از ترتیب",
+  "issue.price_gap": "شکاف قیمتی",
+  "issue.abnormal_spread": "اسپرد غیرعادی",
+  "issue.abnormal_volume": "حجم غیرعادی",
+  "issue.outlier": "داده پرت",
+  "issue.invalid_ohlc_relation": "رابطه OHLC نامعتبر",
+  "issue.non_positive_price": "قیمت نامثبت",
+  "issue.provider_conflict": "تناقض بین ارائه‌دهنده‌ها",
+  "issue.session_mismatch": "خارج از ساعات معاملاتی",
+  "issue.stale_data": "داده کهنه",
+
+  "asset.forex": "فارکس",
+  "asset.metal": "فلز",
+  "asset.index": "شاخص",
+  "asset.stock": "سهام",
+  "asset.future": "آتی",
+  "asset.crypto": "رمزارز",
+  "asset.commodity": "کالا",
+  "asset.bond": "اوراق",
+  "asset.other": "سایر",
+
+  "detail.closeOverSma": "قیمت ÷ میانگین ۲۰",
+  "detail.rsi": "RSI(۱۴)",
+  "detail.atrPct": "ATR(۱۴) ٪",
+  "detail.rangePosition": "جایگاه در دامنه",
+  "detail.featureValues": "مقادیر ویژگی‌ها",
+  "detail.bar": "کندل (UTC)",
+  "detail.notMaterialized": "ساخته نشده",
+  "detail.materializedPoints": "نقطه ساخته‌شده",
+  "detail.insufficient": "تاریخچه برای محاسبه کافی نیست",
+  "detail.findingsFor": "یافته‌های این نماد",
+  "detail.barsVisible": "کندل قابل مشاهده",
+  "detail.nothingMaterialized": "هنوز چیزی ساخته نشده است.",
+
+  "nav.planned": "برنامه‌ریزی‌شده — هنوز ساخته نشده",
+  "nav.note":
+    "موارد کم‌رنگ مربوط به فازهای بعدی‌اند. نمایش داده می‌شوند تا شکل نهایی سامانه پیدا باشد، و غیرفعالند تا چیزی وانمود نکند کار می‌کند.",
+
+  "common.language": "فارسی",
+  "common.theme.light": "روشن",
+  "common.theme.dark": "تیره",
+  "common.bars": "کندل",
+  "common.samples": "نمونه",
+  "common.none": "ندارد",
+  "common.notAvailable": "در دسترس نیست",
+  "common.open": "باز",
+  "common.closed": "بسته",
+  "common.detail": "جزئیات",
+  "common.back": "بازگشت",
+  "common.empty": "چیزی ثبت نشده است.",
+  "common.unreachable": "بک‌اند در دسترس نیست",
+  "common.unreachableHelp":
+    "سرویس را روی پورت ۸۰۰۰ اجرا کنید و مطمئن شوید کانتینر دیتابیس بالاست.",
+
+  "home.title": "مرکز فرماندهی",
+  "home.subtitle":
+    "لایه داده فعال است · یکپارچگی نقطه‌زمانی اعمال می‌شود · هنوز هیچ مسیر اجرایی ساخته نشده",
+  "home.backend": "بک‌اند",
+  "home.quality": "کیفیت داده",
+  "home.barsStored": "کندل ذخیره‌شده",
+  "home.safeMode": "حالت ایمن",
+  "home.marketOpen": "بازار باز",
+  "home.marketClosed": "بازار بسته",
+  "home.eligible": "مجاز برای آموزش",
+  "home.blocked": "مسدود به‌دلیل یافته‌های خطاسطح",
+  "home.notEvaluated": "هنوز چیزی ارزیابی نشده",
+  "home.safeClear": "هیچ اقدام ریسک‌افزایی مسدود نیست",
+  "home.priceTitle": "قیمت پایانی",
+  "home.priceSubtitle":
+    "خوانده‌شده از مسیر نقطه‌زمانی — فقط کندل‌هایی که تا لحظه برش بسته و دانسته بوده‌اند",
+  "home.openInstrument": "باز کردن نماد",
+  "home.findings": "یافته‌های باز کیفیت داده",
+  "home.findingsSubtitle": "نقص‌های شناسایی‌شده، تازه‌ترین ابتدا",
+  "home.live": "چه چیزی فعال است",
+  "home.notBuilt": "هنوز ساخته نشده",
+  "home.notBuiltBody":
+    "مغز شناختی، شورای هوش مصنوعی، مغز ریسک، موتور اجرا و نگهبان پوزیشن فازهای بعدی‌اند. ورودی‌های منویشان غیرفعال است تا به صفحه خالی نرسند. احراز هویت هم هنوز وجود ندارد — عمدی، تا وقتی هیچ چیزی state را تغییر نمی‌دهد و اعتبارنامه بروکری در کار نیست؛ ولی باید پیش از اولین endpoint تغییردهنده ساخته شود.",
+
+  "markets.title": "ابزارهای معاملاتی",
+  "markets.subtitle":
+    "نمادهای کانونی. مشخصات قرارداد هر بروکر جداگانه و به‌ازای هر مستأجر نگهداری می‌شود و هرگز از این‌ها استنتاج نمی‌شود.",
+  "markets.universe": "مجموعه نمادها",
+  "markets.empty": "هنوز نمادی ثبت نشده است.",
+  "markets.symbol": "نماد",
+  "markets.name": "نام",
+  "markets.class": "طبقه",
+  "markets.quote": "ارز مظنه",
+  "markets.marketCode": "بازار",
+  "markets.session": "سشن",
+
+  "quality.title": "کیفیت داده",
+  "quality.subtitle":
+    "یافته‌ها واقعیت‌اند نه نظر: هرکدام ثبت می‌کند چه انتظار می‌رفت و چه مشاهده شد. هیچ چیز خودکار ترمیم نمی‌شود — کندل بدِ بی‌سروصدا اصلاح‌شده، فیدِ ناسالم را پنهان می‌کند.",
+  "quality.score": "امتیاز",
+  "quality.findings": "یافته‌ها",
+  "quality.issue": "مشکل",
+  "quality.severity": "شدت",
+  "quality.windowStart": "شروع بازه",
+  "quality.rows": "ردیف",
+  "quality.expected": "انتظار",
+  "quality.observed": "مشاهده",
+  "quality.eligible": "مجاز",
+  "quality.blocked": "مسدود",
+  "quality.coverage": "از کندل‌های مورد انتظار ذخیره شده",
+  "quality.notEvaluated":
+    "هنوز هیچ مجموعه‌داده‌ای ارزیابی نشده — و مجموعه ارزیابی‌نشده نامجاز تلقی می‌شود، نه قبول‌شده.",
+
+  "sessions.title": "سشن‌ها و تقویم",
+  "sessions.subtitle":
+    "هر مرز از پایگاه منطقه زمانی IANA حل می‌شود، پس لندن و نیویورک قوانین ساعت تابستانی خودشان را دنبال می‌کنند نه یک آفست ثابت.",
+  "sessions.liquidity": "سشن‌های نقدشوندگی",
+  "sessions.overlap":
+    "سشن‌ها هم‌پوشانی دارند — بازه لندن/نیویورک شلوغ‌ترین ساعت روز است",
+  "sessions.openNow": "الان باز",
+  "sessions.state": "وضعیت بازار",
+  "sessions.status": "وضعیت",
+  "sessions.calendar": "تقویم",
+  "sessions.timezone": "منطقه زمانی",
+  "sessions.holiday": "تعطیلی",
+  "sessions.nextOpen": "بازگشایی بعدی",
+  "sessions.nextClose": "بسته‌شدن بعدی",
+  "sessions.never": "هرگز (بازار ۲۴/۷)",
+  "sessions.nullNote":
+    "خالی بودن «بسته‌شدن بعدی» یعنی بازار واقعاً هرگز بسته نمی‌شود — نه مقدار نامعلوم است و نه جای‌نگهدار آینده دور.",
+  "sessions.holidays": "تقویم تعطیلات",
+  "sessions.holidaysSubtitle":
+    "فقط تعطیلی‌های قطعی بارگذاری می‌شوند — ورودی اشتباه یک اختلال واقعی را پنهان می‌کند.",
+  "sessions.date": "تاریخ",
+  "sessions.kind": "نوع",
+  "sessions.closes": "بسته‌شدن",
+  "sessions.noHolidays": "تعطیلی‌ای بارگذاری نشده است.",
+
+  "features.title": "فهرست ویژگی‌ها",
+  "features.subtitle":
+    "هر ویژگی تابعی خالص از یک پنجره کندل است. نسخه اعلام‌شده همراه هر مقدار ذخیره می‌شود، پس مدلی که با نسخه ۱ آموزش دیده هرگز بی‌سروصدا با نسخه ۲ تغذیه نمی‌شود.",
+  "features.registered": "ثبت‌شده",
+  "features.values": "مقدار ساخته‌شده",
+  "features.count": "ویژگی ساخته‌شده",
+  "features.feature": "ویژگی",
+  "features.version": "نسخه",
+  "features.lookback": "بازه گذشته‌نگر",
+  "features.description": "توضیح",
+  "features.enforced": "بازه گذشته‌نگر چطور اعمال می‌شود",
+  "features.enforcedBody":
+    "ویژگی‌ای که نتواند گرم شود، خط تیره گزارش می‌کند نه عددی که از تاریخچه ناکافی درآمده. انبار دقیقاً همان پنجره اعلام‌شده به‌علاوه حاشیه‌ای کوچک را می‌گیرد، پس یک اندیکاتور هرگز بی‌سروصدا به داده بیشتر از آنچه خواسته وابسته نمی‌شود.",
+
+  "dna.title": "DNA نماد",
+  "dna.subtitle":
+    "این نماد واقعاً چه می‌کند، اندازه‌گیری‌شده از تاریخچه ذخیره‌شده. هر عدد تعداد کندل پشتوانه‌اش را همراه دارد.",
+  "dna.volatility": "نوسان",
+  "dna.structure": "ساختار",
+  "dna.tendency": "گرایش",
+  "dna.autocorr": "خودهمبستگی وقفه ۱",
+  "dna.upBars": "کندل صعودی",
+  "dna.body": "نسبت بدنه کندل",
+  "dna.measureNote":
+    "گرایش یک اندازه‌گیری است، نه سیگنال. تبدیلش به معامله کار موتور استراتژی است که هنوز وجود ندارد.",
+  "dna.sessionActivity": "فعالیت سشن‌ها",
+  "dna.sessionNote": "سشن‌ها هم‌پوشانی دارند، پس یک کندل می‌تواند در دو سشن شمرده شود",
+  "dna.busiest": "پرتحرک‌ترین",
+  "dna.share": "سهم",
+  "dna.meanRange": "میانگین دامنه",
+  "dna.liquidity": "نقدشوندگی",
+  "dna.liquiditySubtitle": "فقط جایی گزارش می‌شود که فید داده‌اش را بدهد",
+  "dna.available": "موجود",
+  "dna.notReported": "گزارش نشده",
+  "dna.notComputed": "محاسبه نشده",
+  "dna.notComputedSubtitle": "نام‌برده شده به‌جای خالی گذاشتن، تا شکاف پیدا باشد",
+  "dna.notComputedBody":
+    "این‌ها وجوهی‌اند که اسپک می‌خواهد ولی از روی کندل تنها قابل پاسخ نیستند. عدد ساختگی اینجا را همه فازهای بعدی به ارث می‌بردند.",
+  "dna.distributionNote":
+    "میله‌ها بازه صدک ۵ تا ۹۵ را نشان می‌دهند؛ نوار سایه‌دار بازه بین‌چارکی و خط، میانه است.",
+  "dna.emptyTitle": "پروفایلی ذخیره نشده",
+  "dna.empty": "هنوز چیزی محاسبه نشده. حداقل ۲۰۰ کندل تاریخچه لازم است.",
+
+  "memory.title": "حافظه بازار",
+  "memory.subtitle":
+    "یک سؤال در سه افق: این بازار چه کرده است؟ کوتاه سه روز، میان نود روز، بلند سه سال.",
+  "memory.short": "کوتاه‌مدت",
+  "memory.medium": "میان‌مدت",
+  "memory.long": "بلندمدت",
+  "memory.return": "بازده",
+  "memory.vol": "نوسان محقق‌شده",
+  "memory.position": "جایگاه در دامنه",
+  "memory.drawdown": "بیشترین افت",
+  "memory.runup": "بیشترین رشد",
+  "memory.trend": "روند",
+  "memory.strength": "قدرت",
+  "memory.agreement": "توافق افق‌ها",
+  "memory.aligned": "هم‌جهت",
+  "memory.conflict": "متضاد",
+  "memory.agreementNote":
+    "حرکت کوتاه‌مدت خلاف روند بلندمدت رایج‌ترین شکل بازار است. اینکه پولبک است یا برگشت، قضاوتی است که این لایه شواهدش را ندارد.",
+  "memory.unavailable": "تاریخچه کافی نیست",
+
+  "episodes.title": "اپیزودهای تاریخی",
+  "episodes.subtitle":
+    "لحظه‌ای از تاریخ، جفت‌شده با آنچه پس از آن رخ داد. اپیزود تا وقتی پنجره آینده‌اش بسته نشود، شاهد نیست.",
+  "episodes.stored": "ذخیره‌شده",
+  "episodes.matured": "بالغ‌شده",
+  "episodes.visible": "قابل مشاهده در لحظه برش",
+  "episodes.time": "لحظه",
+  "episodes.ready": "شاهد از",
+  "episodes.entry": "قیمت ورود",
+  "episodes.maxUp": "بیشترین صعود",
+  "episodes.maxDown": "بیشترین نزول",
+  "episodes.forward": "بازده آتی",
+  "episodes.distribution": "توزیع نتایج",
+  "episodes.insufficient": "تعداد اپیزودهای بالغ برای خلاصه‌سازی کم است",
+  "episodes.positiveShare": "بالاتر بسته شدند",
+  "episodes.directionNote":
+    "نتایج جهت‌ناوابسته‌اند: «مطلوب» و «نامطلوب» تا وقتی چیزی تصمیم به خرید یا فروش نگیرد تعریف‌نشده‌اند، و هنوز چیزی تصمیم نمی‌گیرد.",
+  "episodes.empty": "هنوز اپیزودی ساخته نشده است.",
+
+  "health.title": "سلامت سامانه",
+  "health.subtitle":
+    "بررسی آمادگی در هر درخواست به همه وابستگی‌ها سر می‌زند — مقدار ثابتی نیست.",
+  "health.status": "وضعیت",
+  "health.version": "نسخه",
+  "health.environment": "محیط",
+  "health.dependencies": "وابستگی‌ها",
+  "health.dependenciesSubtitle": "در هر بررسی آمادگی به‌صورت زنده چک می‌شوند",
+  "health.dependency": "وابستگی",
+  "health.state": "حالت",
+  "health.latency": "تأخیر",
+  "health.detail": "جزئیات",
+  "health.healthy": "سالم",
+  "health.down": "خاموش",
+  "health.notMeasured": "هنوز اندازه‌گیری نشده",
+  "health.notMeasuredBody":
+    "سلامت مدل، کالیبراسیون، دریفت و توافق هوش مصنوعی با فاز آزمایشگاه یادگیری می‌آیند. اینجا چیزی نشان داده نمی‌شود که واقعاً اندازه‌گیری نشده باشد — پنلی پر از عقربه‌های ساختگی بدتر از نبودنش است.",
+};
+
+const MESSAGES: Partial<Record<Locale, Dictionary>> = { en, fa };
+
+export function translator(locale: Locale) {
+  const dictionary = MESSAGES[locale] ?? MESSAGES.fa!;
+  // English is the fallback rather than the key itself: showing a real English
+  // sentence to a Turkish user is imperfect but usable; showing "dna.busiest"
+  // is not.
+  return (key: string): string => dictionary[key] ?? en[key] ?? key;
+}
+
+export function formatNumber(value: number, locale: Locale, digits = 2): string {
+  return new Intl.NumberFormat(locale, {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  }).format(value);
+}
+
+export function formatDateTime(value: string | Date, locale: Locale): string {
+  const date = typeof value === "string" ? new Date(value) : value;
+  return new Intl.DateTimeFormat(locale, {
+    dateStyle: "medium",
+    timeStyle: "short",
+    timeZone: "UTC",
+  }).format(date);
+}

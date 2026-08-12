@@ -1,0 +1,155 @@
+"""Authentication and authorization dependencies (spec §52).
+
+The model is deliberately small: an API key identifies a tenant and a user, a
+role grants a permission tier, and every protected route declares the tier it
+needs. That is enough to satisfy the spec's requirement that Telegram, n8n and
+the dashboard all pass through the same gate, without inventing a session
+system nothing uses yet.
+
+**Read stays open while nothing mutates.** `MOLIDO_REQUIRE_AUTH` defaults to
+false, so the current read-only deployment keeps working. The moment a route
+mutates state — the first order endpoint, the first broker credential — that
+flag must be flipped and the route must require EXECUTE. `require(...)` is
+written so a protected route cannot accidentally be reachable without a key:
+the check is on the dependency, not on a caller remembering to call it.
+
+**Tenant isolation is carried, not assumed.** The resolved principal carries
+its tenant id, and any route touching tenant-scoped data must filter on it
+rather than trusting a query parameter.
+"""
+
+from __future__ import annotations
+
+import uuid
+from dataclasses import dataclass
+from datetime import UTC, datetime
+
+from fastapi import Depends, Header
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.core.config import get_settings
+from app.core.enums import Permission, UserRole
+from app.core.errors import MolidoError
+from app.core.logging import bind_tenant
+from app.core.security import api_key_matches
+from app.db.session import get_db
+from app.models.tenancy import ApiKey, User
+
+
+class AuthenticationError(MolidoError):
+    code = "unauthenticated"
+    http_status = 401
+
+
+class AuthorizationError(MolidoError):
+    code = "forbidden"
+    http_status = 403
+
+
+# Which permissions each role holds. A trader may execute; an analyst may
+# simulate but never execute; a viewer may only read.
+ROLE_PERMISSIONS: dict[UserRole, set[Permission]] = {
+    UserRole.OWNER: {Permission.READ, Permission.SIMULATE, Permission.EXECUTE},
+    UserRole.ADMIN: {Permission.READ, Permission.SIMULATE, Permission.EXECUTE},
+    UserRole.TRADER: {Permission.READ, Permission.SIMULATE, Permission.EXECUTE},
+    UserRole.ANALYST: {Permission.READ, Permission.SIMULATE},
+    UserRole.VIEWER: {Permission.READ},
+}
+
+
+@dataclass(frozen=True)
+class Principal:
+    """Who is making this request, and what they are allowed to do."""
+
+    tenant_id: uuid.UUID | None
+    user_id: uuid.UUID | None
+    role: UserRole
+    permissions: frozenset[Permission]
+    authenticated: bool
+
+    def can(self, permission: Permission) -> bool:
+        return permission in self.permissions
+
+
+# The principal used when authentication is switched off. It holds READ only —
+# so if a mutating route is ever added while auth is disabled, the route is
+# refused rather than silently executed by an anonymous caller.
+ANONYMOUS = Principal(
+    tenant_id=None,
+    user_id=None,
+    role=UserRole.VIEWER,
+    permissions=frozenset({Permission.READ}),
+    authenticated=False,
+)
+
+
+def resolve_principal(
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+    session: Session = Depends(get_db),
+) -> Principal:
+    """Identify the caller from an API key, or fall back to anonymous."""
+    settings = get_settings()
+
+    if not x_api_key:
+        if settings.require_auth:
+            raise AuthenticationError("An API key is required for this deployment.")
+        return ANONYMOUS
+
+    prefix = x_api_key[:12]
+    now = datetime.now(UTC)
+
+    # Narrow by the non-secret prefix, then compare the hash in constant time.
+    # Matching on the prefix alone would be an authentication bypass; matching
+    # without it would mean scanning every key on every request.
+    candidates = session.scalars(select(ApiKey).where(ApiKey.key_prefix == prefix))
+
+    for key in candidates:
+        if not api_key_matches(x_api_key, key.key_hash):
+            continue
+        if key.revoked_at is not None:
+            raise AuthenticationError("This API key has been revoked.")
+        if key.expires_at is not None and key.expires_at <= now:
+            raise AuthenticationError("This API key has expired.")
+
+        role = UserRole.VIEWER
+        if key.user_id:
+            user = session.get(User, key.user_id)
+            if user is not None:
+                if not user.is_active:
+                    raise AuthenticationError("This user account is disabled.")
+                role = UserRole(user.role)
+
+        key.last_used_at = now
+        bind_tenant(str(key.tenant_id))
+        return Principal(
+            tenant_id=key.tenant_id,
+            user_id=key.user_id,
+            role=role,
+            permissions=frozenset(ROLE_PERMISSIONS.get(role, {Permission.READ})),
+            authenticated=True,
+        )
+
+    # Deliberately identical to the revoked/expired message shape: a caller
+    # must not be able to tell a wrong key from a disabled one.
+    raise AuthenticationError("Invalid API key.")
+
+
+def require(permission: Permission):
+    """Dependency factory: `Depends(require(Permission.EXECUTE))`.
+
+    Attaching the check to the dependency rather than to route code means a new
+    protected endpoint cannot forget it — the permission is part of the
+    signature.
+    """
+
+    def dependency(principal: Principal = Depends(resolve_principal)) -> Principal:
+        if not principal.can(permission):
+            raise AuthorizationError(
+                f"This action requires the {permission.value} permission.",
+                role=principal.role.value,
+                authenticated=principal.authenticated,
+            )
+        return principal
+
+    return dependency

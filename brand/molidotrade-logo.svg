@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 520 128" width="520" height="128" role="img" aria-label="MolidoTrade AI">
+  <title>MolidoTrade AI</title>
+  <defs>
+    <linearGradient id="lg-grad" x1="0" y1="128" x2="128" y2="0" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#0B2545"/>
+      <stop offset="0.55" stop-color="#1B6CA8"/>
+      <stop offset="1" stop-color="#22D3EE"/>
+    </linearGradient>
+    <linearGradient id="lg-glow" x1="64" y1="16" x2="64" y2="112" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#22D3EE"/>
+      <stop offset="1" stop-color="#1B6CA8"/>
+    </linearGradient>
+  </defs>
+
+  <g>
+    <rect x="4" y="4" width="120" height="120" rx="28" fill="url(#lg-grad)"/>
+    <g stroke="#EAF6FF" stroke-linecap="round" stroke-width="4" opacity="0.35">
+      <line x1="30" y1="30" x2="30" y2="98"/>
+      <line x1="52" y1="24" x2="52" y2="92"/>
+      <line x1="76" y1="34" x2="76" y2="104"/>
+      <line x1="98" y1="20" x2="98" y2="88"/>
+    </g>
+    <g fill="url(#lg-glow)" stroke="#EAF6FF" stroke-width="2.5">
+      <rect x="23" y="44" width="14" height="40" rx="3"/>
+      <rect x="45" y="34" width="14" height="34" rx="3"/>
+      <rect x="69" y="52" width="14" height="34" rx="3"/>
+      <rect x="91" y="28" width="14" height="38" rx="3"/>
+    </g>
+    <path d="M30 64 L52 51 L76 69 L98 47" fill="none" stroke="#7DF9FF" stroke-width="3"
+          stroke-linecap="round" stroke-linejoin="round"/>
+    <g fill="#7DF9FF">
+      <circle cx="30" cy="64" r="4.5"/>
+      <circle cx="52" cy="51" r="4.5"/>
+      <circle cx="76" cy="69" r="4.5"/>
+      <circle cx="98" cy="47" r="5.5"/>
+    </g>
+  </g>
+
+  <!-- Wordmark uses the viewer's UI stack: no external font is fetched. -->
+  <text x="150" y="62" font-family="'Segoe UI', 'Inter', system-ui, sans-serif"
+        font-size="40" font-weight="700" letter-spacing="-0.5" fill="currentColor">
+    Molido<tspan fill="#1B6CA8">Trade</tspan>
+  </text>
+  <text x="152" y="92" font-family="'Segoe UI', 'Inter', system-ui, sans-serif"
+        font-size="16" font-weight="500" letter-spacing="5.5" fill="#22D3EE">
+    AI · TRADING INTELLIGENCE
+  </text>
+</svg>

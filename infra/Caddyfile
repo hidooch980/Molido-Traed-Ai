@@ -1,0 +1,39 @@
+# Caddy obtains and renews TLS certificates automatically for {$DOMAIN}.
+#
+# The API is exposed under /api and /health only. There is no authentication
+# yet, so nothing here mutates state — but that also means the surface must
+# stay exactly this small until auth ships.
+
+{
+	email {$ACME_EMAIL}
+}
+
+{$DOMAIN} {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+
+	handle /api/* {
+		reverse_proxy api:8000
+	}
+
+	handle /health/* {
+		reverse_proxy api:8000
+	}
+
+	# Interactive API docs are useful on a private deployment and a free map of
+	# the surface on a public one. Uncomment only if this host is restricted.
+	# handle /docs* {
+	# 	reverse_proxy api:8000
+	# }
+
+	handle {
+		reverse_proxy web:3000
+	}
+}

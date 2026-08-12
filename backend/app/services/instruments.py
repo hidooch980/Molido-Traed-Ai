@@ -1,0 +1,206 @@
+"""Canonical instrument resolution (spec §7).
+
+Brokers decorate the same instrument in incompatible ways: `EURUSD.m`,
+`EURUSD-ECN`, `EURUSDmicro`, `XAUUSD_i`. Normalization strips the decoration to
+find the canonical instrument, while the broker's own contract properties stay
+on `BrokerSymbol` — those are load-bearing for sizing and must never be
+inferred from the canonical record.
+"""
+
+from __future__ import annotations
+
+import re
+import uuid
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.core.enums import AssetClass
+from app.core.errors import NotFoundError
+from app.models.instruments import BrokerSymbol, Instrument
+from app.services.sessions import default_market_code
+
+# Broker suffixes/prefixes that carry account-type information, not identity.
+_DECORATION_RE = re.compile(
+    r"(?:[._\-#]?(?:m|micro|mini|cent|ecn|pro|raw|std|stp|c|i|z|r|sb|fx|spot))+$",
+    re.IGNORECASE,
+)
+_NON_ALNUM_RE = re.compile(r"[^A-Z0-9]")
+
+_MAJOR_CURRENCIES = {
+    "USD", "EUR", "GBP", "JPY", "CHF", "AUD", "NZD", "CAD",
+    "SEK", "NOK", "DKK", "PLN", "TRY", "ZAR", "MXN", "SGD", "HKD", "CNH",
+}
+_METALS = {"XAU", "XAG", "XPT", "XPD"}
+_CRYPTO = {"BTC", "ETH", "XRP", "LTC", "BCH", "ADA", "SOL", "DOGE", "DOT"}
+
+
+def normalize_symbol(raw_symbol: str) -> str:
+    """Reduce a broker symbol to its canonical form.
+
+    Conservative by design: it removes known decoration and punctuation, and
+    otherwise leaves the symbol alone. A wrong merge of two distinct
+    instruments is far more damaging than an unmerged duplicate, which an
+    operator can map explicitly.
+    """
+    upper = raw_symbol.strip().upper()
+    stripped = _DECORATION_RE.sub("", upper)
+    stripped = _NON_ALNUM_RE.sub("", stripped)
+    return stripped or _NON_ALNUM_RE.sub("", upper)
+
+
+def classify_symbol(symbol: str) -> tuple[AssetClass, str | None, str | None]:
+    """Best-effort (asset_class, base, quote) from a canonical symbol.
+
+    Returns `OTHER` with no currencies when the shape is unrecognised rather
+    than guessing — an unknown instrument is a prompt for operator input, not
+    a place for invention.
+    """
+    if len(symbol) == 6:
+        base, quote = symbol[:3], symbol[3:]
+        if base in _METALS and quote in _MAJOR_CURRENCIES:
+            return AssetClass.METAL, base, quote
+        if base in _CRYPTO and quote in _MAJOR_CURRENCIES:
+            return AssetClass.CRYPTO, base, quote
+        if base in _MAJOR_CURRENCIES and quote in _MAJOR_CURRENCIES:
+            return AssetClass.FOREX, base, quote
+    for crypto in _CRYPTO:
+        if symbol.startswith(crypto):
+            quote = symbol[len(crypto):]
+            if quote in _MAJOR_CURRENCIES or quote in {"USDT", "USDC"}:
+                return AssetClass.CRYPTO, crypto, quote
+    return AssetClass.OTHER, None, None
+
+
+def get_instrument(session: Session, instrument_id: uuid.UUID) -> Instrument:
+    instrument = session.get(Instrument, instrument_id)
+    if instrument is None:
+        raise NotFoundError("Instrument not found", instrument_id=str(instrument_id))
+    return instrument
+
+
+def get_instrument_by_symbol(session: Session, symbol: str) -> Instrument | None:
+    return session.scalar(select(Instrument).where(Instrument.symbol == normalize_symbol(symbol)))
+
+
+def upsert_instrument(
+    session: Session,
+    symbol: str,
+    *,
+    name: str = "",
+    asset_class: AssetClass | None = None,
+    base_currency: str | None = None,
+    quote_currency: str | None = None,
+    exchange: str | None = None,
+    timezone: str = "Etc/UTC",
+    trading_hours: list | None = None,
+) -> Instrument:
+    """Create or update a canonical instrument. Idempotent on symbol."""
+    canonical = normalize_symbol(symbol)
+    inferred_class, inferred_base, inferred_quote = classify_symbol(canonical)
+
+    instrument = session.scalar(select(Instrument).where(Instrument.symbol == canonical))
+    if instrument is None:
+        resolved_class = asset_class or inferred_class
+        instrument = Instrument(
+            symbol=canonical,
+            name=name or canonical,
+            asset_class=resolved_class,
+            base_currency=base_currency or inferred_base,
+            quote_currency=quote_currency or inferred_quote,
+            exchange=exchange,
+            # Which holiday calendar applies follows from the asset class;
+            # an operator can override it afterwards.
+            market_code=default_market_code(resolved_class),
+            timezone=timezone,
+            trading_hours=trading_hours or [],
+        )
+        session.add(instrument)
+        session.flush()
+        return instrument
+
+    # Fill gaps only; never overwrite operator-curated values with guesses.
+    if name and instrument.name in ("", canonical):
+        instrument.name = name
+    if asset_class is not None:
+        instrument.asset_class = asset_class
+    if base_currency and not instrument.base_currency:
+        instrument.base_currency = base_currency
+    if quote_currency and not instrument.quote_currency:
+        instrument.quote_currency = quote_currency
+    if exchange and not instrument.exchange:
+        instrument.exchange = exchange
+    if trading_hours and not instrument.trading_hours:
+        instrument.trading_hours = trading_hours
+    session.flush()
+    return instrument
+
+
+def resolve_broker_symbol(
+    session: Session,
+    tenant_id: uuid.UUID,
+    broker_code: str,
+    raw_symbol: str,
+) -> BrokerSymbol | None:
+    """Look up a broker symbol strictly within one tenant."""
+    return session.scalar(
+        select(BrokerSymbol).where(
+            BrokerSymbol.tenant_id == tenant_id,
+            BrokerSymbol.broker_code == broker_code,
+            BrokerSymbol.raw_symbol == raw_symbol,
+        )
+    )
+
+
+def link_broker_symbol(
+    session: Session,
+    tenant_id: uuid.UUID,
+    broker_code: str,
+    raw_symbol: str,
+    *,
+    contract_size: float | None = None,
+    digits: int | None = None,
+    point: float | None = None,
+    tick_size: float | None = None,
+    tick_value: float | None = None,
+    volume_min: float | None = None,
+    volume_max: float | None = None,
+    volume_step: float | None = None,
+    margin_rules: dict | None = None,
+    spread_model: dict | None = None,
+    trading_hours: list | None = None,
+) -> BrokerSymbol:
+    """Map a broker's raw symbol to a canonical instrument for one tenant."""
+    instrument = upsert_instrument(session, raw_symbol)
+    existing = resolve_broker_symbol(session, tenant_id, broker_code, raw_symbol)
+    if existing is None:
+        existing = BrokerSymbol(
+            tenant_id=tenant_id,
+            instrument_id=instrument.id,
+            broker_code=broker_code,
+            raw_symbol=raw_symbol,
+        )
+        session.add(existing)
+
+    existing.instrument_id = instrument.id
+    for field_name, value in (
+        ("contract_size", contract_size),
+        ("digits", digits),
+        ("point", point),
+        ("tick_size", tick_size),
+        ("tick_value", tick_value),
+        ("volume_min", volume_min),
+        ("volume_max", volume_max),
+        ("volume_step", volume_step),
+    ):
+        if value is not None:
+            setattr(existing, field_name, value)
+    if margin_rules is not None:
+        existing.margin_rules = margin_rules
+    if spread_model is not None:
+        existing.spread_model = spread_model
+    if trading_hours is not None:
+        existing.trading_hours = trading_hours
+
+    session.flush()
+    return existing

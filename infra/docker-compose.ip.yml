@@ -1,0 +1,21 @@
+# Overlay for an IP-only deployment (no domain, therefore no TLS).
+#
+#   docker compose -f infra/docker-compose.prod.yml -f infra/docker-compose.ip.yml \
+#     --env-file infra/.env.prod up -d
+#
+# It swaps Caddy's config for the plain-HTTP one and drops the 443 binding, so
+# nothing advertises a TLS port that cannot serve a valid certificate.
+#
+# `NEXT_PUBLIC_API_URL` is deliberately *not* changed here. Every dashboard page
+# is server-rendered, so the fetch happens inside the compose network where
+# `api` resolves; pointing it at the public IP would send each page render out
+# through the internet and back for no reason.
+
+services:
+  caddy:
+    ports: !override
+      - "80:80"
+    volumes: !override
+      - ./Caddyfile.ip:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config

@@ -1,0 +1,245 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Design tokens.
+ *
+ * Two planes, not one: the page recedes and panels sit on it. That separation
+ * is what lets a data-dense screen stay organised without drawing boxes
+ * everywhere — a dashboard whose every element is the same colour reads as a
+ * wall of text.
+ *
+ * Data colours are separate from brand colours on purpose. The brand cyan is
+ * for chrome; series colours come from a palette validated for colour-vision
+ * deficiency and contrast against these exact surfaces. Never paint a chart
+ * with the brand accent because it looks on-brand.
+ */
+
+:root {
+  color-scheme: light;
+
+  --plane: #eef2f7;
+  --panel: #ffffff;
+  --panel-raised: #f8fafc;
+  --border: #dde5ee;
+  --border-strong: #c3d0de;
+
+  --ink: #0b2545;
+  --ink-2: #45586f;
+  --ink-3: #78889d;
+
+  --accent: #1b6ca8;
+  --accent-soft: rgba(27, 108, 168, 0.1);
+
+  /* Status — reserved. Never reused as a series colour. */
+  --good: #0ca30c;
+  --warning: #b87500;
+  --serious: #c96a3d;
+  --critical: #d03b3b;
+
+  /* Series — validated against --panel */
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --series-3: #1baf7a;
+  --series-4: #eda100;
+
+  --grid: #e6ecf3;
+  --axis: #c3d0de;
+
+  --shadow: 0 1px 2px rgba(11, 37, 69, 0.06), 0 1px 3px rgba(11, 37, 69, 0.04);
+}
+
+.dark {
+  color-scheme: dark;
+
+  --plane: #060d18;
+  --panel: #0d1826;
+  --panel-raised: #122032;
+  --border: #1e3047;
+  --border-strong: #2b4260;
+
+  --ink: #eaf6ff;
+  --ink-2: #a9bed6;
+  --ink-3: #6f8399;
+
+  --accent: #22d3ee;
+  --accent-soft: rgba(34, 211, 238, 0.12);
+
+  --good: #0ca30c;
+  --warning: #fab219;
+  --serious: #ec835a;
+  --critical: #e05a5a;
+
+  /* Same four hues, stepped for the dark surface — not an automatic flip. */
+  --series-1: #3987e5;
+  --series-2: #d95926;
+  --series-3: #199e70;
+  --series-4: #c98500;
+
+  --grid: #17273a;
+  --axis: #2b4260;
+
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+}
+
+html,
+body {
+  background: var(--plane);
+  color: var(--ink);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ------------------------------------------------------------------ layout */
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+}
+
+.panel-flat {
+  background: var(--panel);
+  border: 1px solid var(--border);
+}
+
+.panel-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.panel-title {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.ink-2 {
+  color: var(--ink-2);
+}
+.ink-3 {
+  color: var(--ink-3);
+}
+
+.eyebrow {
+  font-size: 0.625rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+/* Numbers that sit in columns must align; standalone figures should not be
+   forced into tabular widths. */
+.num {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+
+/* ------------------------------------------------------------------ tables */
+table.data {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8125rem;
+}
+
+table.data th,
+table.data td {
+  text-align: start;
+  padding: 0.5rem 0.875rem;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+table.data thead th {
+  position: sticky;
+  top: 0;
+  background: var(--panel-raised);
+  color: var(--ink-3);
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 0.625rem;
+  letter-spacing: 0.1em;
+  z-index: 1;
+}
+
+table.data tbody tr:hover {
+  background: var(--panel-raised);
+}
+
+table.data tbody tr:last-child td {
+  border-bottom: none;
+}
+
+/* ------------------------------------------------------------------ pieces */
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.125rem 0.5rem;
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
+.dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 999px;
+  flex: none;
+}
+
+.scroll-x {
+  overflow-x: auto;
+}
+
+.scroll-y {
+  overflow-y: auto;
+}
+
+/* Sidebar links: the active state is a filled rail, not just bold text —
+   scannable at a glance in a 28-item menu. */
+.nav-link {
+  display: block;
+  padding: 0.3rem 0.5rem;
+  border-radius: 6px;
+  font-size: 0.8125rem;
+  color: var(--ink-2);
+  border-inline-start: 2px solid transparent;
+}
+
+.nav-link:hover {
+  background: var(--panel-raised);
+  color: var(--ink);
+}
+
+.nav-link[data-active="true"] {
+  background: var(--accent-soft);
+  border-inline-start-color: var(--accent);
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.nav-link[data-planned="true"] {
+  color: var(--ink-3);
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 999px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}

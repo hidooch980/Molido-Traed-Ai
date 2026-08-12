@@ -1,0 +1,42 @@
+# Entry point for a deployment that has an IP but no domain.
+#
+# Plain HTTP, deliberately. Let's Encrypt will not issue a certificate for a
+# bare IP address, and Caddy's self-signed fallback produces a browser warning
+# that trains people to click through security errors — a worse habit than the
+# missing padlock. When a domain exists, switch back to `Caddyfile`, which does
+# real TLS automatically.
+#
+# What this means in practice: everything on the wire is readable in transit.
+# That is acceptable *only* because this deployment is read-only and carries no
+# credentials and no personal data — it serves public market prices and its own
+# health. The moment an endpoint mutates state, or a broker credential exists,
+# this file is no longer adequate and a domain becomes mandatory.
+
+:80 {
+	encode zstd gzip
+
+	header {
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+
+	handle /api/* {
+		reverse_proxy api:8000
+	}
+
+	handle /health/* {
+		reverse_proxy api:8000
+	}
+
+	# The OpenAPI explorer is a convenient map of the surface — for you and for
+	# anyone scanning the address. Left off; enable only behind a whitelist.
+	# handle /docs* {
+	# 	reverse_proxy api:8000
+	# }
+
+	handle {
+		reverse_proxy web:3000
+	}
+}

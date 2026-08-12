@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" role="img" aria-label="MolidoTrade AI monochrome mark">
+  <title>MolidoTrade AI (monochrome)</title>
+  <!-- Single-colour variant for print, watermarks, and dark/light inversion.
+       Inherits `currentColor`, so it takes the surrounding text colour. -->
+  <g fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round"
+     stroke-linejoin="round">
+    <rect x="6" y="6" width="116" height="116" rx="26"/>
+    <rect x="23" y="44" width="14" height="40" rx="3"/>
+    <rect x="45" y="34" width="14" height="34" rx="3"/>
+    <rect x="69" y="52" width="14" height="34" rx="3"/>
+    <rect x="91" y="28" width="14" height="38" rx="3"/>
+    <path d="M30 64 L52 51 L76 69 L98 47"/>
+  </g>
+  <g fill="currentColor">
+    <circle cx="30" cy="64" r="4"/>
+    <circle cx="52" cy="51" r="4"/>
+    <circle cx="76" cy="69" r="4"/>
+    <circle cx="98" cy="47" r="5"/>
+  </g>
+</svg>

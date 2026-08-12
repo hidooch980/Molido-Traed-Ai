@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" role="img" aria-label="MolidoTrade AI mark">
+  <title>MolidoTrade AI</title>
+  <defs>
+    <linearGradient id="mt-grad" x1="0" y1="128" x2="128" y2="0" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#0B2545"/>
+      <stop offset="0.55" stop-color="#1B6CA8"/>
+      <stop offset="1" stop-color="#22D3EE"/>
+    </linearGradient>
+    <linearGradient id="mt-glow" x1="64" y1="16" x2="64" y2="112" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#22D3EE"/>
+      <stop offset="1" stop-color="#1B6CA8"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Rounded field -->
+  <rect x="4" y="4" width="120" height="120" rx="28" fill="url(#mt-grad)"/>
+
+  <!-- The M is drawn as four candlestick columns: down, up, down, up.
+       Left-to-right the closes ascend, so the letterform and the price
+       action say the same thing. -->
+  <g stroke="#EAF6FF" stroke-linecap="round" stroke-width="4" opacity="0.35">
+    <line x1="30" y1="30" x2="30" y2="98"/>
+    <line x1="52" y1="24" x2="52" y2="92"/>
+    <line x1="76" y1="34" x2="76" y2="104"/>
+    <line x1="98" y1="20" x2="98" y2="88"/>
+  </g>
+
+  <g fill="url(#mt-glow)" stroke="#EAF6FF" stroke-width="2.5">
+    <rect x="23" y="44" width="14" height="40" rx="3"/>
+    <rect x="45" y="34" width="14" height="34" rx="3"/>
+    <rect x="69" y="52" width="14" height="34" rx="3"/>
+    <rect x="91" y="28" width="14" height="38" rx="3"/>
+  </g>
+
+  <!-- Neural link: the AI reading the sequence -->
+  <path d="M30 64 L52 51 L76 69 L98 47" fill="none" stroke="#7DF9FF" stroke-width="3"
+        stroke-linecap="round" stroke-linejoin="round" opacity="0.95"/>
+  <g fill="#7DF9FF">
+    <circle cx="30" cy="64" r="4.5"/>
+    <circle cx="52" cy="51" r="4.5"/>
+    <circle cx="76" cy="69" r="4.5"/>
+    <circle cx="98" cy="47" r="5.5"/>
+  </g>
+  <circle cx="98" cy="47" r="9" fill="none" stroke="#7DF9FF" stroke-width="2" opacity="0.5"/>
+</svg>
