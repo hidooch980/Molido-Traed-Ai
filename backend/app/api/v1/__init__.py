@@ -4,6 +4,7 @@ from app.api.v1 import (
     auth,
     brain,
     data_quality,
+    decisions,
     episodes,
     features,
     instruments,
@@ -28,5 +29,6 @@ api_router.include_router(memory.router)
 api_router.include_router(episodes.router)
 api_router.include_router(similarity.router)
 api_router.include_router(world_state.router)
+api_router.include_router(decisions.router)
 
 __all__ = ["api_router"]
