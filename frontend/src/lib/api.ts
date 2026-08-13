@@ -208,8 +208,44 @@ function nowIso(): string {
   return new Date().toISOString();
 }
 
+/** What `/decisions/posture` answers: can this deployment trade right now? */
+export interface Posture {
+  can_trade: boolean;
+  blockers: string[];
+  policy: {
+    execution_enabled: boolean;
+    dry_run: boolean;
+    require_auth: boolean;
+    max_risk_r_per_order: number;
+  };
+  routes: { mutating: string[]; ungated: string[] };
+  operational_rows: Record<string, number>;
+  note: string;
+}
+
+export interface ReadinessCheck {
+  name: string;
+  grade: "blocking" | "important" | "advisory";
+  passed: boolean;
+  detail: string;
+  rationale: string;
+}
+
+export interface Readiness {
+  checked_at: string;
+  safe_to_trade: boolean;
+  blocking_failures: string[];
+  important_failures: string[];
+  passed: number;
+  total: number;
+  checks: ReadinessCheck[];
+  note: string;
+}
+
 export const api = {
   health: () => request<Health>("/health/ready"),
+  posture: () => request<Posture>("/api/v1/decisions/posture"),
+  readiness: () => request<Readiness>("/api/v1/decisions/readiness"),
   instruments: () => request<Instrument[]>("/api/v1/instruments"),
   dataQuality: (instrumentId: string) =>
     request<DataQuality>(`/api/v1/data-quality/${instrumentId}`),

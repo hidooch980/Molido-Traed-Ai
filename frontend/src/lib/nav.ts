@@ -18,7 +18,7 @@ export interface NavItem {
 export const NAV: NavItem[] = [
   { key: "home", labelKey: "nav.home", href: "/", group: "overview" },
   { key: "ai-brain", labelKey: "nav.aiBrain", planned: true, group: "overview" },
-  { key: "situation-room", labelKey: "nav.situationRoom", planned: true, group: "overview" },
+  { key: "situation-room", labelKey: "nav.situationRoom", href: "/posture", group: "overview" },
 
   { key: "markets", labelKey: "nav.markets", href: "/markets", group: "market" },
   { key: "sessions", labelKey: "nav.sessions", href: "/sessions", group: "market" },
