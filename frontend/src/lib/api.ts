@@ -257,6 +257,56 @@ export interface WorldState {
   quality: WorldStateBlock;
 }
 
+/** One connection, from `/brokers`. */
+export interface Connection {
+  name: string;
+  connected?: boolean;
+  simulated?: boolean;
+  role: string;
+  note?: string;
+}
+
+export interface BrokerView {
+  market_data: Connection;
+  execution: Connection;
+  metatrader: {
+    name: string;
+    installed_on_host: boolean;
+    reachable_from_application: boolean;
+    terminal_path: string;
+    role: string;
+    blocked_by: string[];
+  };
+  challenge_providers: string[];
+  no_broker_catalogue_here: boolean;
+  why: string;
+}
+
+export interface RulebookEntry {
+  key: string;
+  provider: string;
+  program: string;
+  phase: string;
+  source: string;
+  retrieved: string;
+  confirmed_by_holder: boolean;
+  profit_target_pct: number | string;
+  max_daily_drawdown_pct: number | string;
+  max_total_drawdown_pct: number | string;
+  total_drawdown_trailing: boolean | null;
+  min_trading_days: number | string;
+  max_trading_days: number | string;
+  allowance_basis: string | null;
+  notes: string[];
+}
+
+export interface RulebookView {
+  rulebooks: RulebookEntry[];
+  providers: string[];
+  none_are_confirmed: boolean;
+  note: string;
+}
+
 /** Hard and soft limits, from `/risk/limits`. */
 export interface RiskLimits {
   hard: Record<string, number>;
@@ -464,6 +514,8 @@ export const api = {
   health: () => request<Health>("/health/ready"),
   systemSettings: () => request<SystemSettings>("/api/v1/system/settings"),
   riskLimits: () => request<RiskLimits>("/api/v1/risk/limits"),
+  brokers: () => request<BrokerView>("/api/v1/brokers"),
+  rulebooks: () => request<RulebookView>("/api/v1/risk/rulebooks"),
   executionPolicy: () => request<ExecutionPolicyView>("/api/v1/execution/policy"),
   accounts: () => request<AccountsView>("/api/v1/execution/accounts"),
   learningThresholds: () =>
