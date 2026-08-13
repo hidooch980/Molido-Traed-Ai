@@ -29,6 +29,32 @@ DISPLAY_NUM=99
 
 log() { printf '\n=== %s ===\n' "$1"; }
 
+# Ubuntu ships wineserver outside PATH, under the multiarch library directory.
+# Calling it by bare name worked on every machine this was drafted against and
+# failed on the one it had to run on, with 1.2GB of Wine already on disk.
+wineserver_bin() {
+  command -v wineserver 2>/dev/null && return 0
+  for candidate in \
+    /usr/lib/x86_64-linux-gnu/wine/wineserver \
+    /usr/lib/wine/wineserver \
+    /opt/wine-stable/bin/wineserver; do
+    [ -x "$candidate" ] && { echo "$candidate"; return 0; }
+  done
+  return 1
+}
+
+# Waiting for the prefix to settle is a courtesy, not a requirement, so a
+# missing binary slows the script down rather than ending it.
+wine_settle() {
+  local server
+  if server="$(wineserver_bin)"; then
+    "$server" -w
+  else
+    echo "wineserver not found - continuing without waiting"
+    sleep 3
+  fi
+}
+
 verify() {
   log "wine"
   command -v wine >/dev/null && wine --version || echo "not installed"
@@ -67,7 +93,7 @@ export WINEARCH=win64
 export WINEDLLOVERRIDES="mscoree,mshtml="   # skip the .NET and Gecko prompts
 mkdir -p "$WINEPREFIX"
 wineboot --init 2>&1 | tail -3 || true
-wineserver -w
+wine_settle
 
 log "display"
 pkill -f "Xvfb :${DISPLAY_NUM}" 2>/dev/null || true
@@ -86,7 +112,7 @@ log "install"
 # /auto runs the installer without a wizard. It still needs the display above:
 # it draws a progress window even in automatic mode.
 wine "$HOME/mt5/mt5setup.exe" /auto 2>&1 | tail -5 || true
-wineserver -w
+wine_settle
 
 log "result"
 verify
