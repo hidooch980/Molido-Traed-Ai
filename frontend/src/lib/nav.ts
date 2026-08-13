@@ -55,6 +55,20 @@ export const NAV: NavItem[] = [
   { key: "settings", labelKey: "nav.settings", href: "/settings", group: "operations" },
 ];
 
+/**
+ * How much of the map is actually reachable, counted rather than typed.
+ *
+ * The badge above this used to read "53 / 53 built". Nothing measured it: it
+ * was a number somebody typed, it counted how much code existed, and it stayed
+ * 53 / 53 whether or not a single screen worked. This counts links that resolve
+ * to a page, and `test_navigation_contract` asserts every one of those pages
+ * exists and reads the API — so the number cannot climb without something
+ * having been built and checked.
+ */
+export function reachable(): { linked: number; total: number } {
+  return { linked: NAV.filter((item) => item.href).length, total: NAV.length };
+}
+
 export const GROUP_LABELS: Record<NavItem["group"], string> = {
   overview: "Overview",
   market: "Market",

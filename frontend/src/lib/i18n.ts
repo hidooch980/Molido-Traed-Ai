@@ -22,6 +22,7 @@ export function direction(locale: Locale): "rtl" | "ltr" {
 type Dictionary = Record<string, string>;
 
 const en: Dictionary = {
+  "app.coverage": "{linked} / {total} screens reachable · no proven edge",
   "risk.title": "Risk limits",
   "risk.subtitle": "What this deployment permits, and what it will not permit under any request. Hard limits are frozen in code; nothing here can raise them.",
   "risk.maxDrawdown": "Max total drawdown",
@@ -579,6 +580,7 @@ const en: Dictionary = {
 };
 
 const fa: Dictionary = {
+  "app.coverage": "{linked} از {total} صفحه در دسترس · بدون لبهٔ اثبات‌شده",
   "risk.title": "سقف‌های ریسک",
   "risk.subtitle": "آنچه این استقرار مجاز می‌داند و آنچه تحت هیچ درخواستی مجاز نمی‌داند. سقف‌های سخت در کد قفل شده‌اند؛ هیچ چیز در اینجا نمی‌تواند آن‌ها را بالا ببرد.",
   "risk.maxDrawdown": "حداکثر افت کل",

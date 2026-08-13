@@ -5,7 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useState } from "react";
 
 import { translator, type Locale } from "@/lib/i18n";
-import { NAV, type NavItem } from "@/lib/nav";
+import { NAV, reachable, type NavItem } from "@/lib/nav";
 
 const GROUPS: NavItem["group"][] = [
   "overview",
@@ -56,6 +56,12 @@ export default function Shell({
   const [dark, setDark] = useState(true);
   const [menuOpen, setMenuOpen] = useState(false);
   const t = translator(locale);
+  // Counted from the nav table on every render rather than typed into the
+  // translation file, so the badge cannot claim a page that was never wired.
+  const { linked, total } = reachable();
+  const coverage = t("app.coverage")
+    .replace("{linked}", String(linked))
+    .replace("{total}", String(total));
 
   /**
    * The language lives in a cookie, not in React state.
@@ -102,6 +108,10 @@ export default function Shell({
         </div>
 
         <div className="flex-1" />
+
+        <span className="pill hidden md:inline-flex" style={{ color: "var(--ink-3)" }}>
+          {coverage}
+        </span>
 
         <button
           type="button"
@@ -181,6 +191,7 @@ export default function Shell({
             style={{ borderTop: "1px solid var(--border)" }}
           >
             <span className="font-semibold">MolidoTrade AI</span>
+            <span>{coverage}</span>
             <span className="num" title="build timestamp (UTC)">
               build {process.env.NEXT_PUBLIC_BUILD || "dev"}
             </span>

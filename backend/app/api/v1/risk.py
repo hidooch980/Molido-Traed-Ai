@@ -226,6 +226,14 @@ def read_challenge(
     max_daily_drawdown_pct: float | None = Query(default=0.05, gt=0),
     max_total_drawdown_pct: float | None = Query(default=0.10, gt=0),
     proposed_risk_r: float | None = Query(default=None, gt=0),
+    currency_per_r: float | None = Query(
+        default=None,
+        gt=0,
+        description=(
+            "What one R is worth in account currency. Omitted blocks: without it "
+            "a drawdown allowance in money cannot be turned into a risk figure."
+        ),
+    ),
     _: Principal = READ,
 ) -> dict[str, Any]:
     """A prop-firm rulebook checked against an account state.
@@ -265,6 +273,7 @@ def read_challenge(
         open_positions=open_positions,
         current_date=date.today(),
         current_balance=current_equity,
+        currency_per_r=currency_per_r,
     )
     payload = challenge_brain.check(rules, state, proposed_risk_r).as_dict()
     payload["rulebook_source"] = (

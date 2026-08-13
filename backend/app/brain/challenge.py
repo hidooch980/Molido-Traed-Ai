@@ -862,7 +862,7 @@ def check(
 
     consistency = evaluate_consistency(rules.max_single_day_profit_share, state.daily_profits)
     consistency_ok: bool | None = None
-    if rules.max_single_day_profit_share is not None:
+    if isinstance(rules.max_single_day_profit_share, float | int):
         if consistency.available:
             consistency_ok = consistency.within_limit
             if consistency_ok is False and consistency.best_day_share is not None:
@@ -882,7 +882,13 @@ def check(
             outstanding: list[str] = []
             if days_short:
                 outstanding.append(f"{days_short} more trading day(s) required")
-            if rules.max_single_day_profit_share is not None and consistency_ok is not True:
+            # `is not None` here read NOT_IMPOSED as an imposed rule, so a
+            # provider with no consistency requirement kept an account at
+            # in_progress after it had met the target.
+            if (
+                isinstance(rules.max_single_day_profit_share, float | int)
+                and consistency_ok is not True
+            ):
                 outstanding.append("the consistency rule is not satisfied")
             if outstanding:
                 warnings.append(

@@ -799,3 +799,48 @@ class TestAnUndefinedRatioIsNotAMeasurement:
 
         assert verdict.daily.consumed is None
         assert verdict.daily.as_dict()["consumed"] is None
+
+class TestTheMarkerDidNotBreakTheRulesItTouched:
+    """Regressions the three-state split introduced, found by driving the
+    deployed endpoint rather than by reading the diff again.
+
+    Adding NOT_IMPOSED changed what `is not None` means for every rule field,
+    and two checks were left reading the old meaning. Both were silent: the
+    suite stayed green and the endpoint kept answering, just wrongly.
+    """
+
+    def test_a_met_target_passes_when_no_consistency_rule_is_imposed(self):
+        """`is not None` saw NOT_IMPOSED as an imposed rule, so an account that
+        had made its target sat at in_progress waiting on a rule its provider
+        does not have."""
+        verdict = ch.check(
+            dataclasses.replace(uncapped(), profit_target_pct=0.10),
+            state(current_equity=111_000.0, current_balance=111_000.0),
+            None,
+        )
+
+        assert verdict.status == "passed"
+
+    def test_a_met_target_still_waits_on_a_real_consistency_rule(self):
+        """The other half: an imposed rule with nothing to judge it on must
+        still hold the pass back."""
+        verdict = ch.check(
+            dataclasses.replace(
+                uncapped(), profit_target_pct=0.10, max_single_day_profit_share=0.4
+            ),
+            state(current_equity=111_000.0, current_balance=111_000.0),
+            None,
+        )
+
+        assert verdict.status == "in_progress"
+        assert any("consistency" in w for w in verdict.warnings)
+
+    def test_an_unpriced_r_is_the_reason_a_healthy_account_blocks(self):
+        """Driving the live endpoint, every state blocked - including a fresh
+        untouched account. The cause was not the rulebook: one R had no value
+        in account currency, so no allowance could become a risk figure. The
+        block is right; an endpoint with no way to supply the number is not."""
+        healthy = state(currency_per_r=None)
+
+        assert ch.check(rules(), healthy, 1.0).allowed is False
+        assert ch.check(rules(), state(currency_per_r=200.0), 1.0).allowed is True
