@@ -68,5 +68,12 @@ disallow_untyped_defs = false
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Every test module imports `tests.conftest` for its fixtures, which needs this
+# directory on sys.path. Locally an editable install happened to put it there
+# and the omission was invisible; a modern PEP 660 editable install maps only
+# the declared `app` package, so `tests` was not importable and every module
+# failed at collection. That is what kept CI red for the project's entire
+# history while the same suite passed on the same Python on the same OS.
+pythonpath = ["."]
 asyncio_mode = "auto"
 filterwarnings = ["ignore::DeprecationWarning"]
