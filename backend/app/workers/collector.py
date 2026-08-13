@@ -25,6 +25,7 @@ Design notes that matter operationally:
 from __future__ import annotations
 
 import asyncio
+import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -37,9 +38,19 @@ from app.core.errors import InsufficientDataError, MolidoError
 from app.core.logging import bind_trace, configure_logging, get_logger
 from app.db.session import session_scope
 from app.models.instruments import Instrument
+from app.models.market_data import Bar
 from app.providers.base import MarketDataProvider
 from app.providers.registry import get_provider, install_defaults, register
-from app.services import audit, episodes, feature_store, ingestion, sessions, symbol_dna
+from app.services import (
+    audit,
+    data_quality,
+    episodes,
+    feature_store,
+    ingestion,
+    retention,
+    sessions,
+    symbol_dna,
+)
 from app.services.instruments import get_instrument_by_symbol, upsert_instrument
 from app.workers.watchlist import WatchEntry, parse_watchlist
 
@@ -73,6 +84,10 @@ class CycleReport:
     ingested: int = 0
     written: int = 0
     features_written: int = 0
+    #: Feeds that produced no recent bar. Counted separately from failures: a
+    #: stale feed is not a failed fetch, and collapsing them would hide a
+    #: symbol that went quiet behind a cycle that reported success.
+    stale_findings: int = 0
     failures: list[str] = field(default_factory=list)
 
     def as_payload(self) -> dict[str, Any]:
@@ -82,6 +97,7 @@ class CycleReport:
             "ingested": self.ingested,
             "bars_written": self.written,
             "features_written": self.features_written,
+            "stale_findings": self.stale_findings,
             "failures": self.failures[:10],
             "failure_count": len(self.failures),
         }
@@ -162,6 +178,14 @@ def run_cycle(entries: list[WatchEntry] | None = None) -> CycleReport:
                     report.features_written += _materialize(
                         session, instrument, entry.timeframe, now
                     )
+
+                # Checked on every cycle, including the ones that wrote
+                # nothing. A cycle that fetched no bars is the case this exists
+                # for, so running it only after a successful write would skip
+                # exactly the symbol that went quiet.
+                report.stale_findings += _record_staleness(
+                    session, instrument, provider_row.id, entry.timeframe, now
+                )
         except MolidoError as exc:
             report.failures.append(f"{entry.key}: {exc.code}: {exc.message}")
             log.error("collector.entry_failed", entry=entry.key, error=str(exc))
@@ -206,6 +230,44 @@ def _window_start(
         )
         return now - depth
     return min(checkpoint.last_event_time, now - REFRESH_WINDOW)
+
+
+def _record_staleness(
+    session,
+    instrument: Instrument,
+    provider_id: uuid.UUID,
+    timeframe: Timeframe,
+    now: datetime,
+) -> int:
+    """Write a finding when a feed has stopped producing bars.
+
+    The four detectors `evaluate_bars` runs all examine bars that arrived, and
+    none of them can see bars that did not. So a feed that dies quietly is the
+    one defect the quality report cannot describe - which is the opposite of
+    what a quality report is for.
+
+    Reads the latest stored bar rather than the batch just fetched: an empty
+    fetch is exactly the case worth catching, and a batch-derived timestamp
+    would be missing precisely when it matters.
+    """
+    latest = (
+        session.query(Bar.event_time)
+        .filter(Bar.instrument_id == instrument.id, Bar.timeframe == timeframe)
+        .order_by(Bar.event_time.desc())
+        .limit(1)
+        .scalar()
+    )
+    finding = data_quality.check_staleness(latest, timeframe, now=now)
+    if finding is None:
+        return 0
+    return data_quality.persist_findings(
+        session,
+        instrument_id=instrument.id,
+        provider_id=provider_id,
+        timeframe=timeframe,
+        findings=[finding],
+        detected_at=now,
+    )
 
 
 def _materialize(session, instrument: Instrument, timeframe: Timeframe, now: datetime) -> int:
@@ -304,6 +366,33 @@ def refresh_dna(entries: list[WatchEntry] | None = None) -> dict[str, Any]:
     }
 
 
+# Retention runs weekly and for real rather than dry. A dry-run-forever
+# retention job is a disk that fills at the same rate as before, with a log
+# line saying what could have been done about it.
+RETENTION_HOUR = 4
+RETENTION_WEEKDAY = 6  # Sunday, when the market is shut and nothing is mid-write
+
+
+def prune_old_rows() -> dict[str, Any]:
+    """Apply the retention policies.
+
+    Written after the disk filled, then never scheduled - a fix for an incident
+    that could not run. Every policy protects the rows it must never touch, and
+    the report says what each one removed rather than only a total.
+    """
+    with session_scope() as session:
+        report = retention.prune(session, dry_run=False)
+
+    payload = report.as_dict() if hasattr(report, "as_dict") else {"removed": str(report)}
+    log.info("collector.retention_pruned", **{"summary": str(payload)[:400]})
+    return payload
+
+
+async def prune_old_rows_job(ctx: dict) -> dict[str, Any]:
+    """ARQ wrapper. Threaded for the same reason `collect` is."""
+    return await asyncio.to_thread(prune_old_rows)
+
+
 # Episodes are built a day behind rather than up to now. An episode is only
 # honest once its outcome window has closed, and `build` skips the immature
 # ones anyway - reaching for today's bars would spend the sweep discovering
@@ -374,6 +463,85 @@ def build_episodes(entries: list[WatchEntry] | None = None) -> dict[str, Any]:
     }
 
 
+# A day behind the episode sweep. Nothing here is urgent: a conflict between
+# feeds is a standing condition, not an event, and checking it hourly would
+# rewrite the same finding row all day.
+CONFLICT_CHECK_HOUR = 4
+CONFLICT_WINDOW = timedelta(days=14)
+
+
+def compare_providers(entries: list[WatchEntry] | None = None) -> dict[str, Any]:
+    """Compare what each provider stored, for every watched instrument.
+
+    `data_quality.detect_provider_conflicts` was written in phase 3 and had
+    never run. It compares two feeds, and `evaluate_bars` walks one normalised
+    series, so there was no path from ingestion to the detector at all - the
+    one issue in `DataQualityIssue` needing a second opinion could not be
+    raised.
+
+    Harmless while this deployment has a single provider. Not harmless the
+    moment MetaTrader lands beside yfinance, which is why it is wired now.
+    """
+    settings = get_settings()
+    entries = entries or parse_watchlist(settings.watchlist)
+    now = datetime.now(UTC)
+    compared = 0
+    single_provider = 0
+    conflicts = 0
+    written = 0
+    failures: list[str] = []
+
+    for entry in entries:
+        try:
+            with session_scope() as session:
+                instrument = get_instrument_by_symbol(session, entry.symbol)
+                if instrument is None:
+                    continue
+                result = data_quality.compare_providers(
+                    session,
+                    instrument.id,
+                    entry.timeframe,
+                    since=now - CONFLICT_WINDOW,
+                    detected_at=now,
+                )
+                if result["compared"]:
+                    compared += 1
+                    conflicts += result["conflicts"]
+                    written += result["written"]
+                else:
+                    single_provider += 1
+        except MolidoError as exc:
+            failures.append(f"{entry.key}: {exc.code}")
+        except Exception as exc:  # noqa: BLE001
+            failures.append(f"{entry.key}: {type(exc).__name__}")
+
+    log.info(
+        "collector.providers_compared",
+        entries=len(entries),
+        compared=compared,
+        single_provider=single_provider,
+        conflicts=conflicts,
+        findings_written=written,
+        failures=len(failures),
+    )
+    return {
+        "entries": len(entries),
+        # Counted apart from `compared` on purpose. A series with one feed was
+        # not found clean; it was not checked, and folding the two together is
+        # how an unmeasured system reports itself healthy.
+        "compared": compared,
+        "single_provider": single_provider,
+        "conflicts": conflicts,
+        "findings_written": written,
+        "failures": failures,
+    }
+
+
+async def compare_providers_job(ctx: dict) -> dict[str, Any]:
+    """ARQ wrapper. Threaded for the same reason `collect` is."""
+    return await asyncio.to_thread(compare_providers)
+
+
 async def build_episodes_job(ctx: dict) -> dict[str, Any]:
     """ARQ wrapper. Threaded for the same reason `collect` is."""
     return await asyncio.to_thread(build_episodes)
@@ -401,6 +569,15 @@ def _cron_jobs() -> list:
         # watchlist, and two full sweeps at once on a two-core box starve the
         # collection cycle that has to land on the minute.
         cron(build_episodes_job, hour={EPISODE_BUILD_HOUR}, minute={0}, max_tries=1),
+        cron(compare_providers_job, hour={CONFLICT_CHECK_HOUR}, minute={0}, max_tries=1),
+        # Weekly, on the shut market, after the two daily sweeps.
+        cron(
+            prune_old_rows_job,
+            weekday={RETENTION_WEEKDAY},
+            hour={RETENTION_HOUR},
+            minute={0},
+            max_tries=1,
+        ),
     ]
 
 
@@ -419,7 +596,13 @@ class WorkerSettings:
     message that points nowhere near the actual mistake.
     """
 
-    functions = [collect, refresh_dna_job, build_episodes_job]
+    functions = [
+        collect,
+        refresh_dna_job,
+        build_episodes_job,
+        prune_old_rows_job,
+        compare_providers_job,
+    ]
     on_startup = startup
     max_jobs = 2
     job_timeout = 900

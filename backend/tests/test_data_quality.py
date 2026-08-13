@@ -11,6 +11,7 @@ from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 
 import pytest
+from sqlalchemy import select
 
 from app.core.enums import DataQualityIssue, Severity, Timeframe
 from app.providers.base import RawBar
@@ -448,3 +449,127 @@ def test_expected_bar_count():
 )
 def test_timeframe_deltas(timeframe, expected_seconds):
     assert timeframe.delta.total_seconds() == expected_seconds
+
+class TestComparingWhatProvidersStored:
+    """`detect_provider_conflicts` had no caller for eleven phases.
+
+    It was tested the whole time - as a pure function, over dictionaries a test
+    built by hand. What was missing was any path from stored bars to it, so the
+    coverage was real and the detector had still never seen a live row.
+    """
+
+    def _store(self, session, instrument, code: str, closes: dict, *, revision: int = 1):
+        """Write bars for one provider, the way ingestion writes them."""
+        from app.models.instruments import Provider
+        from app.models.market_data import Bar
+
+        provider = session.scalar(select(Provider).where(Provider.code == code))
+        if provider is None:
+            provider = Provider(name=code, code=code, kind="market_data")
+            session.add(provider)
+            session.flush()
+
+        for event_time, close in closes.items():
+            session.add(
+                Bar(
+                    instrument_id=instrument.id,
+                    provider_id=provider.id,
+                    timeframe=Timeframe.H1,
+                    event_time=event_time,
+                    revision=revision,
+                    ingested_at=event_time,
+                    open=close,
+                    high=close * 1.001,
+                    low=close * 0.999,
+                    close=close,
+                    volume=1.0,
+                    quality_score=1.0,
+                )
+            )
+        session.flush()
+        return provider
+
+    def test_one_provider_is_unchecked_rather_than_clean(self, session, instrument):
+        """A feed cannot disagree with itself, and saying `conflicts: 0` here
+        would be a measurement nobody made."""
+        moment = BASE_TIME + timedelta(hours=1)
+        self._store(session, instrument, "alpha", {moment: 1.1000})
+
+        result = data_quality.compare_providers(session, instrument.id, Timeframe.H1)
+
+        assert result["compared"] is False
+        assert "needs two" in result["reason"]
+
+    def test_two_agreeing_providers_raise_nothing(self, session, instrument):
+        moment = BASE_TIME + timedelta(hours=1)
+        self._store(session, instrument, "alpha", {moment: 1.1000})
+        self._store(session, instrument, "beta", {moment: 1.1001})
+
+        result = data_quality.compare_providers(session, instrument.id, Timeframe.H1)
+
+        assert result["compared"] is True
+        assert result["conflicts"] == 0
+
+    def test_a_real_disagreement_is_found_and_stored(self, session, instrument):
+        moment = BASE_TIME + timedelta(hours=1)
+        self._store(session, instrument, "alpha", {moment: 1.1000})
+        self._store(session, instrument, "beta", {moment: 1.1500})
+
+        result = data_quality.compare_providers(session, instrument.id, Timeframe.H1)
+
+        assert result["conflicts"] == 1
+        assert result["written"] == 1
+
+    def test_a_correction_is_not_a_conflict(self, session, instrument):
+        """A superseded bar disagreeing with a current one is one feed
+        correcting itself, which is the system working. Comparing every
+        revision would turn every correction into an error."""
+        moment = BASE_TIME + timedelta(hours=1)
+        self._store(session, instrument, "alpha", {moment: 9.9999}, revision=1)
+        self._store(session, instrument, "alpha", {moment: 1.1000}, revision=2)
+        self._store(session, instrument, "beta", {moment: 1.1001})
+
+        result = data_quality.compare_providers(session, instrument.id, Timeframe.H1)
+
+        assert result["conflicts"] == 0
+
+    def test_only_shared_instants_are_compared(self, session, instrument):
+        """A bar one feed has and the other does not is a gap, which has its
+        own detector. Treating it as a conflict would report the same defect
+        twice under two names."""
+        first = BASE_TIME + timedelta(hours=1)
+        second = BASE_TIME + timedelta(hours=2)
+        self._store(session, instrument, "alpha", {first: 1.1000, second: 1.1000})
+        self._store(session, instrument, "beta", {first: 1.1001})
+
+        result = data_quality.compare_providers(session, instrument.id, Timeframe.H1)
+
+        assert result["bars_compared"] == 1
+        assert result["conflicts"] == 0
+
+    def test_re_running_does_not_inflate_the_finding_count(self, session, instrument):
+        """Checking a dataset twice must not make it look worse. The score is
+        derived from stored findings, so a repeat that wrote a second row would
+        decay the score for no reason but being looked at."""
+        moment = BASE_TIME + timedelta(hours=1)
+        self._store(session, instrument, "alpha", {moment: 1.1000})
+        self._store(session, instrument, "beta", {moment: 1.1500})
+
+        data_quality.compare_providers(session, instrument.id, Timeframe.H1)
+        again = data_quality.compare_providers(session, instrument.id, Timeframe.H1)
+
+        assert again["conflicts"] == 1
+        assert again["written"] == 0
+
+    def test_the_since_window_limits_what_is_read(self, session, instrument):
+        old = BASE_TIME + timedelta(hours=1)
+        recent = BASE_TIME + timedelta(days=20)
+        self._store(session, instrument, "alpha", {old: 1.1000, recent: 1.2000})
+        self._store(session, instrument, "beta", {old: 1.9000, recent: 1.2001})
+
+        result = data_quality.compare_providers(
+            session, instrument.id, Timeframe.H1, since=BASE_TIME + timedelta(days=10)
+        )
+
+        assert result["bars_compared"] == 1
+        assert result["conflicts"] == 0

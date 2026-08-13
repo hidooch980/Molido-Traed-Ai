@@ -387,3 +387,68 @@ class TestEpisodeBuilding:
         result = collector.build_episodes(entries)
 
         assert result["built"] > 0
+
+
+class TestProviderComparison:
+    """The detector that had no caller.
+
+    `detect_provider_conflicts` shipped in phase 3 and never ran once. Not
+    because it was broken - because `evaluate_bars` walks a single normalised
+    series and a conflict needs two, so no path existed from ingestion to it.
+    The one issue in `DataQualityIssue` requiring a second opinion could not be
+    raised by any code path in the application.
+
+    That cost nothing while there was one provider. It costs a great deal the
+    first time a second feed disagrees and nobody is looking.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _patch_session(self, session, monkeypatch):
+        from contextlib import contextmanager
+
+        @contextmanager
+        def fake_scope():
+            yield session
+
+        monkeypatch.setattr(collector, "session_scope", fake_scope)
+
+    def test_the_worker_registers_the_job(self):
+        names = [f.__name__ for f in collector.WorkerSettings.functions]
+
+        assert "compare_providers_job" in names
+
+    def test_there_is_a_cron_entry_for_it(self):
+        assert len(collector.WorkerSettings.cron_jobs) >= 5
+
+    def test_each_sweep_runs_at_its_own_hour(self):
+        """All three walk the whole watchlist. Stacking them on a two-core box
+        starves the collection cycle that has to land on the minute."""
+        hours = {
+            collector.DNA_REFRESH_HOUR,
+            collector.EPISODE_BUILD_HOUR,
+            collector.CONFLICT_CHECK_HOUR,
+        }
+
+        assert len(hours) == 3
+
+    def test_a_single_provider_is_reported_as_unchecked_not_clean(
+        self, monkeypatch, session
+    ):
+        """The distinction the whole codebase turns on. One feed was not found
+        to agree with itself; it was not checked, and folding those together is
+        how an unmeasured system reports itself healthy."""
+        provider = FakeProvider({"BTC-USD": recent_bars(200)})
+        monkeypatch.setattr(collector, "_resolve_provider", lambda: provider)
+        entries = parse_watchlist("BTCUSD:BTC-USD:H1")
+        collector.run_cycle(entries)
+
+        result = collector.compare_providers(entries)
+
+        assert result["compared"] == 0
+        assert result["single_provider"] == 1
+        assert result["conflicts"] == 0
+
+    def test_an_unknown_symbol_is_skipped_not_crashed(self):
+        result = collector.compare_providers(parse_watchlist("NOSUCH:NOSUCH=X:H1"))
+
+        assert result["failures"] == []

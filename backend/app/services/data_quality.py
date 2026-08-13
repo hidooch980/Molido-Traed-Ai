@@ -17,6 +17,7 @@ import uuid
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -450,6 +451,122 @@ def detect_provider_conflicts(
                 )
             )
     return findings
+
+
+def compare_providers(
+    session: Session,
+    instrument_id: uuid.UUID,
+    timeframe: Timeframe,
+    *,
+    since: datetime | None = None,
+    tolerance: float = 0.002,
+    detected_at: datetime | None = None,
+) -> dict[str, Any]:
+    """Run the conflict detector over what each provider actually stored.
+
+    Reads bars back out of the database rather than comparing an ingestion
+    batch, because two providers rarely deliver in the same request and a
+    conflict that only exists across two runs is still a conflict.
+
+    Only the latest revision per (provider, event_time) is compared. A
+    superseded bar disagreeing with a current one is not a conflict between
+    feeds; it is one feed correcting itself, which is the system working.
+
+    Findings are attributed to the provider whose close sits furthest from the
+    group. That is a reporting choice, not a verdict on who is wrong - which
+    feed to believe is the operator's call via `Provider.trust_weight`, and
+    this function deliberately does not make it.
+    """
+    from app.models.instruments import Provider
+    from app.models.market_data import Bar
+
+    rows = session.execute(
+        select(
+            Provider.code,
+            Provider.id,
+            Bar.event_time,
+            Bar.close,
+            Bar.revision,
+            Bar.open,
+            Bar.high,
+            Bar.low,
+        )
+        .join(Provider, Provider.id == Bar.provider_id)
+        .where(
+            Bar.instrument_id == instrument_id,
+            Bar.timeframe == timeframe,
+            *( [Bar.event_time >= since] if since else [] ),
+        )
+        .order_by(Bar.event_time, Bar.revision)
+    ).all()
+
+    # Later revisions overwrite earlier ones for the same (provider, instant).
+    latest: dict[tuple[str, datetime], RawBar] = {}
+    provider_ids: dict[str, uuid.UUID] = {}
+    for code, provider_id, event_time, close, _revision, open_, high, low in rows:
+        # Coerced to float here rather than left as the Numeric column's
+        # Decimal. The detector puts the disagreeing closes into a finding's
+        # `details`, that column is JSON, and Decimal is not serialisable - so
+        # a Decimal reaching this far crashes the sweep on the first real
+        # conflict and never on a clean one. Found by a test that stored two
+        # disagreeing feeds instead of two dictionaries.
+        latest[(code, event_time)] = RawBar(
+            event_time=event_time,
+            open=float(open_),
+            high=float(high),
+            low=float(low),
+            close=float(close),
+            volume=0.0,
+        )
+        provider_ids[code] = provider_id
+
+    series: dict[str, list[RawBar]] = {}
+    for (code, _event_time), bar in latest.items():
+        series.setdefault(code, []).append(bar)
+    for bars in series.values():
+        bars.sort(key=lambda b: b.event_time)
+
+    if len(series) < 2:
+        # Not "no conflicts". One feed cannot disagree with itself, and
+        # reporting a clean result here would be a measurement nobody made.
+        return {
+            "compared": False,
+            "reason": (
+                f"{len(series)} provider(s) have bars for this series; a conflict "
+                "needs two"
+            ),
+            "providers": sorted(series),
+            "conflicts": 0,
+            "written": 0,
+        }
+
+    findings = detect_provider_conflicts(series, tolerance=tolerance)
+
+    written = 0
+    if findings:
+        # Attributed to the first provider alphabetically so the same conflict
+        # lands on the same row every sweep instead of alternating and
+        # defeating the repeat-collapsing in `persist_findings`.
+        owner = sorted(provider_ids)[0]
+        written = persist_findings(
+            session,
+            instrument_id=instrument_id,
+            provider_id=provider_ids[owner],
+            timeframe=timeframe,
+            findings=findings,
+            detected_at=detected_at,
+        )
+
+    return {
+        "compared": True,
+        "providers": sorted(series),
+        "bars_compared": len(set.intersection(*(
+            {bar.event_time for bar in bars} for bars in series.values()
+        ))),
+        "conflicts": len(findings),
+        "written": written,
+        "tolerance": tolerance,
+    }
 
 
 def check_staleness(
