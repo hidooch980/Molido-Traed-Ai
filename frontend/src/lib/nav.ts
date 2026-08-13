@@ -26,13 +26,13 @@ export const NAV: NavItem[] = [
   { key: "scanner", labelKey: "nav.scanner", href: "/scanner", group: "market" },
   { key: "charts", labelKey: "nav.charts", href: "/charts", group: "market" },
 
-  { key: "signals", labelKey: "nav.signals", planned: true, group: "trading" },
+  { key: "signals", labelKey: "nav.signals", href: "/decisions", group: "trading" },
   { key: "positions", labelKey: "nav.positions", planned: true, group: "trading" },
   { key: "orders", labelKey: "nav.orders", planned: true, group: "trading" },
-  { key: "portfolio", labelKey: "nav.portfolio", planned: true, group: "trading" },
-  { key: "risk", labelKey: "nav.risk", planned: true, group: "trading" },
+  { key: "portfolio", labelKey: "nav.portfolio", href: "/risk", group: "trading" },
+  { key: "risk", labelKey: "nav.risk", href: "/risk", group: "trading" },
   { key: "challenge", labelKey: "nav.challenge", planned: true, group: "trading" },
-  { key: "execution", labelKey: "nav.execution", planned: true, group: "trading" },
+  { key: "execution", labelKey: "nav.execution", href: "/execution", group: "trading" },
 
   { key: "features", labelKey: "nav.features", href: "/features", group: "intelligence" },
   { key: "symbol-dna", labelKey: "nav.symbolDna", href: "/symbol-dna", group: "intelligence" },
@@ -43,15 +43,15 @@ export const NAV: NavItem[] = [
   { key: "backtest", labelKey: "nav.backtest", planned: true, group: "intelligence" },
   { key: "research", labelKey: "nav.research", planned: true, group: "intelligence" },
   { key: "benchmark", labelKey: "nav.benchmark", planned: true, group: "intelligence" },
-  { key: "registry", labelKey: "nav.registry", planned: true, group: "intelligence" },
+  { key: "registry", labelKey: "nav.registry", href: "/learning", group: "intelligence" },
 
   { key: "data-quality", labelKey: "nav.dataQuality", href: "/data-quality", group: "operations" },
   { key: "ai-health", labelKey: "nav.aiHealth", href: "/health", group: "operations" },
-  { key: "accounts", labelKey: "nav.accounts", planned: true, group: "operations" },
-  { key: "brokers", labelKey: "nav.brokers", planned: true, group: "operations" },
-  { key: "telegram", labelKey: "nav.telegram", planned: true, group: "operations" },
+  { key: "accounts", labelKey: "nav.accounts", href: "/execution", group: "operations" },
+  { key: "brokers", labelKey: "nav.brokers", href: "/execution", group: "operations" },
+  { key: "telegram", labelKey: "nav.telegram", href: "/security", group: "operations" },
   { key: "automation", labelKey: "nav.automation", planned: true, group: "operations" },
-  { key: "security", labelKey: "nav.security", planned: true, group: "operations" },
+  { key: "security", labelKey: "nav.security", href: "/security", group: "operations" },
   { key: "settings", labelKey: "nav.settings", href: "/settings", group: "operations" },
 ];
 

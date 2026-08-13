@@ -257,6 +257,82 @@ export interface WorldState {
   quality: WorldStateBlock;
 }
 
+/** Hard and soft limits, from `/risk/limits`. */
+export interface RiskLimits {
+  hard: Record<string, number>;
+  soft: Record<string, number>;
+  portfolio: Record<string, number>;
+  hard_limits_are_frozen: boolean;
+  note: string;
+}
+
+export interface ExecutionPolicyView {
+  execution_enabled: boolean;
+  dry_run: boolean;
+  require_auth: boolean;
+  max_risk_r_per_order: number;
+  kill_switch_default_engaged: boolean;
+  kill_switch_reason: string;
+  required_approvals: string[];
+  max_authorisation_age_seconds: number;
+  broker: { name: string; simulated: boolean; slippage: number; orders: number };
+  api_can_place_orders: boolean;
+  api_can_disengage_kill_switch: boolean;
+  note: string;
+}
+
+export interface LearningThresholds {
+  scorecard: { min_trials: number; confidence_z: number; why: string };
+  registry: {
+    min_evaluation_sample: number;
+    min_overlap: number;
+    promotion_sigma: number;
+    why: string;
+  };
+  drift: { psi_shifted: number; psi_broken: number; min_sample: number; why: string };
+  note: string;
+}
+
+export interface DriftView {
+  feature_drift: { available: boolean; reason?: string | null };
+  concept_drift: { available: boolean; reason?: string | null };
+  note: string;
+}
+
+export interface RegistryView {
+  versions: unknown[];
+  champion: null;
+  reason: string;
+  promotion_requires: Record<string, unknown>;
+}
+
+export interface SecurityPosture {
+  require_auth: boolean;
+  auth_model: string;
+  roles: Record<string, string[]>;
+  anonymous_holds: string[];
+  routes: { mutating: string[]; ungated: string[] };
+  gate: Record<string, string>;
+  non_read_permissions_require_authentication: boolean;
+  note: string;
+}
+
+export interface CommandsView {
+  allowed: string[];
+  allowlist_not_blocklist: boolean;
+  why: string;
+  trading_requires: string;
+  note: string;
+}
+
+export interface AccountsView {
+  global_kill_switch: { engaged: boolean; reason: string };
+  accounts: unknown[];
+  tradeable: string[];
+  reason: string;
+  note: string;
+}
+
 /** Measured cross-instrument correlation, from stored DNA snapshots. */
 export interface MarketMap {
   timeframe: string;
@@ -329,6 +405,27 @@ export interface SystemSettings {
   note: string;
 }
 
+/** One gate in the decision chain, from `/decisions/{id}`. */
+export interface DecisionStage {
+  stage: string;
+  passed: boolean;
+  detail: string;
+  payload: Record<string, unknown> | null;
+}
+
+export interface DecisionTrace {
+  symbol: string;
+  timeframe: string;
+  as_of: string;
+  reached_intent: boolean;
+  stopped_at: string | null;
+  permitted_risk_r: number | null;
+  stages: DecisionStage[];
+  intent: Record<string, unknown> | null;
+  policy: { stop_atr_multiple: number; target_reward_risk: number };
+  authorises_execution: boolean;
+}
+
 /** What `/decisions/posture` answers: can this deployment trade right now? */
 export interface Posture {
   can_trade: boolean;
@@ -366,6 +463,15 @@ export interface Readiness {
 export const api = {
   health: () => request<Health>("/health/ready"),
   systemSettings: () => request<SystemSettings>("/api/v1/system/settings"),
+  riskLimits: () => request<RiskLimits>("/api/v1/risk/limits"),
+  executionPolicy: () => request<ExecutionPolicyView>("/api/v1/execution/policy"),
+  accounts: () => request<AccountsView>("/api/v1/execution/accounts"),
+  learningThresholds: () =>
+    request<LearningThresholds>("/api/v1/learning/thresholds"),
+  drift: () => request<DriftView>("/api/v1/learning/drift"),
+  modelRegistry: () => request<RegistryView>("/api/v1/learning/registry"),
+  security: () => request<SecurityPosture>("/api/v1/integrations/security"),
+  commands: () => request<CommandsView>("/api/v1/integrations/commands"),
   marketMap: (limit = 25) =>
     request<MarketMap>(`/api/v1/market-map?limit=${limit}`),
   scanner: (limit = 40) =>
@@ -376,6 +482,10 @@ export const api = {
   worldState: (instrumentId: string, timeframe = "H1") =>
     request<WorldState>(`/api/v1/world-state/${instrumentId}?timeframe=${timeframe}`),
   readiness: () => request<Readiness>("/api/v1/decisions/readiness"),
+  decisionChain: (instrumentId: string, timeframe = "H1") =>
+    request<DecisionTrace>(
+      `/api/v1/decisions/${instrumentId}?timeframe=${timeframe}`,
+    ),
   instruments: () => request<Instrument[]>("/api/v1/instruments"),
   dataQuality: (instrumentId: string) =>
     request<DataQuality>(`/api/v1/data-quality/${instrumentId}`),
