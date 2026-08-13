@@ -24,7 +24,18 @@ jobs:
         run: mypy app
       - name: Tests
         # The suite runs on in-memory SQLite; no database service is needed.
-        run: pytest -q
+        #
+        # The failure is echoed back as a workflow error because that is the
+        # only part of a run readable without a token, and this job spent the
+        # project's entire history reporting nothing but "exit code 2" - the
+        # code for interrupted-at-collection, which names no file and no test.
+        run: |
+          set -o pipefail
+          pytest -q --tb=short 2>&1 | tee /tmp/pytest.log || {
+            echo "::error title=pytest::$(tail -c 2000 /tmp/pytest.log | tr '
+' '~')"
+            exit 1
+          }
 
   migration:
     # Proves migration 0001 applies against the real TimescaleDB image,
