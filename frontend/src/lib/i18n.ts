@@ -179,7 +179,7 @@ const en: Dictionary = {
 
   "nav.planned": "Planned — not built yet",
   "nav.note":
-    "Greyed items are later phases. They are shown so the intended shape of the system is visible, and disabled so nothing pretends to work.",
+    "Greyed items have no screen yet. Most of them have a working, tested backend behind them — the risk brain, challenge engine, journal, learning lab, registry and benchmark all exist and answer over the API. A few genuinely do not: anything that needs a live broker connection has nothing to show, because there is no live broker. They are listed either way so the intended shape stays visible, and disabled so nothing pretends to work.",
 
   "common.language": "English",
   "common.theme.light": "Light",
@@ -534,7 +534,7 @@ const fa: Dictionary = {
 
   "nav.planned": "برنامه‌ریزی‌شده — هنوز ساخته نشده",
   "nav.note":
-    "موارد کم‌رنگ مربوط به فازهای بعدی‌اند. نمایش داده می‌شوند تا شکل نهایی سامانه پیدا باشد، و غیرفعالند تا چیزی وانمود نکند کار می‌کند.",
+    "موارد کم‌رنگ هنوز صفحه ندارند. بیشترشان بک‌اند ساخته و تست‌شده دارند — مغز ریسک، موتور چیلنج، ژورنال، آزمایشگاه یادگیری، رجیستری و بنچمارک همگی وجود دارند و از طریق API جواب می‌دهند. چندتایی واقعاً وجود ندارند: هر چیزی که به اتصال زندهٔ بروکر نیاز دارد چیزی برای نشان‌دادن ندارد، چون بروکر زنده‌ای در کار نیست. هر دو دسته فهرست می‌شوند تا شکل نهایی سامانه پیدا بماند، و غیرفعالند تا چیزی وانمود نکند کار می‌کند.",
 
   "common.language": "فارسی",
   "common.theme.light": "روشن",
