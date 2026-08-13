@@ -42,7 +42,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import date
 from enum import StrEnum
-from typing import Any
+from typing import Any, Final
 
 # Below this many days there is no distribution to speak of. One profitable day
 # is trivially 100% of the profit, so judging consistency that early would fail
@@ -94,26 +94,67 @@ class AllowanceBasis(StrEnum):
     CURRENT_BALANCE = "current_balance"
 
 
+class NotImposed:
+    """A deliberate statement that a provider carries no such rule.
+
+    It exists so that "nobody entered this rulebook" and "this provider caps
+    nothing" stop being the same value. They are opposite facts about an
+    account, and the second one is a claim about a document somebody has to
+    have read — so it has to be written down rather than arrived at by leaving
+    a field alone.
+
+    `None` keeps its English meaning throughout this module: nobody said. Every
+    rule defaults to it, so an un-entered rulebook now blocks instead of
+    approving.
+    """
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return "NOT_IMPOSED"
+
+    def __bool__(self) -> bool:
+        """Falsey, so an accidental `if rules.max_leverage:` still reads as
+        "there is no cap here" rather than silently enforcing one."""
+        return False
+
+
+NOT_IMPOSED: Final = NotImposed()
+
+#: A numeric rule: a figure, `NOT_IMPOSED`, or `None` for nobody said.
+Rule = float | NotImposed | None
+IntRule = int | NotImposed | None
+FlagRule = bool | NotImposed | None
+
+
 @dataclass
 class ChallengeRules:
     """One provider's rulebook, per account.
 
-    Every rule is `None` by default, meaning the provider does not impose it.
+    Every rule is `None` by default, meaning **nobody entered it** — not that
+    the provider does not impose it. Those were the same value until a probe
+    showed that `ChallengeRules()` approved a trade with no breach, no gate and
+    nothing in `unverified`: the module was asserting that an unnamed provider
+    caps nothing, on the strength of a field nobody had filled in.
+
+    To say a provider genuinely imposes no rule, write `NOT_IMPOSED`. It is a
+    claim about a document somebody read, so it has to be stated.
+
     Defaulting any of these to `0.0` would make "no daily drawdown rule" and
     "no daily loss permitted" the same object, and they are opposite accounts.
     """
 
-    profit_target_pct: float | None = None
-    max_daily_drawdown_pct: float | None = None
-    max_total_drawdown_pct: float | None = None
-    min_trading_days: int | None = None
-    max_trading_days: int | None = None
-    max_leverage: float | None = None
+    profit_target_pct: Rule = None
+    max_daily_drawdown_pct: Rule = None
+    max_total_drawdown_pct: Rule = None
+    min_trading_days: IntRule = None
+    max_trading_days: IntRule = None
+    max_leverage: Rule = None
     # No single day may be more than this share of total profit.
-    max_single_day_profit_share: float | None = None
-    news_trading_allowed: bool | None = None
-    weekend_holding_allowed: bool | None = None
-    max_concurrent_positions: int | None = None
+    max_single_day_profit_share: Rule = None
+    news_trading_allowed: FlagRule = None
+    weekend_holding_allowed: FlagRule = None
+    max_concurrent_positions: IntRule = None
 
     # Not rules but rulers — how the two drawdown rules above are read.
     drawdown_basis: DrawdownBasis = DrawdownBasis.EQUITY
@@ -434,7 +475,7 @@ def _total_anchor(
 def _headroom(
     limit: str,
     *,
-    pct: float | None,
+    pct: Rule,
     reference: float | None,
     anchor: float | None,
     allowance_base: float,
@@ -447,12 +488,25 @@ def _headroom(
     `allowance_base` is what the percentage is *of*, chosen by
     `_allowance_base` from the rulebook rather than assumed here.
     """
-    if pct is None:
+    if isinstance(pct, NotImposed):
         return Headroom(
             limit=limit,
             imposed=False,
             available=False,
             reason="this provider imposes no such rule",
+        )
+    if pct is None:
+        # Treated as imposed-but-unmeasurable rather than absent, which routes
+        # it into `unmeasured_limits` and blocks. An unknown drawdown rule is
+        # the one place a challenge account cannot afford an optimistic read.
+        return Headroom(
+            limit=limit,
+            imposed=True,
+            available=False,
+            reason=(
+                f"the {limit} drawdown rule was never entered; not knowing a "
+                "provider's limit is not evidence that they have none"
+            ),
         )
     if reference is None or anchor is None:
         return Headroom(
@@ -484,7 +538,7 @@ def _headroom(
 
 
 def evaluate_consistency(
-    max_share: float | None, daily_profits: dict[date, float]
+    max_share: Rule, daily_profits: dict[date, float]
 ) -> ConsistencyReport:
     """Is the profit spread across days, or is it one day wearing a disguise?
 
@@ -494,9 +548,15 @@ def evaluate_consistency(
     the one that made its target in a single afternoon.
     """
     days = len(daily_profits)
-    if max_share is None:
+    if isinstance(max_share, NotImposed):
         return ConsistencyReport(
             available=False, reason="this provider imposes no consistency rule", days=days
+        )
+    if max_share is None:
+        return ConsistencyReport(
+            available=False,
+            reason="the consistency rule was never entered, so it was not checked",
+            days=days,
         )
     if days < MIN_CONSISTENCY_DAYS:
         return ConsistencyReport(
@@ -694,10 +754,9 @@ def check(
     # ------------------------------------------------------------- leverage
     if rules.max_leverage is None:
         unverified.append(
-            "the rulebook states no leverage cap - absent and unknown are the "
-            "same field here, so the cap was not checked"
+            "the leverage cap was never entered, so it was not checked"
         )
-    if rules.max_leverage is not None:
+    if isinstance(rules.max_leverage, float | int):
         if state.current_leverage is None:
             unverified.append("leverage rule not checked: no leverage in the account state")
             gates.append("leverage could not be measured")
@@ -716,7 +775,11 @@ def check(
                 )
 
     # ------------------------------------------------------------ positions
-    if rules.max_concurrent_positions is not None:
+    if rules.max_concurrent_positions is None:
+        unverified.append(
+            "the concurrent-position cap was never entered, so it was not checked"
+        )
+    elif isinstance(rules.max_concurrent_positions, int):
         if state.open_positions > rules.max_concurrent_positions:
             breaches.append(
                 f"{state.open_positions} open positions exceeds the "
@@ -734,6 +797,8 @@ def check(
             "the rulebook does not say whether this provider restricts news "
             "trading - the restriction was not checked"
         )
+    elif isinstance(rules.news_trading_allowed, NotImposed):
+        pass
     elif rules.news_trading_allowed is False:
         if state.in_news_window is None:
             unverified.append("news restriction not checked: news-window state unknown")
@@ -747,6 +812,8 @@ def check(
             "the rulebook does not say whether this provider restricts weekend "
             "holding - the restriction was not checked"
         )
+    elif isinstance(rules.weekend_holding_allowed, NotImposed):
+        pass
     elif rules.weekend_holding_allowed is False:
         if state.weekend_ahead is None:
             unverified.append("weekend restriction not checked: weekend proximity unknown")
@@ -761,9 +828,13 @@ def check(
 
     # ------------------------------------------------------------ day counts
     days_short = 0
-    if rules.min_trading_days is not None and state.days_traded < rules.min_trading_days:
+    if rules.min_trading_days is None:
+        unverified.append("the minimum trading days were never entered, so they were not checked")
+    elif isinstance(rules.min_trading_days, int) and state.days_traded < rules.min_trading_days:
         days_short = rules.min_trading_days - state.days_traded
-    if rules.max_trading_days is not None:
+    if rules.max_trading_days is None:
+        unverified.append("the maximum trading days were never entered, so they were not checked")
+    elif isinstance(rules.max_trading_days, int):
         if state.days_traded > rules.max_trading_days:
             breaches.append(
                 f"{state.days_traded} trading days used, beyond the "
@@ -774,7 +845,7 @@ def check(
 
     # --------------------------------------------------------- profit target
     target_met: bool | None = None
-    if rules.profit_target_pct is not None:
+    if isinstance(rules.profit_target_pct, float | int):
         target_value = _money(state.starting_balance * (1.0 + rules.profit_target_pct))
         if state.current_balance is None:
             # Floating profit is not profit until the position closes, and no

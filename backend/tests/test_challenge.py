@@ -8,6 +8,7 @@ not invent when the account state does not contain them.
 
 from __future__ import annotations
 
+import dataclasses
 from datetime import date
 
 import pytest
@@ -61,9 +62,49 @@ def state(**overrides) -> ch.ChallengeState:
 
 
 # ======================================================== absent versus zero
+def uncapped() -> ch.ChallengeRules:
+    """A provider whose documentation was read and carries no rule at all.
+
+    Spelled out field by field on purpose. `ChallengeRules()` used to mean this
+    and now means the opposite, and a helper that hid the difference behind a
+    short name is how the two would drift back together.
+    """
+    return ch.ChallengeRules(
+            profit_target_pct=ch.NOT_IMPOSED,
+            max_daily_drawdown_pct=ch.NOT_IMPOSED,
+            max_total_drawdown_pct=ch.NOT_IMPOSED,
+            min_trading_days=ch.NOT_IMPOSED,
+            max_trading_days=ch.NOT_IMPOSED,
+            max_leverage=ch.NOT_IMPOSED,
+            max_single_day_profit_share=ch.NOT_IMPOSED,
+            news_trading_allowed=ch.NOT_IMPOSED,
+            weekend_holding_allowed=ch.NOT_IMPOSED,
+            max_concurrent_positions=ch.NOT_IMPOSED,
+        )
+
+
 class TestRuleAbsence:
-    def test_an_empty_rulebook_imposes_nothing(self):
+    def test_a_rulebook_nobody_entered_blocks(self):
+        """The bug this separation exists for.
+
+        `ChallengeRules()` used to approve: every field was `None`, `None` read
+        as "the provider imposes no such rule", and the module ended up
+        asserting that an unnamed provider caps nothing on the strength of
+        fields nobody had filled in. No breach, no gate, nothing in
+        `unverified` — a challenge account cleared to trade against rules the
+        system had never seen.
+        """
         verdict = ch.check(ch.ChallengeRules(), state(), 1.0)
+
+        assert verdict.verdict == "block"
+        assert verdict.allowed is False
+        assert verdict.daily.imposed is True
+        assert verdict.daily.available is False
+        assert any("never entered" in u for u in verdict.unverified)
+
+    def test_an_empty_rulebook_imposes_nothing(self):
+        """Still true, but it has to be said now rather than defaulted into."""
+        verdict = ch.check(uncapped(), state(), 1.0)
 
         assert verdict.verdict == "approve"
         assert verdict.breaches == []
@@ -72,15 +113,36 @@ class TestRuleAbsence:
         # of zero, which would block.
         assert verdict.max_additional_risk_r is None
 
+    def test_unknown_and_not_imposed_reach_opposite_verdicts(self):
+        """One value carrying both meanings is the whole defect."""
+        unknown = ch.check(ch.ChallengeRules(), state(), 1.0)
+        stated = ch.check(uncapped(), state(), 1.0)
+
+        assert unknown.allowed is False
+        assert stated.allowed is True
+
+    def test_the_marker_is_falsey_so_a_truthiness_check_reads_as_no_cap(self):
+        """`if rules.max_leverage:` is the mistake waiting to be made; it must
+        fail toward "there is no cap here" rather than enforce a phantom one."""
+        assert not ch.NOT_IMPOSED
+
     def test_a_zero_daily_rule_is_not_an_absent_one(self):
         """The distinction the dataclass exists to preserve."""
-        absent = ch.check(rules(max_daily_drawdown_pct=None), state(), 1.0)
+        absent = ch.check(rules(max_daily_drawdown_pct=ch.NOT_IMPOSED), state(), 1.0)
         zero = ch.check(rules(max_daily_drawdown_pct=0.0), state(), 1.0)
 
         assert absent.daily.imposed is False
         assert zero.daily.imposed is True
         assert zero.daily.allowance == pytest.approx(0.0)
         assert zero.verdict == "block"
+
+    def test_a_zero_daily_rule_is_not_an_unknown_one_either(self):
+        unknown = ch.check(rules(max_daily_drawdown_pct=None), state(), 1.0)
+        zero = ch.check(rules(max_daily_drawdown_pct=0.0), state(), 1.0)
+
+        assert unknown.daily.available is False
+        assert zero.daily.available is True
+        assert zero.daily.allowance == pytest.approx(0.0)
 
     def test_a_zero_rule_still_permits_giving_back_the_day_s_profit(self):
         """Zero daily *loss* is measured from the day's open, not from flat."""
@@ -356,11 +418,18 @@ class TestConsistency:
         assert report.within_limit is None
 
     def test_an_absent_rule_is_not_a_failed_one(self):
-        report = ch.evaluate_consistency(None, {TODAY: 1_000.0})
+        report = ch.evaluate_consistency(ch.NOT_IMPOSED, {TODAY: 1_000.0})
 
         assert report.available is False
         assert report.within_limit is None
         assert "no consistency rule" in report.reason
+
+    def test_an_unentered_rule_says_so_rather_than_claiming_the_provider_has_none(self):
+        report = ch.evaluate_consistency(None, {TODAY: 1_000.0})
+
+        assert report.available is False
+        assert report.within_limit is None
+        assert "never entered" in report.reason
 
     def test_a_concentrated_history_warns_on_the_verdict(self):
         verdict = ch.check(
@@ -582,12 +651,25 @@ class TestIntegrity:
 
     def test_the_payload_keeps_absent_and_measured_apart(self):
         payload = ch.check(
-            rules(max_daily_drawdown_pct=None), state(), 1.0
+            rules(max_daily_drawdown_pct=ch.NOT_IMPOSED), state(), 1.0
         ).as_dict()
 
         assert payload["headroom"]["daily"]["imposed"] is False
         assert payload["headroom"]["total"]["imposed"] is True
         assert payload["headroom"]["total"]["amount"] == pytest.approx(10_000.0)
+
+    def test_the_payload_keeps_unknown_apart_from_both(self):
+        """Three states, three renderings. A sizer downstream reads all three
+        differently, and two of them used to arrive identical."""
+        payload = ch.check(rules(max_daily_drawdown_pct=None), state(), 1.0).as_dict()
+        daily = payload["headroom"]["daily"]
+
+        assert daily["imposed"] is True
+        assert daily["available"] is False
+        # No `amount` key at all, rather than a null one. An unmeasurable
+        # headroom publishes the reason and nothing numeric.
+        assert "amount" not in daily
+        assert "never entered" in daily["reason"]
 
 
 # ===================================================== adversarial review fixes
@@ -605,7 +687,7 @@ class TestTheCapCannotBeMistakenForNoCap:
 
     def test_a_rulebook_with_no_drawdown_rule_really_has_no_cap(self):
         verdict = ch.check(
-            ch.ChallengeRules(profit_target_pct=0.10), state(), None
+            dataclasses.replace(uncapped(), profit_target_pct=0.10), state(), None
         )
 
         assert verdict.risk_cap_measurable is True
@@ -615,11 +697,16 @@ class TestTheCapCannotBeMistakenForNoCap:
     def test_the_two_are_distinguishable_in_the_payload(self):
         """The whole point: a downstream sizer reads these differently."""
         unmeasurable = ch.check(rules(), state(currency_per_r=None), None).as_dict()
-        uncapped = ch.check(ch.ChallengeRules(), state(), None).as_dict()
+        no_cap = ch.check(uncapped(), state(), None).as_dict()
+        unknown = ch.check(ch.ChallengeRules(), state(), None).as_dict()
 
-        assert unmeasurable["max_additional_risk_r"] != uncapped["max_additional_risk_r"]
+        assert unmeasurable["max_additional_risk_r"] != no_cap["max_additional_risk_r"]
         assert unmeasurable["risk_cap_measurable"] is False
-        assert uncapped["risk_cap_measurable"] is True
+        assert no_cap["risk_cap_measurable"] is True
+        # The third state, which the payload could not previously express: not
+        # a cap, not the absence of one, but a rulebook nobody supplied.
+        assert unknown["risk_cap_measurable"] is False
+        assert unknown["max_additional_risk_r"] == 0.0
 
 
 class TestBalanceBasisIsReadOnItsOwnRuler:

@@ -237,11 +237,24 @@ def read_challenge(
     """
     from datetime import date
 
+    # Every remaining rule is stated as NOT_IMPOSED rather than left unset.
+    # Since the three-state split, an unset rule means "nobody entered this"
+    # and blocks — correctly, for a real account. This endpoint is answering a
+    # different question: what a *complete* conventional rulebook would say. So
+    # it supplies a complete one, and `rulebook_source` below says whose.
     rules = challenge_brain.ChallengeRules(
-        profit_target_pct=profit_target_pct,
-        max_daily_drawdown_pct=max_daily_drawdown_pct,
-        max_total_drawdown_pct=max_total_drawdown_pct,
+        profit_target_pct=profit_target_pct or challenge_brain.NOT_IMPOSED,
+        max_daily_drawdown_pct=max_daily_drawdown_pct or challenge_brain.NOT_IMPOSED,
+        max_total_drawdown_pct=max_total_drawdown_pct or challenge_brain.NOT_IMPOSED,
+        min_trading_days=challenge_brain.NOT_IMPOSED,
+        max_trading_days=challenge_brain.NOT_IMPOSED,
+        max_leverage=challenge_brain.NOT_IMPOSED,
+        max_single_day_profit_share=challenge_brain.NOT_IMPOSED,
+        news_trading_allowed=challenge_brain.NOT_IMPOSED,
+        weekend_holding_allowed=challenge_brain.NOT_IMPOSED,
+        max_concurrent_positions=challenge_brain.NOT_IMPOSED,
         allowance_basis=challenge_brain.AllowanceBasis.STARTING_BALANCE,
+        total_drawdown_trailing=False,
     )
     state = challenge_brain.ChallengeState(
         starting_balance=starting_balance,
@@ -256,5 +269,11 @@ def read_challenge(
     payload = challenge_brain.check(rules, state, proposed_risk_r).as_dict()
     payload["rulebook_source"] = (
         "a conventional two-phase example, not a provider's verified rules"
+    )
+    payload["unstated_rules_are"] = (
+        "declared absent, not left unknown. A rule left unset blocks, because "
+        "not knowing a provider's limit is not evidence that they have none - "
+        "so a real account has to have its rulebook entered before this "
+        "endpoint says anything useful about it"
     )
     return payload
