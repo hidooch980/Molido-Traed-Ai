@@ -10,6 +10,7 @@ from app.api.v1 import (
     instruments,
     market_data,
     memory,
+    risk,
     sessions,
     similarity,
     symbol_dna,
@@ -30,5 +31,6 @@ api_router.include_router(episodes.router)
 api_router.include_router(similarity.router)
 api_router.include_router(world_state.router)
 api_router.include_router(decisions.router)
+api_router.include_router(risk.router)
 
 __all__ = ["api_router"]
