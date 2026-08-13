@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import PriceChart from "@/components/PriceChart";
+import { InstrumentLinks } from "@/components/InstrumentLinks";
 import { Empty, Offline, Panel, Sparkline, Stat, StatusBadge } from "@/components/ui";
 import { api } from "@/lib/api";
 import { getT } from "@/lib/locale";
@@ -68,6 +69,13 @@ export default async function InstrumentPage({
           />
         </div>
       </header>
+
+      <InstrumentLinks
+        instrumentId={id}
+        symbol={instrument?.symbol}
+        current="/markets"
+        t={t}
+      />
 
       <Panel
         title={`${bars.data.symbol} · ${bars.data.timeframe} close`}

@@ -1,5 +1,6 @@
 import Link from "next/link";
 
+import { InstrumentLinks } from "@/components/InstrumentLinks";
 import { Empty, Offline, Panel, Pill } from "@/components/ui";
 import { api } from "@/lib/api";
 import { getT } from "@/lib/locale";
@@ -28,6 +29,7 @@ export default async function MemoryPage({
   }
 
   const selectedId = params.instrument ?? instruments.data[0].id;
+  const selectedSymbol = instruments.data.find((x) => x.id === selectedId)?.symbol;
   const memory = await api.memory(selectedId);
 
   const labelFor: Record<string, string> = {
@@ -62,6 +64,13 @@ export default async function MemoryPage({
           </div>
         )}
       </header>
+
+      <InstrumentLinks
+        instrumentId={selectedId}
+        symbol={selectedSymbol}
+        current="/memory"
+        t={t}
+      />
 
       {!memory.ok ? (
         <Offline error={memory.error} />

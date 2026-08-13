@@ -1,5 +1,6 @@
 import Link from "next/link";
 
+import { InstrumentLinks } from "@/components/InstrumentLinks";
 import { Empty, Offline, Panel, Stat } from "@/components/ui";
 import { api } from "@/lib/api";
 import { getT } from "@/lib/locale";
@@ -28,6 +29,7 @@ export default async function EpisodesPage({
   }
 
   const selectedId = params.instrument ?? instruments.data[0].id;
+  const selectedSymbol = instruments.data.find((x) => x.id === selectedId)?.symbol;
   const result = await api.episodes(selectedId);
 
   return (
@@ -56,6 +58,13 @@ export default async function EpisodesPage({
           </div>
         )}
       </header>
+
+      <InstrumentLinks
+        instrumentId={selectedId}
+        symbol={selectedSymbol}
+        current="/episodes"
+        t={t}
+      />
 
       {!result.ok ? (
         <Offline error={result.error} />

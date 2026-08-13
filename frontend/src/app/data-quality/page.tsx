@@ -1,5 +1,6 @@
 import Link from "next/link";
 
+import { InstrumentLinks } from "@/components/InstrumentLinks";
 import { Empty, Offline, Panel, StatusBadge } from "@/components/ui";
 import { api } from "@/lib/api";
 import { getT } from "@/lib/locale";
@@ -27,6 +28,7 @@ export default async function DataQualityPage({
   }
 
   const selectedId = params.instrument ?? instruments.data[0].id;
+  const selectedSymbol = instruments.data.find((x) => x.id === selectedId)?.symbol;
   const quality = await api.dataQuality(selectedId);
 
   return (
@@ -56,6 +58,13 @@ export default async function DataQualityPage({
           </div>
         )}
       </header>
+
+      <InstrumentLinks
+        instrumentId={selectedId}
+        symbol={selectedSymbol}
+        current="/data-quality"
+        t={t}
+      />
 
       {!quality.ok ? (
         <Offline error={quality.error} />

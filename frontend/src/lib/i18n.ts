@@ -23,6 +23,7 @@ type Dictionary = Record<string, string>;
 
 const en: Dictionary = {
   "app.tagline": "Trading intelligence, risk and execution",
+  "links.sameInstrument": "same instrument:",
   "posture.title": "Situation room",
   "posture.subtitle": "Can this deployment trade right now, and if not, what is stopping it. Read from the running configuration, never from a cached summary.",
   "posture.canTrade": "Can trade",
@@ -378,6 +379,7 @@ const en: Dictionary = {
 
 const fa: Dictionary = {
   "app.tagline": "هوش معاملاتی، ریسک و اجرا",
+  "links.sameInstrument": "همین نماد در:",
   "posture.title": "اتاق وضعیت",
   "posture.subtitle": "آیا این استقرار همین حالا می‌تواند معامله کند، و اگر نه چه چیزی جلویش را گرفته. از پیکربندی در حال اجرا خوانده می‌شود، نه از خلاصه‌ای ذخیره‌شده.",
   "posture.canTrade": "امکان معامله",

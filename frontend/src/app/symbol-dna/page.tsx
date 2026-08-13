@@ -1,5 +1,6 @@
 import Link from "next/link";
 
+import { InstrumentLinks } from "@/components/InstrumentLinks";
 import { Empty, Offline, Panel, Pill } from "@/components/ui";
 import { api } from "@/lib/api";
 import { getT } from "@/lib/locale";
@@ -82,6 +83,7 @@ export default async function SymbolDnaPage({
   }
 
   const selectedId = params.instrument ?? instruments.data[0].id;
+  const selectedSymbol = instruments.data.find((x) => x.id === selectedId)?.symbol;
   const dna = await api.symbolDna(selectedId);
 
   const byKind = dna.ok
@@ -120,6 +122,13 @@ export default async function SymbolDnaPage({
           </div>
         )}
       </header>
+
+      <InstrumentLinks
+        instrumentId={selectedId}
+        symbol={selectedSymbol}
+        current="/symbol-dna"
+        t={t}
+      />
 
       {!dna.ok ? (
         <Offline error={dna.error} />
