@@ -22,14 +22,27 @@ from app.services.sessions import default_market_code
 
 # Broker suffixes/prefixes that carry account-type information, not identity.
 _DECORATION_RE = re.compile(
-    r"(?:[._\-#]?(?:m|micro|mini|cent|ecn|pro|raw|std|stp|c|i|z|r|sb|fx|spot))+$",
+    r"[._\-#]?(?:micro|mini|cent|spot|ecn|pro|raw|std|stp|sb|fx|m|c|i|z|r)$",
     re.IGNORECASE,
 )
 _NON_ALNUM_RE = re.compile(r"[^A-Z0-9]")
+#: Three-letter base plus three-letter quote. Symbols already this shape are
+#: never treated as decorated.
+_CANONICAL_LENGTH = 6
 
+# Widened past the majors on purpose. This set is not a statement about which
+# currencies matter - it decides whether `classify_symbol` can fill in
+# `base_currency` and `quote_currency`, and `portfolio.py` reads currency
+# exposure from exactly those two columns. A pair whose quote is missing here
+# is classified `other` with no currencies, so its dollar leg is invisible to
+# the currency cap: USDCZK, USDHUF, USDILS and USDTHB were all spelled
+# correctly and all contributed zero measured dollar exposure.
 _MAJOR_CURRENCIES = {
     "USD", "EUR", "GBP", "JPY", "CHF", "AUD", "NZD", "CAD",
     "SEK", "NOK", "DKK", "PLN", "TRY", "ZAR", "MXN", "SGD", "HKD", "CNH",
+    "CZK", "HUF", "ILS", "THB", "INR", "IDR", "KRW", "PHP", "MYR", "RUB",
+    "BRL", "CLP", "COP", "PEN", "TWD", "VND", "AED", "SAR", "EGP", "NGN",
+    "RON", "BGN", "HRK", "ISK", "UAH", "KZT", "PKR", "BDT", "LKR", "CNY",
 }
 _METALS = {"XAU", "XAG", "XPT", "XPD"}
 _CRYPTO = {"BTC", "ETH", "XRP", "LTC", "BCH", "ADA", "SOL", "DOGE", "DOT"}
@@ -44,9 +57,33 @@ def normalize_symbol(raw_symbol: str) -> str:
     operator can map explicitly.
     """
     upper = raw_symbol.strip().upper()
-    stripped = _DECORATION_RE.sub("", upper)
-    stripped = _NON_ALNUM_RE.sub("", stripped)
-    return stripped or _NON_ALNUM_RE.sub("", upper)
+    bare = _NON_ALNUM_RE.sub("", upper)
+
+    # A symbol that is already exactly six alphanumeric characters is a
+    # plausible pair as it stands, so nothing is taken off the end of it. The
+    # optional separator in the decoration pattern otherwise let a bare
+    # trailing letter in {m,c,i,z,r,...} count as broker decoration: USDINR
+    # became USDIN and USDZAR became USDZA, both in production.
+    if len(bare) == _CANONICAL_LENGTH and bare == upper:
+        return bare
+
+    # Peeled one suffix at a time, stopping the moment what is left is a
+    # plausible pair. Stripping the whole trailing run at once took USDINR.m
+    # down to USDIN, because the run matched the ".m" and then the "R" in front
+    # of it - the guard above cannot help once a separator is in play.
+    candidate = upper
+    while True:
+        peeled = _DECORATION_RE.sub("", candidate, count=1)
+        if peeled == candidate:
+            break
+        cleaned = _NON_ALNUM_RE.sub("", peeled)
+        if len(cleaned) < _CANONICAL_LENGTH:
+            break
+        candidate = peeled
+        if len(cleaned) == _CANONICAL_LENGTH:
+            break
+
+    return _NON_ALNUM_RE.sub("", candidate) or bare
 
 
 def classify_symbol(symbol: str) -> tuple[AssetClass, str | None, str | None]:

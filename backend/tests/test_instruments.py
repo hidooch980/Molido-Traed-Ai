@@ -24,6 +24,19 @@ from app.services.instruments import (
         ("EURUSD_micro", "EURUSD"),
         ("XAUUSD#", "XAUUSD"),
         ("BTC/USD", "BTCUSD"),
+        # Six-character pairs ending in a letter the decoration list also uses.
+        # Every case above carries a separator, which is why the bare-letter
+        # branch went eleven months without being exercised and USDINR sat in
+        # production as USDIN.
+        ("USDINR", "USDINR"),
+        ("USDZAR", "USDZAR"),
+        ("USDIDR", "USDIDR"),
+        ("EURCZK", "EURCZK"),
+        ("USDMYR", "USDMYR"),
+        # Still stripped: seven characters, so the sixth is not the last.
+        ("EURUSDm", "EURUSD"),
+        ("USDINR.m", "USDINR"),
+        ("USDZAR-ECN", "USDZAR"),
     ],
 )
 def test_normalize_symbol(raw, expected):
@@ -97,3 +110,34 @@ def test_two_tenants_share_the_canonical_instrument(session, tenant, other_tenan
     b = link_broker_symbol(session, other_tenant.id, "globex-ctrader", "EURUSD-ECN")
 
     assert a.instrument_id == b.instrument_id
+
+
+class TestCurrencyLegsAreVisibleToTheRiskLayer:
+    """`classify_symbol` fills `base_currency` and `quote_currency`, and
+    `portfolio.py` reads currency exposure from exactly those two columns.
+
+    A pair whose quote is not recognised comes back `other` with both columns
+    empty, and its dollar leg then contributes nothing to the currency cap.
+    Four instruments on the deployed watchlist were in that state: correctly
+    spelled, correctly ingested, and invisible to the one limit that exists to
+    stop the whole book being a single bet on one currency.
+    """
+
+    @pytest.mark.parametrize(
+        "symbol", ["USDCZK", "USDHUF", "USDILS", "USDTHB", "USDINR", "USDZAR"]
+    )
+    def test_a_deployed_pair_reports_both_legs(self, symbol):
+        asset_class, base, quote = classify_symbol(symbol)
+
+        assert asset_class is AssetClass.FOREX
+        assert base == symbol[:3]
+        assert quote == symbol[3:]
+
+    def test_an_unrecognised_shape_still_refuses_to_guess(self):
+        """Widening the set must not turn the classifier into something that
+        invents a currency for anything six characters long."""
+        asset_class, base, quote = classify_symbol("ZZZQQQ")
+
+        assert asset_class is AssetClass.OTHER
+        assert base is None
+        assert quote is None
