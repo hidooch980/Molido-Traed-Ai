@@ -27,6 +27,7 @@ from app.api.deps import Principal, require
 from app.brain import challenge as challenge_brain
 from app.brain import portfolio as portfolio_brain
 from app.brain import risk as risk_brain
+from app.brain import rulebooks as rulebook_module
 from app.brain import stress as stress_brain
 from app.core.enums import Permission
 
@@ -212,6 +213,29 @@ def read_stress(
         current_drawdown_pct=current_drawdown_pct,
     )
     return report.as_dict()
+
+
+@router.get("/rulebooks")
+def read_rulebooks(_: Principal = READ) -> dict[str, Any]:
+    """The transcribed provider rulebooks, with the provenance of each number.
+
+    Published rather than kept internal because the numbers are the part most
+    worth disagreeing with. Every entry carries the page it was read from, the
+    date it was read, and `confirmed_by_holder: false` - a marketing page and
+    one account's contract are not guaranteed to be the same document, and
+    only the person who signed up can close that gap.
+    """
+    return {
+        "rulebooks": [book.as_dict() for book in rulebook_module.RULEBOOKS],
+        "providers": rulebook_module.providers(),
+        "none_are_confirmed": True,
+        "note": (
+            "these are transcriptions of a published page, not a contract. "
+            "Check them against your own account terms before trading against "
+            "them, and re-check them: providers change their rules and a "
+            "rulebook with an old date is a different firm's rulebook"
+        ),
+    }
 
 
 @router.get("/challenge")
