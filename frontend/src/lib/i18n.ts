@@ -264,7 +264,6 @@ const en: Dictionary = {
   "posture.table": "Table",
   "posture.rows": "Rows",
   "posture.unreadable": "unreadable",
-  "app.phase": "53 / 53 built · no proven edge",
   "app.noExecution": "no execution path built — nothing here places orders",
 
   "nav.overview": "Overview",
@@ -822,7 +821,6 @@ const fa: Dictionary = {
   "posture.table": "جدول",
   "posture.rows": "ردیف",
   "posture.unreadable": "ناخوانا",
-  "app.phase": "۵۳ از ۵۳ ساخته شده · بدون لبهٔ اثبات‌شده",
   "app.noExecution": "مسیر اجرا ساخته نشده — هیچ چیز اینجا سفارش نمی‌گذارد",
 
   "nav.overview": "نمای کلی",

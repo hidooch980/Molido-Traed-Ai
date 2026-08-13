@@ -103,10 +103,6 @@ export default function Shell({
 
         <div className="flex-1" />
 
-        <span className="pill hidden md:inline-flex" style={{ color: "var(--ink-3)" }}>
-          {t("app.phase")}
-        </span>
-
         <button
           type="button"
           onClick={() => switchLocale(locale === "fa" ? "en" : "fa")}
@@ -185,7 +181,6 @@ export default function Shell({
             style={{ borderTop: "1px solid var(--border)" }}
           >
             <span className="font-semibold">MolidoTrade AI</span>
-            <span>{t("app.phase")}</span>
             <span className="num" title="build timestamp (UTC)">
               build {process.env.NEXT_PUBLIC_BUILD || "dev"}
             </span>

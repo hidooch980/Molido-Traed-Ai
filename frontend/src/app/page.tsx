@@ -155,7 +155,7 @@ export default async function HomePage() {
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
-        <Panel title={t("home.live")} subtitle={t("app.phase")}>
+        <Panel title={t("home.live")}>
           <ul className="p-4 space-y-2 text-xs ink-2">
             {liveItems.map(([name, detail]) => (
               <li key={name} className="flex gap-2.5">
