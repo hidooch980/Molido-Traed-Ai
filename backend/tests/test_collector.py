@@ -273,3 +273,117 @@ class TestDnaRefresh:
 
         assert result["profiles_written"] == 0
         assert result["failures"] == []
+
+class TestEpisodeBuilding:
+    """Phase 10 was built, covered by leakage tests, and never ran.
+
+    The server held 597,760 bars and zero episodes. Nothing failed, because
+    nothing asked: the builder had no caller outside its own suite. That is the
+    second time this exact shape has turned up - symbol DNA was the first - and
+    both were found by looking at the database rather than at the test results.
+
+    Episodes are what the similarity and memory layers read, so an empty table
+    does not break anything visibly. It makes a whole layer answer honestly and
+    uselessly for every question it is asked, which is far quieter than a crash
+    and lasts much longer.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _patch_session(self, session, monkeypatch):
+        from contextlib import contextmanager
+
+        @contextmanager
+        def fake_scope():
+            yield session
+
+        monkeypatch.setattr(collector, "session_scope", fake_scope)
+        monkeypatch.setattr(
+            collector, "BACKFILL_DEPTH", {Timeframe.H1: timedelta(days=40)}
+        )
+
+    def test_the_worker_registers_the_job(self):
+        """A function ARQ does not know about is a job that never runs, which
+        is precisely how this stayed quiet for ten phases."""
+        names = [f.__name__ for f in collector.WorkerSettings.functions]
+
+        assert "build_episodes_job" in names
+
+    def test_there_is_a_cron_entry_for_it(self):
+        """Registered but never scheduled is the same silence wearing a
+        different hat."""
+        assert len(collector.WorkerSettings.cron_jobs) >= 3
+
+    def test_it_does_not_share_an_hour_with_the_dna_sweep(self):
+        """Both walk the entire watchlist. Two full sweeps at once on a
+        two-core box starve the collection cycle that has to land on the
+        minute."""
+        assert collector.EPISODE_BUILD_HOUR != collector.DNA_REFRESH_HOUR
+
+    def test_it_writes_episodes_for_a_collected_instrument(self, monkeypatch):
+        provider = FakeProvider({"BTC-USD": recent_bars(900)})
+        monkeypatch.setattr(collector, "_resolve_provider", lambda: provider)
+        entries = parse_watchlist("BTCUSD:BTC-USD:H1")
+        collector.run_cycle(entries)
+
+        result = collector.build_episodes(entries)
+
+        assert result["built"] > 0
+        assert result["failures"] == []
+
+    def test_the_episodes_are_readable_afterwards(self, monkeypatch, session):
+        """Written is not the same as retrievable. The similarity layer reads
+        them back through `query`, so that is what is asserted."""
+        from app.services import episodes as episode_service
+        from app.services.instruments import get_instrument_by_symbol
+
+        provider = FakeProvider({"BTC-USD": recent_bars(900)})
+        monkeypatch.setattr(collector, "_resolve_provider", lambda: provider)
+        entries = parse_watchlist("BTCUSD:BTC-USD:H1")
+        collector.run_cycle(entries)
+        collector.build_episodes(entries)
+
+        instrument = get_instrument_by_symbol(session, "BTCUSD")
+        # `as_of` is not optional here on purpose: an episode is evidence only
+        # if its outcome had resolved by the moment being asked about, and a
+        # default of "now" would quietly hand a backtest tomorrow's answers.
+        stored = episode_service.query(
+            session,
+            instrument.id,
+            Timeframe.H1,
+            datetime.now(UTC),
+            limit=5,
+        )
+
+        assert stored
+
+    def test_a_second_sweep_adds_nothing(self, monkeypatch):
+        """Re-running must not double the library. Near-duplicate episodes make
+        similarity search confidently wrong - it returns matches that are one
+        moment counted twice."""
+        provider = FakeProvider({"BTC-USD": recent_bars(900)})
+        monkeypatch.setattr(collector, "_resolve_provider", lambda: provider)
+        entries = parse_watchlist("BTCUSD:BTC-USD:H1")
+        collector.run_cycle(entries)
+        collector.build_episodes(entries)
+
+        again = collector.build_episodes(entries)
+
+        assert again["built"] == 0
+        assert again["skipped_existing"] > 0
+
+    def test_an_unknown_symbol_is_skipped_not_crashed(self):
+        result = collector.build_episodes(parse_watchlist("NOSUCH:NOSUCH=X:H1"))
+
+        assert result["built"] == 0
+        assert result["failures"] == []
+
+    def test_an_instrument_short_of_history_does_not_stop_the_sweep(self, monkeypatch):
+        """One thin symbol must not cost the other forty-eight their episodes."""
+        provider = FakeProvider({"BTC-USD": recent_bars(900), "THIN=X": recent_bars(5)})
+        monkeypatch.setattr(collector, "_resolve_provider", lambda: provider)
+        entries = parse_watchlist("THIN:THIN=X:H1,BTCUSD:BTC-USD:H1")
+        collector.run_cycle(entries)
+
+        result = collector.build_episodes(entries)
+
+        assert result["built"] > 0

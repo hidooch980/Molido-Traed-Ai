@@ -39,7 +39,7 @@ from app.db.session import session_scope
 from app.models.instruments import Instrument
 from app.providers.base import MarketDataProvider
 from app.providers.registry import get_provider, install_defaults, register
-from app.services import audit, feature_store, ingestion, sessions, symbol_dna
+from app.services import audit, episodes, feature_store, ingestion, sessions, symbol_dna
 from app.services.instruments import get_instrument_by_symbol, upsert_instrument
 from app.workers.watchlist import WatchEntry, parse_watchlist
 
@@ -304,6 +304,81 @@ def refresh_dna(entries: list[WatchEntry] | None = None) -> dict[str, Any]:
     }
 
 
+# Episodes are built a day behind rather than up to now. An episode is only
+# honest once its outcome window has closed, and `build` skips the immature
+# ones anyway - reaching for today's bars would spend the sweep discovering
+# that today has not finished yet.
+EPISODE_BUILD_HOUR = 3
+EPISODE_WINDOW = timedelta(days=7)
+# Consecutive bars produce near-identical episodes, and a library of
+# near-duplicates makes similarity search confidently wrong: it returns a
+# hundred matches that are really one moment counted a hundred times.
+EPISODE_STEP = 4
+
+
+def build_episodes(entries: list[WatchEntry] | None = None) -> dict[str, Any]:
+    """Build episodes for every watched instrument over the recent window.
+
+    Written because the table was empty in production while its builder was
+    fully tested. The same gap as symbol DNA, found the same way: by asking the
+    database what was in it rather than asking the test suite whether the code
+    worked.
+    """
+    settings = get_settings()
+    entries = entries or parse_watchlist(settings.watchlist)
+    now = datetime.now(UTC)
+    built = 0
+    immature = 0
+    existing = 0
+    failures: list[str] = []
+
+    for entry in entries:
+        try:
+            with session_scope() as session:
+                instrument = get_instrument_by_symbol(session, entry.symbol)
+                if instrument is None:
+                    continue
+                result = episodes.build(
+                    session,
+                    instrument.id,
+                    entry.timeframe,
+                    start=now - EPISODE_WINDOW,
+                    end=now,
+                    as_of=now,
+                    step=EPISODE_STEP,
+                )
+                built += result.built
+                immature += result.skipped_immature
+                existing += result.skipped_existing
+        except MolidoError as exc:
+            # One instrument short of history must not stop the sweep, and the
+            # reason is recorded rather than swallowed.
+            failures.append(f"{entry.key}: {exc.code}")
+        except Exception as exc:  # noqa: BLE001
+            failures.append(f"{entry.key}: {type(exc).__name__}")
+
+    log.info(
+        "collector.episodes_built",
+        entries=len(entries),
+        built=built,
+        skipped_immature=immature,
+        skipped_existing=existing,
+        failures=len(failures),
+    )
+    return {
+        "entries": len(entries),
+        "built": built,
+        "skipped_immature": immature,
+        "skipped_existing": existing,
+        "failures": failures,
+    }
+
+
+async def build_episodes_job(ctx: dict) -> dict[str, Any]:
+    """ARQ wrapper. Threaded for the same reason `collect` is."""
+    return await asyncio.to_thread(build_episodes)
+
+
 async def refresh_dna_job(ctx: dict) -> dict[str, Any]:
     """ARQ wrapper. Threaded for the same reason `collect` is."""
     return await asyncio.to_thread(refresh_dna)
@@ -322,6 +397,10 @@ def _cron_jobs() -> list:
         cron(collect, minute=marks, run_at_startup=True, max_tries=1),
         # Once a day, off the hour the market is busiest.
         cron(refresh_dna_job, hour={DNA_REFRESH_HOUR}, minute={0}, max_tries=1),
+        # An hour after the DNA sweep rather than beside it: both walk the whole
+        # watchlist, and two full sweeps at once on a two-core box starve the
+        # collection cycle that has to land on the minute.
+        cron(build_episodes_job, hour={EPISODE_BUILD_HOUR}, minute={0}, max_tries=1),
     ]
 
 
@@ -340,7 +419,7 @@ class WorkerSettings:
     message that points nowhere near the actual mistake.
     """
 
-    functions = [collect, refresh_dna_job]
+    functions = [collect, refresh_dna_job, build_episodes_job]
     on_startup = startup
     max_jobs = 2
     job_timeout = 900
