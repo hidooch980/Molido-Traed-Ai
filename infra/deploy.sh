@@ -55,6 +55,16 @@ for _ in $(seq 1 40); do
   sleep 2
 done
 
+# Cap the build cache. One build regenerates ~2.5 GB of it, and left alone it
+# reached 11.5 GB and put a 23 GB disk at 80% - at which point the next build
+# fails for want of space, which reads as a broken deploy rather than a full
+# disk. Two gigabytes keeps layer reuse fast without letting it grow forever.
+# The data is not the problem: the database grows about 2.5 MB a day.
+echo
+echo "-> capping the build cache at ${CACHE_LIMIT:-2GB}"
+sudo docker builder prune --force --keep-storage "${CACHE_LIMIT:-2GB}" >/dev/null 2>&1 || true
+df -h / | tail -1
+
 echo
 echo "=== services ==="
 compose ps --format '{{.Name}}  {{.State}}'
