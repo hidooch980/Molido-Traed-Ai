@@ -39,8 +39,8 @@ from app.db.session import session_scope
 from app.models.instruments import Instrument
 from app.providers.base import MarketDataProvider
 from app.providers.registry import get_provider, install_defaults, register
-from app.services import audit, feature_store, ingestion, sessions
-from app.services.instruments import upsert_instrument
+from app.services import audit, feature_store, ingestion, sessions, symbol_dna
+from app.services.instruments import get_instrument_by_symbol, upsert_instrument
 from app.workers.watchlist import WatchEntry, parse_watchlist
 
 log = get_logger(__name__)
@@ -248,6 +248,67 @@ async def startup(ctx: dict) -> None:
     )
 
 
+# How often the DNA profiles are recomputed. Daily rather than per cycle: they
+# describe an instrument's character over thousands of bars, and a character
+# that changed every fifteen minutes would not be one. Recomputing them at the
+# collection cadence would also read five thousand bars per instrument per
+# sweep for numbers that had not moved.
+DNA_REFRESH_HOUR = 2
+
+
+def refresh_dna(entries: list[WatchEntry] | None = None) -> dict[str, Any]:
+    """Compute and store the symbol-DNA profiles for every watched instrument.
+
+    This existed, was tested, and was never called in production - the market
+    map found it by reporting forty instruments as unmeasured rather than
+    drawing a correlation grid out of nothing.
+
+    `compute_dna` sources its own peer list for the correlation facet, so
+    this only has to walk the watchlist.
+    """
+    settings = get_settings()
+    entries = entries or parse_watchlist(settings.watchlist)
+    now = datetime.now(UTC)
+    written = 0
+    failures: list[str] = []
+
+    for entry in entries:
+        try:
+            with session_scope() as session:
+                instrument = get_instrument_by_symbol(session, entry.symbol)
+                if instrument is None:
+                    continue
+                profiles = symbol_dna.compute_dna(
+                    session, instrument.id, entry.timeframe, now
+                )
+                written += symbol_dna.persist_dna(
+                    session, instrument.id, entry.timeframe, now, profiles
+                )
+        except MolidoError as exc:
+            # A single instrument short of history must not stop the sweep, and
+            # the reason is recorded rather than swallowed.
+            failures.append(f"{entry.key}: {exc.code}")
+        except Exception as exc:  # noqa: BLE001
+            failures.append(f"{entry.key}: {type(exc).__name__}")
+
+    log.info(
+        "collector.dna_refreshed",
+        entries=len(entries),
+        profiles_written=written,
+        failures=len(failures),
+    )
+    return {
+        "entries": len(entries),
+        "profiles_written": written,
+        "failures": failures,
+    }
+
+
+async def refresh_dna_job(ctx: dict) -> dict[str, Any]:
+    """ARQ wrapper. Threaded for the same reason `collect` is."""
+    return await asyncio.to_thread(refresh_dna)
+
+
 def _cron_jobs() -> list:
     from arq import cron
 
@@ -257,7 +318,11 @@ def _cron_jobs() -> list:
     # different times then land on the same schedule instead of drifting into
     # overlapping sweeps of the same symbols.
     marks = set(range(0, 60, minutes))
-    return [cron(collect, minute=marks, run_at_startup=True, max_tries=1)]
+    return [
+        cron(collect, minute=marks, run_at_startup=True, max_tries=1),
+        # Once a day, off the hour the market is busiest.
+        cron(refresh_dna_job, hour={DNA_REFRESH_HOUR}, minute={0}, max_tries=1),
+    ]
 
 
 def _redis_settings():
@@ -275,7 +340,7 @@ class WorkerSettings:
     message that points nowhere near the actual mistake.
     """
 
-    functions = [collect]
+    functions = [collect, refresh_dna_job]
     on_startup = startup
     max_jobs = 2
     job_timeout = 900

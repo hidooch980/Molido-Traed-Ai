@@ -187,3 +187,89 @@ class TestCycle:
         payload = collector.run_cycle(parse_watchlist("BTCUSD:BTC-USD:H1")).as_payload()
 
         assert set(payload) >= {"entries", "bars_written", "failure_count"}
+
+
+class TestDnaRefresh:
+    """Phase 8 was built, tested, and never ran in production.
+
+    Nothing called `compute_dna` outside its own suite, so every instrument had
+    zero stored profiles and the market map reported forty of them as
+    unmeasured. It found the gap by refusing to draw a correlation grid out of
+    nothing - which is the point of that refusal, but it should not have taken
+    a UI to notice.
+
+    These tests exist so the wiring cannot go quiet again.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _patch_session(self, session, monkeypatch):
+        from contextlib import contextmanager
+
+        @contextmanager
+        def fake_scope():
+            yield session
+
+        monkeypatch.setattr(collector, "session_scope", fake_scope)
+        monkeypatch.setattr(
+            collector, "BACKFILL_DEPTH", {Timeframe.H1: timedelta(days=20)}
+        )
+
+    def test_the_worker_registers_the_job(self):
+        """A function ARQ does not know about is a job that never runs."""
+        names = [f.__name__ for f in collector.WorkerSettings.functions]
+
+        assert "refresh_dna_job" in names
+
+    def test_there_is_a_cron_entry_for_it(self):
+        assert len(collector.WorkerSettings.cron_jobs) >= 2
+
+    def test_it_writes_profiles_for_a_collected_instrument(self, monkeypatch):
+
+        provider = FakeProvider({"BTC-USD": recent_bars(600)})
+        monkeypatch.setattr(collector, "_resolve_provider", lambda: provider)
+        entries = parse_watchlist("BTCUSD:BTC-USD:H1")
+        collector.run_cycle(entries)
+
+        result = collector.refresh_dna(entries)
+
+        assert result["profiles_written"] > 0
+        assert result["failures"] == []
+
+    def test_the_profiles_are_readable_afterwards(self, monkeypatch, session):
+        """Written is not the same as retrievable - the map reads them back
+        through `latest_dna`, so that is what the test asserts."""
+        from datetime import UTC, datetime
+
+        from app.services import symbol_dna
+        from app.services.instruments import get_instrument_by_symbol
+
+        provider = FakeProvider({"BTC-USD": recent_bars(600)})
+        monkeypatch.setattr(collector, "_resolve_provider", lambda: provider)
+        entries = parse_watchlist("BTCUSD:BTC-USD:H1")
+        collector.run_cycle(entries)
+        collector.refresh_dna(entries)
+
+        instrument = get_instrument_by_symbol(session, "BTCUSD")
+        stored = symbol_dna.latest_dna(
+            session, instrument.id, Timeframe.H1, datetime.now(UTC)
+        )
+
+        assert stored, "the map reads profiles through latest_dna and found none"
+
+    def test_an_instrument_short_of_history_does_not_stop_the_sweep(self, monkeypatch):
+        """One symbol with too few bars must not cost the rest their profiles."""
+        provider = FakeProvider({"BTC-USD": recent_bars(600), "EURUSD=X": recent_bars(5)})
+        monkeypatch.setattr(collector, "_resolve_provider", lambda: provider)
+        entries = parse_watchlist("EURUSD:EURUSD=X:H1,BTCUSD:BTC-USD:H1")
+        collector.run_cycle(entries)
+
+        result = collector.refresh_dna(entries)
+
+        assert result["entries"] == 2
+        assert result["profiles_written"] > 0
+
+    def test_an_unknown_symbol_is_skipped_not_crashed(self, monkeypatch):
+        result = collector.refresh_dna(parse_watchlist("NOPE:NOPE=X:H1"))
+
+        assert result["profiles_written"] == 0
+        assert result["failures"] == []
