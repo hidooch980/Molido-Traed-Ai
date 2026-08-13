@@ -6,6 +6,7 @@ from app.api.v1 import (
     data_quality,
     decisions,
     episodes,
+    execution,
     features,
     instruments,
     learning,
@@ -34,5 +35,6 @@ api_router.include_router(world_state.router)
 api_router.include_router(decisions.router)
 api_router.include_router(risk.router)
 api_router.include_router(learning.router)
+api_router.include_router(execution.router)
 
 __all__ = ["api_router"]
