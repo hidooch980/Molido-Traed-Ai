@@ -383,6 +383,71 @@ export interface AccountsView {
   note: string;
 }
 
+export interface ChallengeVerdictView {
+  status: string;
+  allowed: boolean;
+  verdict: string;
+  max_additional_risk_r: number | null;
+  risk_cap_measurable: boolean;
+  headroom: {
+    daily: Record<string, unknown>;
+    total: Record<string, unknown>;
+  };
+  breaches: string[];
+  warnings: string[];
+  unverified: string[];
+  rulebook_source: string;
+  authorises_execution?: boolean;
+}
+
+/** One leak-free fold, from `/learning/walk-forward`. */
+export interface WalkForwardFold {
+  index: number;
+  train_size: number;
+  test_size: number;
+  purged: number;
+  embargoed: number;
+}
+
+export interface WalkForwardPlan {
+  available: boolean;
+  reason?: string;
+  folds: WalkForwardFold[];
+  embargo_seconds?: number;
+  leakage_verified?: boolean;
+}
+
+export interface Scorecard {
+  strategy: string;
+  verdict: string;
+  reason: string;
+  trials: number;
+  wins: number;
+  hit_rate: number;
+  hit_rate_95ci: [number, number];
+  realised_reward_risk: number;
+  required_hit_rate: number;
+  expectancy_r: number;
+  comparisons: number;
+}
+
+export interface Breakeven {
+  reward_risk: number;
+  required_hit_rate: number;
+}
+
+/** Inbound webhook posture, from `/integrations/webhooks`. */
+export interface WebhookPosture {
+  signature: string;
+  why_constant_time: string;
+  max_age_seconds: number;
+  why_max_age: string;
+  secret_configured: boolean;
+  unset_secret_means: string;
+  verified_webhooks_may: string[];
+  environment: string;
+}
+
 /** Measured cross-instrument correlation, from stored DNA snapshots. */
 export interface MarketMap {
   timeframe: string;
@@ -514,6 +579,12 @@ export const api = {
   health: () => request<Health>("/health/ready"),
   systemSettings: () => request<SystemSettings>("/api/v1/system/settings"),
   riskLimits: () => request<RiskLimits>("/api/v1/risk/limits"),
+  challenge: (params: Record<string, string | number>) =>
+    request<ChallengeVerdictView>(
+      `/api/v1/risk/challenge?${new URLSearchParams(
+        Object.entries(params).map(([k, v]) => [k, String(v)]),
+      ).toString()}`,
+    ),
   brokers: () => request<BrokerView>("/api/v1/brokers"),
   rulebooks: () => request<RulebookView>("/api/v1/risk/rulebooks"),
   executionPolicy: () => request<ExecutionPolicyView>("/api/v1/execution/policy"),
@@ -521,9 +592,24 @@ export const api = {
   learningThresholds: () =>
     request<LearningThresholds>("/api/v1/learning/thresholds"),
   drift: () => request<DriftView>("/api/v1/learning/drift"),
+  walkForward: (params: Record<string, number>) =>
+    request<WalkForwardPlan>(
+      `/api/v1/learning/walk-forward?${new URLSearchParams(
+        Object.entries(params).map(([k, v]) => [k, String(v)]),
+      ).toString()}`,
+    ),
+  scorecard: (params: Record<string, number>) =>
+    request<Scorecard>(
+      `/api/v1/learning/scorecard?${new URLSearchParams(
+        Object.entries(params).map(([k, v]) => [k, String(v)]),
+      ).toString()}`,
+    ),
+  breakeven: (rewardRisk: number) =>
+    request<Breakeven>(`/api/v1/learning/breakeven?reward_risk=${rewardRisk}`),
   modelRegistry: () => request<RegistryView>("/api/v1/learning/registry"),
   security: () => request<SecurityPosture>("/api/v1/integrations/security"),
   commands: () => request<CommandsView>("/api/v1/integrations/commands"),
+  webhooks: () => request<WebhookPosture>("/api/v1/integrations/webhooks"),
   marketMap: (limit = 25) =>
     request<MarketMap>(`/api/v1/market-map?limit=${limit}`),
   scanner: (limit = 40) =>

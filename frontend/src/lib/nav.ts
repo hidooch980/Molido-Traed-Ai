@@ -31,7 +31,7 @@ export const NAV: NavItem[] = [
   { key: "orders", labelKey: "nav.orders", planned: true, group: "trading" },
   { key: "portfolio", labelKey: "nav.portfolio", href: "/risk", group: "trading" },
   { key: "risk", labelKey: "nav.risk", href: "/risk", group: "trading" },
-  { key: "challenge", labelKey: "nav.challenge", planned: true, group: "trading" },
+  { key: "challenge", labelKey: "nav.challenge", href: "/challenge", group: "trading" },
   { key: "execution", labelKey: "nav.execution", href: "/execution", group: "trading" },
 
   { key: "features", labelKey: "nav.features", href: "/features", group: "intelligence" },
@@ -39,10 +39,10 @@ export const NAV: NavItem[] = [
   { key: "memory", labelKey: "nav.memory", href: "/memory", group: "intelligence" },
   { key: "episodes", labelKey: "nav.episodes", href: "/episodes", group: "intelligence" },
   { key: "journal", labelKey: "nav.journal", planned: true, group: "intelligence" },
-  { key: "lab", labelKey: "nav.lab", planned: true, group: "intelligence" },
-  { key: "backtest", labelKey: "nav.backtest", planned: true, group: "intelligence" },
+  { key: "lab", labelKey: "nav.lab", href: "/lab", group: "intelligence" },
+  { key: "backtest", labelKey: "nav.backtest", href: "/lab", group: "intelligence" },
   { key: "research", labelKey: "nav.research", planned: true, group: "intelligence" },
-  { key: "benchmark", labelKey: "nav.benchmark", planned: true, group: "intelligence" },
+  { key: "benchmark", labelKey: "nav.benchmark", href: "/lab", group: "intelligence" },
   { key: "registry", labelKey: "nav.registry", href: "/learning", group: "intelligence" },
 
   { key: "data-quality", labelKey: "nav.dataQuality", href: "/data-quality", group: "operations" },
@@ -50,7 +50,7 @@ export const NAV: NavItem[] = [
   { key: "accounts", labelKey: "nav.accounts", href: "/execution", group: "operations" },
   { key: "brokers", labelKey: "nav.brokers", href: "/brokers", group: "operations" },
   { key: "telegram", labelKey: "nav.telegram", href: "/security", group: "operations" },
-  { key: "automation", labelKey: "nav.automation", planned: true, group: "operations" },
+  { key: "automation", labelKey: "nav.automation", href: "/automation", group: "operations" },
   { key: "security", labelKey: "nav.security", href: "/security", group: "operations" },
   { key: "settings", labelKey: "nav.settings", href: "/settings", group: "operations" },
 ];
