@@ -17,6 +17,7 @@ from app.api.v1 import (
     sessions,
     similarity,
     symbol_dna,
+    system,
     world_state,
 )
 
@@ -38,5 +39,6 @@ api_router.include_router(risk.router)
 api_router.include_router(learning.router)
 api_router.include_router(execution.router)
 api_router.include_router(integrations.router)
+api_router.include_router(system.router)
 
 __all__ = ["api_router"]

@@ -257,6 +257,38 @@ export interface WorldState {
   quality: WorldStateBlock;
 }
 
+/** The redacted deployment configuration from `/system/settings`. */
+export interface SystemSettings {
+  app: Record<string, string | number | boolean>;
+  collector: {
+    provider: string;
+    interval_seconds: number;
+    watchlist_size: number;
+    symbols: string[];
+  };
+  ingestion: {
+    max_retries: number;
+    backoff_base_seconds: number;
+    chunk_days: number;
+    min_quality_score: number;
+  };
+  execution: {
+    enabled: boolean;
+    dry_run: boolean;
+    require_auth: boolean;
+    max_risk_r_per_order: number;
+  };
+  retention: {
+    table: string;
+    keep_days: number;
+    reason: string;
+    protected: string | null;
+    protect_reason: string | null;
+  }[];
+  read_only: boolean;
+  note: string;
+}
+
 /** What `/decisions/posture` answers: can this deployment trade right now? */
 export interface Posture {
   can_trade: boolean;
@@ -293,6 +325,7 @@ export interface Readiness {
 
 export const api = {
   health: () => request<Health>("/health/ready"),
+  systemSettings: () => request<SystemSettings>("/api/v1/system/settings"),
   posture: () => request<Posture>("/api/v1/decisions/posture"),
   proposal: (instrumentId: string, timeframe = "H1") =>
     request<Proposal>(`/api/v1/brain/think/${instrumentId}?timeframe=${timeframe}`),

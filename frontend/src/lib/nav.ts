@@ -24,7 +24,7 @@ export const NAV: NavItem[] = [
   { key: "sessions", labelKey: "nav.sessions", href: "/sessions", group: "market" },
   { key: "market-map", labelKey: "nav.marketMap", planned: true, group: "market" },
   { key: "scanner", labelKey: "nav.scanner", planned: true, group: "market" },
-  { key: "charts", labelKey: "nav.charts", planned: true, group: "market" },
+  { key: "charts", labelKey: "nav.charts", href: "/charts", group: "market" },
 
   { key: "signals", labelKey: "nav.signals", planned: true, group: "trading" },
   { key: "positions", labelKey: "nav.positions", planned: true, group: "trading" },
@@ -52,7 +52,7 @@ export const NAV: NavItem[] = [
   { key: "telegram", labelKey: "nav.telegram", planned: true, group: "operations" },
   { key: "automation", labelKey: "nav.automation", planned: true, group: "operations" },
   { key: "security", labelKey: "nav.security", planned: true, group: "operations" },
-  { key: "settings", labelKey: "nav.settings", planned: true, group: "operations" },
+  { key: "settings", labelKey: "nav.settings", href: "/settings", group: "operations" },
 ];
 
 export const GROUP_LABELS: Record<NavItem["group"], string> = {
