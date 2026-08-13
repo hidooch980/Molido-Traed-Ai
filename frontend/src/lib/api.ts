@@ -257,6 +257,46 @@ export interface WorldState {
   quality: WorldStateBlock;
 }
 
+/** Measured cross-instrument correlation, from stored DNA snapshots. */
+export interface MarketMap {
+  timeframe: string;
+  as_of: string;
+  instruments_considered: number;
+  snapshots_used: number;
+  oldest_snapshot: string | null;
+  measured_pairs: number;
+  pairs: {
+    a: string;
+    b: string;
+    correlation: number;
+    aligned_bars: number | null;
+    clustered: boolean;
+  }[];
+  clustered_pairs: number;
+  cluster_threshold: number;
+  unmeasured: string[];
+  note: string;
+  freshness: string;
+}
+
+export interface Scanner {
+  timeframe: string;
+  as_of: string;
+  instruments: {
+    instrument_id: string;
+    symbol: string;
+    asset_class: string;
+    data_age_seconds: number | null;
+    volatility_snapshot: string | null;
+    tendency: string | null;
+    autocorrelation: number | null;
+    profiles_available: string[];
+  }[];
+  without_profiles: string[];
+  not_a_signal_list: boolean;
+  note: string;
+}
+
 /** The redacted deployment configuration from `/system/settings`. */
 export interface SystemSettings {
   app: Record<string, string | number | boolean>;
@@ -326,6 +366,10 @@ export interface Readiness {
 export const api = {
   health: () => request<Health>("/health/ready"),
   systemSettings: () => request<SystemSettings>("/api/v1/system/settings"),
+  marketMap: (limit = 25) =>
+    request<MarketMap>(`/api/v1/market-map?limit=${limit}`),
+  scanner: (limit = 40) =>
+    request<Scanner>(`/api/v1/market-map/scanner?limit=${limit}`),
   posture: () => request<Posture>("/api/v1/decisions/posture"),
   proposal: (instrumentId: string, timeframe = "H1") =>
     request<Proposal>(`/api/v1/brain/think/${instrumentId}?timeframe=${timeframe}`),

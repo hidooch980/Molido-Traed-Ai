@@ -12,6 +12,7 @@ from app.api.v1 import (
     integrations,
     learning,
     market_data,
+    market_map,
     memory,
     risk,
     sessions,
@@ -40,5 +41,6 @@ api_router.include_router(learning.router)
 api_router.include_router(execution.router)
 api_router.include_router(integrations.router)
 api_router.include_router(system.router)
+api_router.include_router(market_map.router)
 
 __all__ = ["api_router"]
