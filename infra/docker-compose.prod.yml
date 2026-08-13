@@ -104,6 +104,17 @@ services:
       migrate:
         condition: service_completed_successfully
     command: ["arq", "app.workers.collector.WorkerSettings"]
+    # Overrides the image's healthcheck, which curls :8000. This worker has
+    # never listened on a port, so that probe reported `unhealthy` for its
+    # entire life while writing fifty-four bars a cycle with zero failures -
+    # and a permanently red indicator is one nobody reads. This asks the
+    # question that matters for a worker instead: did a cycle finish recently?
+    healthcheck:
+      test: ["CMD", "python", "-m", "app.workers.healthcheck"]
+      interval: 60s
+      timeout: 15s
+      start_period: 180s
+      retries: 3
     logging: *logging
 
   web:
