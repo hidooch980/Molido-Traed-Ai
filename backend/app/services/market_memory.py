@@ -264,6 +264,14 @@ def recall_all(
     }
 
 
+# Snapshots are pure functions of (instrument, timeframe, as_of, provider): the
+# three-year horizon reads several thousand bars, and one decision used to pay
+# for that six times over - three horizons, fetched once by the world state and
+# again by the regime classifier, which had no way to know the work was already
+# done. Callers that need both now read once and hand the result to both.
+MemorySnapshots = dict[MemoryHorizon, MemorySnapshot]
+
+
 def agreement(snapshots: dict[MemoryHorizon, MemorySnapshot]) -> dict[str, Any]:
     """Do the horizons tell the same story?
 

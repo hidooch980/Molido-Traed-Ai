@@ -98,8 +98,16 @@ def classify(
     instrument_id: uuid.UUID,
     timeframe: Timeframe,
     as_of: datetime | None = None,
+    memory: dict | None = None,
 ) -> RegimeResult:
-    """Name the regime at `as_of`, or refuse to."""
+    """Name the regime at `as_of`, or refuse to.
+
+    `memory` is the same optimisation as in `world_state.build`: the horizons
+    are a pure function of the cutoff, and a caller doing both used to read
+    several thousand bars twice. Snapshots from a different cutoff would name
+    this instant's regime from another instant's memory, so only a caller that
+    recalled at this exact `as_of` may pass them.
+    """
     cutoff = (as_of or datetime.now(UTC)).astimezone(UTC)
     missing: list[str] = []
 
@@ -108,9 +116,11 @@ def classify(
     except InsufficientDataError as exc:
         return _uncertain(f"features unavailable: {exc.message}", ["features"])
 
-    memory = market_memory.recall_all(session, instrument_id, timeframe, cutoff)
-    short = memory[MemoryHorizon.SHORT]
-    medium = memory[MemoryHorizon.MEDIUM]
+    horizons = memory or market_memory.recall_all(
+        session, instrument_id, timeframe, cutoff
+    )
+    short = horizons[MemoryHorizon.SHORT]
+    medium = horizons[MemoryHorizon.MEDIUM]
     if not short.available:
         missing.append("short_memory")
 

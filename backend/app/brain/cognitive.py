@@ -33,8 +33,8 @@ from sqlalchemy.orm import Session
 from app.brain import council, meta
 from app.core.enums import Decision, Timeframe
 from app.core.logging import get_logger
+from app.services import market_memory, similarity, world_state
 from app.services import regime as regime_service
-from app.services import similarity, world_state
 
 log = get_logger(__name__)
 
@@ -114,7 +114,11 @@ def think(
     stages: list[str] = []
 
     # --- perception + context ---------------------------------------------
-    state = world_state.build(session, instrument_id, timeframe, cutoff)
+    # Read once and hand to both. The world state and the regime classifier
+    # each need all three horizons, and the long one reads several thousand
+    # bars; fetching separately made every decision pay for that twice.
+    memory = market_memory.recall_all(session, instrument_id, timeframe, cutoff)
+    state = world_state.build(session, instrument_id, timeframe, cutoff, memory=memory)
     payload = state.as_dict()
     stages.append("perception")
 
@@ -133,7 +137,9 @@ def think(
         return proposal
 
     # --- regime -----------------------------------------------------------
-    regime_result = regime_service.classify(session, instrument_id, timeframe, cutoff)
+    regime_result = regime_service.classify(
+        session, instrument_id, timeframe, cutoff, memory=memory
+    )
     payload["regime"] = regime_result.as_dict()
     proposal.regime = payload["regime"]
     stages.append("context")

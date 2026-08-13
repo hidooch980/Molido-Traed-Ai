@@ -186,10 +186,16 @@ def _features_block(
 
 
 def _memory_block(
-    session: Session, instrument_id: uuid.UUID, timeframe: Timeframe, as_of: datetime
+    session: Session,
+    instrument_id: uuid.UUID,
+    timeframe: Timeframe,
+    as_of: datetime,
+    memory: dict | None = None,
 ) -> Block:
     try:
-        snapshots = market_memory.recall_all(session, instrument_id, timeframe, as_of)
+        snapshots = memory or market_memory.recall_all(
+            session, instrument_id, timeframe, as_of
+        )
     except ValidationFailedError as exc:
         return _unavailable(exc.message)
 
@@ -276,12 +282,18 @@ def build(
     instrument_id: uuid.UUID,
     timeframe: Timeframe,
     as_of: datetime | None = None,
+    memory: dict | None = None,
 ) -> WorldState:
     """Assemble the full picture at `as_of`.
 
     A failure in one block never fails the whole state: a world state missing
     its memory block is still useful, while an exception leaves the caller with
     nothing at all. Failures are recorded in the block's reason.
+
+    `memory` lets a caller that has already recalled the horizons hand them
+    over. Passing snapshots taken at a different `as_of` would put one instant's
+    memory next to another instant's price, so the only safe caller is one that
+    recalled at this exact cutoff.
     """
     cutoff = (as_of or datetime.now(UTC)).astimezone(UTC)
     if cutoff.tzinfo is None:
@@ -294,7 +306,9 @@ def build(
         "session": lambda: _session_block(session, instrument, cutoff),
         "freshness": lambda: _freshness_block(session, instrument_id, timeframe, cutoff),
         "features": lambda: _features_block(session, instrument_id, timeframe, cutoff),
-        "memory": lambda: _memory_block(session, instrument_id, timeframe, cutoff),
+        "memory": lambda: _memory_block(
+            session, instrument_id, timeframe, cutoff, memory
+        ),
         "dna": lambda: _dna_block(session, instrument_id, timeframe, cutoff),
         "quality": lambda: _quality_block(session, instrument_id, timeframe),
     }
