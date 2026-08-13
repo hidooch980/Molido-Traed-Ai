@@ -50,6 +50,14 @@ class Settings(BaseSettings):
     require_auth: bool = False
     rate_limit_per_minute: int = 120
 
+    # Execution. Three separate switches on purpose: enabling the engine and
+    # allowing it to send real orders are different decisions, and one flag
+    # would mean whoever makes the first also makes the second. Every default
+    # refuses, and `app.execution.safety` re-checks all of them per order.
+    enable_execution: bool = False
+    execution_dry_run: bool = True
+    max_risk_r_per_order: float = 1.0
+
     # Collector (the long-running data-gathering worker)
     collector_provider: str = "yfinance"
     collector_interval_seconds: int = 900
