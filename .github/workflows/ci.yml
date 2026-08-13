@@ -25,15 +25,20 @@ jobs:
       - name: Tests
         # The suite runs on in-memory SQLite; no database service is needed.
         #
-        # The failure is echoed back as a workflow error because that is the
-        # only part of a run readable without a token, and this job spent the
-        # project's entire history reporting nothing but "exit code 2" - the
-        # code for interrupted-at-collection, which names no file and no test.
+        # The tail of the output is echoed back as a workflow error because
+        # annotations are the only part of a run readable without a token, and
+        # this job spent the project's entire history reporting one line: exit
+        # code 2. That is pytest's code for interrupted-at-collection, and it
+        # names no file, no test and no reason.
+        #
+        # `tr` is given the newline as an octal code. Spelled with a backslash
+        # it collapsed into a real line break inside this file, the workflow
+        # stopped parsing, and the run failed with zero jobs - which reports
+        # even less than the failure it was meant to explain.
         run: |
           set -o pipefail
           pytest -q --tb=short 2>&1 | tee /tmp/pytest.log || {
-            echo "::error title=pytest::$(tail -c 2000 /tmp/pytest.log | tr '
-' '~')"
+            echo "::error title=pytest::$(tail -c 2000 /tmp/pytest.log | tr '\012' '~')"
             exit 1
           }
 
