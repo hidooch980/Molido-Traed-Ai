@@ -10,77 +10,93 @@
  * everywhere — a dashboard whose every element is the same colour reads as a
  * wall of text.
  *
- * Data colours are separate from brand colours on purpose. The brand cyan is
- * for chrome; series colours come from a palette validated for colour-vision
- * deficiency and contrast against these exact surfaces. Never paint a chart
- * with the brand accent because it looks on-brand.
+ * The base is warm rather than blue. Every trading screen in existence is cold
+ * blue-grey, and the sameness is not a coincidence — it is a default nobody
+ * chose. A warm ground also does something useful: red and amber are the two
+ * colours this application uses to say "stop", and they read as deliberate
+ * against paper in a way they cannot against a screen already tinted blue.
+ *
+ * Surfaces are separated by tone and a hairline, never by a drop shadow. A
+ * shadow implies a floating object, and none of these panels float; they are
+ * regions of one sheet. Corners are 4px because a data table with 12px corners
+ * spends its first and last row apologising for the curve.
+ *
+ * Data colours are separate from brand colours on purpose. The accent is for
+ * chrome; series colours come from a palette checked for colour-vision
+ * deficiency and for contrast against these exact surfaces. Never paint a
+ * chart with the brand accent because it looks on-brand.
  */
 
 :root {
   color-scheme: light;
 
-  --plane: #eef2f7;
-  --panel: #ffffff;
-  --panel-raised: #f8fafc;
-  --border: #dde5ee;
-  --border-strong: #c3d0de;
+  --plane: #efece5;
+  --panel: #fdfcf9;
+  --panel-raised: #f6f3ec;
+  --border: #e0dbd0;
+  --border-strong: #c9c2b3;
 
-  --ink: #0b2545;
-  --ink-2: #45586f;
-  --ink-3: #78889d;
+  --ink: #1a1815;
+  --ink-2: #4c473f;
+  --ink-3: #857e71;
 
-  --accent: #1b6ca8;
-  --accent-soft: rgba(27, 108, 168, 0.1);
+  --accent: #a8490b;
+  --accent-soft: rgba(168, 73, 11, 0.09);
 
   /* Status — reserved. Never reused as a series colour. */
-  --good: #0ca30c;
-  --warning: #b87500;
-  --serious: #c96a3d;
-  --critical: #d03b3b;
+  --good: #2c7a4b;
+  --warning: #a5730b;
+  --serious: #bd5528;
+  --critical: #b83a2b;
 
-  /* Series — validated against --panel */
-  --series-1: #2a78d6;
-  --series-2: #eb6834;
-  --series-3: #1baf7a;
-  --series-4: #eda100;
+  /* Series — checked against --panel. Violet rather than yellow in the fourth
+     slot: yellow on warm paper is nearly the accent, and two things that mean
+     different things must not look the same. */
+  --series-1: #2c6fb5;
+  --series-2: #cf5f28;
+  --series-3: #2b8874;
+  --series-4: #7a5fb8;
 
-  --grid: #e6ecf3;
-  --axis: #c3d0de;
+  --grid: #e7e2d8;
+  --axis: #c9c2b3;
 
-  --shadow: 0 1px 2px rgba(11, 37, 69, 0.06), 0 1px 3px rgba(11, 37, 69, 0.04);
+  --shadow: none;
+  --radius: 4px;
 }
 
 .dark {
   color-scheme: dark;
 
-  --plane: #060d18;
-  --panel: #0d1826;
-  --panel-raised: #122032;
-  --border: #1e3047;
-  --border-strong: #2b4260;
+  --plane: #0b0a09;
+  --panel: #151312;
+  --panel-raised: #1d1a18;
+  --border: #2a2521;
+  --border-strong: #3c352e;
 
-  --ink: #eaf6ff;
-  --ink-2: #a9bed6;
-  --ink-3: #6f8399;
+  --ink: #f2ede4;
+  --ink-2: #b5ada0;
+  --ink-3: #7c756a;
 
-  --accent: #22d3ee;
-  --accent-soft: rgba(34, 211, 238, 0.12);
+  --accent: #e8991f;
+  --accent-soft: rgba(232, 153, 31, 0.13);
 
-  --good: #0ca30c;
-  --warning: #fab219;
-  --serious: #ec835a;
-  --critical: #e05a5a;
+  --good: #47a86a;
+  --warning: #d99b2e;
+  --serious: #d97444;
+  --critical: #d85543;
 
-  /* Same four hues, stepped for the dark surface — not an automatic flip. */
-  --series-1: #3987e5;
-  --series-2: #d95926;
-  --series-3: #199e70;
-  --series-4: #c98500;
+  /* The same four hues, stepped for a dark surface rather than flipped. An
+     automatic inversion produces colours nobody checked. */
+  --series-1: #4a90d9;
+  --series-2: #e07840;
+  --series-3: #3fa48d;
+  --series-4: #9b83d4;
 
-  --grid: #17273a;
-  --axis: #2b4260;
+  --grid: #221e1a;
+  --axis: #3c352e;
 
-  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow: none;
+  --radius: 4px;
 }
 
 html,
@@ -94,8 +110,7 @@ body {
 .panel {
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 10px;
-  box-shadow: var(--shadow);
+  border-radius: var(--radius);
 }
 
 .panel-flat {
@@ -108,14 +123,16 @@ body {
   align-items: baseline;
   justify-content: space-between;
   gap: 0.75rem;
-  padding: 0.75rem 1rem;
+  padding: 0.7rem 1rem;
   border-bottom: 1px solid var(--border);
+  background: var(--panel-raised);
 }
 
 .panel-title {
-  font-size: 0.8125rem;
-  font-weight: 600;
-  letter-spacing: 0.02em;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
 
 .ink-2 {
@@ -127,8 +144,8 @@ body {
 
 .eyebrow {
   font-size: 0.625rem;
-  font-weight: 600;
-  letter-spacing: 0.12em;
+  font-weight: 700;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--ink-3);
 }
@@ -160,11 +177,12 @@ table.data thead th {
   top: 0;
   background: var(--panel-raised);
   color: var(--ink-3);
-  font-weight: 600;
+  font-weight: 700;
   text-transform: uppercase;
   font-size: 0.625rem;
-  letter-spacing: 0.1em;
+  letter-spacing: 0.12em;
   z-index: 1;
+  border-bottom: 1px solid var(--border-strong);
 }
 
 table.data tbody tr:hover {
@@ -180,12 +198,12 @@ table.data tbody tr:last-child td {
   display: inline-flex;
   align-items: center;
   gap: 0.3rem;
-  padding: 0.125rem 0.5rem;
-  border-radius: 999px;
+  padding: 0.1rem 0.5rem;
+  border-radius: 3px;
   border: 1px solid var(--border-strong);
   font-size: 0.6875rem;
   font-weight: 600;
-  line-height: 1.5;
+  line-height: 1.55;
   white-space: nowrap;
 }
 
@@ -205,11 +223,11 @@ table.data tbody tr:last-child td {
 }
 
 /* Sidebar links: the active state is a filled rail, not just bold text —
-   scannable at a glance in a 28-item menu. */
+   scannable at a glance in a 33-item menu. */
 .nav-link {
   display: block;
   padding: 0.3rem 0.5rem;
-  border-radius: 6px;
+  border-radius: 3px;
   font-size: 0.8125rem;
   color: var(--ink-2);
   border-inline-start: 2px solid transparent;
@@ -229,7 +247,7 @@ table.data tbody tr:last-child td {
 
 .nav-link[data-planned="true"] {
   color: var(--ink-3);
-  opacity: 0.55;
+  opacity: 0.5;
   cursor: not-allowed;
 }
 
