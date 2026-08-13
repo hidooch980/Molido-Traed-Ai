@@ -35,15 +35,39 @@ REPO = pathlib.Path(__file__).resolve().parents[2]
 PATTERNS = ("*.sh", "Dockerfile", "*.Dockerfile", "*.bash")
 
 
+#: Why git could not answer, if it could not. Populated by `tracked_files`.
+_GIT_REFUSED: list[str] = []
+
+
 def tracked_files() -> list[pathlib.Path]:
-    """Ask git rather than globbing, so untracked scratch files are ignored."""
-    result = subprocess.run(
-        ["git", "ls-files", *PATTERNS],
-        cwd=REPO,
-        capture_output=True,
-        text=True,
-        check=True,
-    )
+    """Ask git rather than globbing, so untracked scratch files are ignored.
+
+    Never raises. This runs during collection, and an exception here takes the
+    entire suite down before a single test executes - which is precisely what
+    kept CI red for the whole life of the project: pytest exited 2, the code
+    for "interrupted", and the summary blamed the build rather than naming a
+    file. A helper that cannot answer now records why and returns nothing, and
+    `test_the_audit_actually_finds_files` turns that into one visible failure.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "ls-files", *PATTERNS],
+            cwd=REPO,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError as exc:
+        _GIT_REFUSED.append(f"git could not be run: {exc}")
+        return []
+
+    if result.returncode != 0:
+        _GIT_REFUSED.append(
+            f"git ls-files exited {result.returncode}: "
+            f"{result.stderr.strip() or 'no stderr'}"
+        )
+        return []
+
     return [REPO / line for line in result.stdout.split("\n") if line.strip()]
 
 
@@ -56,8 +80,18 @@ def pytest_generate_tests(metafunc):
 
 
 def test_the_audit_actually_finds_files():
-    """Guards the guard: an empty list would make every check below vacuous."""
-    assert tracked_files(), "no shell scripts or Dockerfiles were found to check"
+    """Guards the guard: an empty list would make every check below vacuous.
+
+    This is also where a git failure surfaces. It is one red test with the
+    reason attached, instead of a collection error that hides 1,253 green ones
+    behind the word "interrupted".
+    """
+    files = tracked_files()
+
+    assert files, (
+        "no shell scripts or Dockerfiles were found to check"
+        + (f" - {'; '.join(_GIT_REFUSED)}" if _GIT_REFUSED else "")
+    )
 
 
 def test_no_carriage_returns(script: pathlib.Path):

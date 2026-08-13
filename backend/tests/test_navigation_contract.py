@@ -31,6 +31,9 @@ NAV_TS = FRONTEND / "lib" / "nav.ts"
 I18N_TS = FRONTEND / "lib" / "i18n.ts"
 APP_DIR = FRONTEND / "app"
 
+#: Why the nav table could not be read, if it could not.
+_NAV_REFUSED: list[str] = []
+
 NAV_ENTRY = re.compile(
     r'\{\s*key:\s*"(?P<key>[^"]+)",\s*'
     r'labelKey:\s*"(?P<label>[^"]+)",\s*'
@@ -42,7 +45,15 @@ NAV_ENTRY = re.compile(
 
 
 def nav_items() -> list[dict[str, str | None]]:
-    source = NAV_TS.read_text(encoding="utf-8")
+    """Never raises: this is called at import time to build parameter lists,
+    and an exception here is a collection error that takes the suite with it.
+    A missing or unparseable file returns nothing, and
+    `test_the_menu_was_actually_read` reports it as one named failure."""
+    try:
+        source = NAV_TS.read_text(encoding="utf-8")
+    except OSError as exc:
+        _NAV_REFUSED.append(str(exc))
+        return []
     items = [
         {
             "key": m.group("key"),
@@ -52,7 +63,8 @@ def nav_items() -> list[dict[str, str | None]]:
         }
         for m in NAV_ENTRY.finditer(source)
     ]
-    assert len(items) >= 25, f"the nav parser found only {len(items)} items"
+    if len(items) < 25:
+        _NAV_REFUSED.append(f"the nav parser found only {len(items)} items")
     return items
 
 
@@ -66,6 +78,14 @@ def dictionary(name: str) -> dict[str, str]:
 
 def page_files() -> list[pathlib.Path]:
     return sorted(APP_DIR.rglob("page.tsx"))
+
+
+def test_the_menu_was_actually_read():
+    """Guards the guard. Every parametrised check below is generated from
+    `nav_items`, so an empty list would make all of them pass by describing
+    nothing at all."""
+    assert nav_items(), f"the menu could not be read: {'; '.join(_NAV_REFUSED) or 'no reason recorded'}"
+    assert not _NAV_REFUSED, "; ".join(_NAV_REFUSED)
 
 
 class TestEveryMenuItemIsOneThingOrTheOther:
