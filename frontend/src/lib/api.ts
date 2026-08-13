@@ -208,6 +208,55 @@ function nowIso(): string {
   return new Date().toISOString();
 }
 
+/** One analyst's reading, from `/brain/think`. */
+export interface Opinion {
+  analyst: string;
+  decision: string;
+  conviction: number;
+  reason: string;
+  abstained?: boolean;
+}
+
+/** The reasoning chain behind one proposal. */
+export interface Proposal {
+  symbol: string;
+  timeframe: string;
+  as_of: string;
+  decision: string;
+  conviction: number;
+  brain_version: number;
+  authorises_execution: boolean;
+  regime: Record<string, unknown>;
+  council: Opinion[];
+  meta: Record<string, unknown>;
+  adversarial: Record<string, unknown>;
+  scenarios: { name: string; description: string; preferred: boolean; rationale: string }[];
+  invalidation: string | null;
+  uncertainty: Record<string, unknown>;
+  wait_reasons: string[];
+  stages: string[];
+}
+
+/** Each block reports its own availability, so one gap never sinks the rest. */
+export interface WorldStateBlock {
+  available: boolean;
+  reason?: string;
+  [key: string]: unknown;
+}
+
+export interface WorldState {
+  symbol: string;
+  timeframe: string;
+  as_of: string;
+  price: WorldStateBlock;
+  session: WorldStateBlock;
+  freshness: WorldStateBlock;
+  features: WorldStateBlock;
+  memory: WorldStateBlock;
+  dna: WorldStateBlock;
+  quality: WorldStateBlock;
+}
+
 /** What `/decisions/posture` answers: can this deployment trade right now? */
 export interface Posture {
   can_trade: boolean;
@@ -245,6 +294,10 @@ export interface Readiness {
 export const api = {
   health: () => request<Health>("/health/ready"),
   posture: () => request<Posture>("/api/v1/decisions/posture"),
+  proposal: (instrumentId: string, timeframe = "H1") =>
+    request<Proposal>(`/api/v1/brain/think/${instrumentId}?timeframe=${timeframe}`),
+  worldState: (instrumentId: string, timeframe = "H1") =>
+    request<WorldState>(`/api/v1/world-state/${instrumentId}?timeframe=${timeframe}`),
   readiness: () => request<Readiness>("/api/v1/decisions/readiness"),
   instruments: () => request<Instrument[]>("/api/v1/instruments"),
   dataQuality: (instrumentId: string) =>

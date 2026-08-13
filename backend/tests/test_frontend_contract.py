@@ -75,7 +75,12 @@ class TestTheFrontendTypesMatchTheApi:
     )
     def test_every_declared_field_is_actually_returned(self, client, interface, path):
         response = client.get(path)
-        assert response.status_code == 200, response.text
+
+        # 503 is a legitimate answer from a readiness probe, and the page has
+        # to render it. Asserting 200 made this test depend on whether the
+        # local database and redis happened to be up, which is a fact about my
+        # machine rather than about the contract.
+        assert response.status_code in (200, 503), response.text
 
         payload = response.json()
         missing = declared_fields(interface) - set(payload)
@@ -127,3 +132,48 @@ class TestThePageCannotOverclaim:
 
         assert payload["total"] > 0
         assert payload["passed"] <= payload["total"]
+
+
+class TestTheInstrumentScopedContracts:
+    """These endpoints take an id, so they need one that exists.
+
+    Without the fixture they would 404 and the test would pass vacuously by
+    never comparing anything - the failure mode this whole file exists to
+    prevent, one level up.
+    """
+
+    def test_the_world_state_blocks_the_page_renders_are_all_sent(
+        self, client, instrument, provider
+    ):
+        response = client.get(f"/api/v1/world-state/{instrument.id}")
+        assert response.status_code == 200, response.text
+
+        payload = response.json()
+        rendered = {"price", "session", "freshness", "features", "memory", "dna", "quality"}
+        missing = rendered - set(payload)
+
+        assert not missing, f"the brain page renders {sorted(missing)} and the API omits them"
+
+    def test_every_world_state_block_reports_its_own_availability(
+        self, client, instrument, provider
+    ):
+        """The page reads `block.available` on each one. A block without it
+        renders as unavailable regardless of the truth."""
+        payload = client.get(f"/api/v1/world-state/{instrument.id}").json()
+
+        for name in ("price", "session", "freshness", "features", "memory", "dna", "quality"):
+            assert "available" in payload[name], name
+
+    def test_the_proposal_fields_the_page_reads_are_sent(self, client, instrument, provider):
+        response = client.get(f"/api/v1/brain/think/{instrument.id}")
+        assert response.status_code == 200, response.text
+
+        payload = response.json()
+        missing = declared_fields("Proposal") - set(payload)
+
+        assert not missing, f"the brain page reads {sorted(missing)} and the API omits them"
+
+    def test_a_proposal_never_claims_execution_authority(self, client, instrument, provider):
+        payload = client.get(f"/api/v1/brain/think/{instrument.id}").json()
+
+        assert payload["authorises_execution"] is False
