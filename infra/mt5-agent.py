@@ -189,9 +189,14 @@ def process_once() -> int:
             result = {"applied": False, "reason": f"{type(exc).__name__}: {exc}"}
         # Written before the request is removed, so a crash between the two
         # leaves a request to retry rather than a silent loss.
-        request.with_suffix(".result.json").write_text(
-            json.dumps(result, indent=1), encoding="utf-8"
-        )
+        # Built from the request id rather than with_suffix: the file is named
+        # `<id>.request.json`, and with_suffix replaces only the final `.json`,
+        # producing `<id>.request.result.json` - which the API then looks for
+        # under a different name and reports as "no such request".
+        request_id = request.name.removesuffix(".request.json")
+        result_path = request.parent / f"{request_id}.result.json"
+        result_path.write_text(json.dumps(result, indent=1), encoding="utf-8")
+        result_path.chmod(0o660)
         request.unlink(missing_ok=True)
         log(f"result: {result.get('applied')} {result.get('reason') or ''}")
     return len(pending)

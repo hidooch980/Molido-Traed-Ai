@@ -123,7 +123,10 @@ def submit(request: LinkRequest, *, now: datetime | None = None) -> LinkResult:
         directory.mkdir(parents=True, exist_ok=True)
         partial = directory / f"{request_id}.partial"
         partial.write_text(json.dumps(request.as_payload()), encoding="utf-8")
-        partial.chmod(0o600)
+        # 0o660, not 0o600: the agent runs as a different user in the shared
+        # group and has to read this. Owner-only looks like the careful
+        # choice and silently makes the queue write-only.
+        partial.chmod(0o660)
         partial.rename(directory / f"{request_id}.request.json")
     except OSError as exc:
         return LinkResult(
