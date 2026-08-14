@@ -572,7 +572,7 @@ const en: Dictionary = {
 
   "nav.planned": "Planned — not built yet",
   "nav.note":
-    "Greyed items have no screen yet. Most of them have a working, tested backend behind them — the risk brain, challenge engine, journal, learning lab, registry and benchmark all exist and answer over the API. A few genuinely do not: anything that needs a live broker connection has nothing to show, because there is no live broker. They are listed either way so the intended shape stays visible, and disabled so nothing pretends to work.",
+    "One item is still greyed: the journal. Its logic is built and tested — entries, observations, and a prediction check that refuses to score a forecast the system never made — but nothing stores it yet, so a screen would have nothing to show. It stays listed and disabled rather than hidden, because a menu that omits what is missing describes a smaller system than the one being built. Everything else on this menu now has a screen, and the broker connection it needed is live.",
 
   "common.language": "English",
   "common.theme.light": "Light",
@@ -816,6 +816,19 @@ const en: Dictionary = {
   "positions.balance": "balance",
   "positions.flat": "flat",
   "positions.flatNote": "Nothing is open. This is the terminal answer, not an assumption.",
+  "orders.title": "Orders",
+  "orders.subtitle": "The state machine an order moves through, and the transitions it refuses.",
+  "orders.unknownTitle": "Why UNKNOWN exists",
+  "orders.unknownBody": "A submission that timed out may have filled. Treating that as a rejection is how a system opens a second position on top of one it does not know it has - so UNKNOWN is a state the machine can sit in, and it is resolved by asking the broker rather than by assuming.",
+  "orders.machine": "States and transitions",
+  "orders.machineSubtitle": "Read from the same table the engine enforces, not a copy kept beside it.",
+  "orders.state": "State",
+  "orders.kind": "Kind",
+  "orders.canBecome": "Can become",
+  "orders.terminal": "terminal",
+  "orders.open": "open",
+  "orders.nowhere": "nowhere - it is finished",
+  "orders.note": "No order has been placed on this deployment yet. When one is, it appears here with the state the broker reports, not the state this system hoped for.",
   "health.title": "System health",
   "health.subtitle":
     "Readiness touches every dependency on each request — it is not a constant.",
@@ -1386,7 +1399,7 @@ const fa: Dictionary = {
 
   "nav.planned": "برنامه‌ریزی‌شده — هنوز ساخته نشده",
   "nav.note":
-    "موارد کم‌رنگ هنوز صفحه ندارند. بیشترشان بک‌اند ساخته و تست‌شده دارند — مغز ریسک، موتور چیلنج، ژورنال، آزمایشگاه یادگیری، رجیستری و بنچمارک همگی وجود دارند و از طریق API جواب می‌دهند. چندتایی واقعاً وجود ندارند: هر چیزی که به اتصال زندهٔ بروکر نیاز دارد چیزی برای نشان‌دادن ندارد، چون بروکر زنده‌ای در کار نیست. هر دو دسته فهرست می‌شوند تا شکل نهایی سامانه پیدا بماند، و غیرفعالند تا چیزی وانمود نکند کار می‌کند.",
+    "فقط یک مورد کم‌رنگ مانده: ژورنال. منطقش ساخته و تست شده — ثبت‌ها، مشاهده‌ها، و بررسی پیش‌بینی که از امتیازدادن به پیش‌بینی‌ای که سامانه هرگز نکرده امتناع می‌کند — ولی هنوز جایی ذخیره نمی‌شود، پس صفحه‌اش چیزی برای نشان‌دادن ندارد. به‌جای پنهان‌کردن، فهرست و غیرفعال می‌ماند، چون منویی که نداشته‌ها را حذف کند سامانه‌ای کوچک‌تر از آنچه ساخته می‌شود توصیف می‌کند. بقیهٔ منو صفحه دارند، و اتصال بروکری که لازم داشتند برقرار است.",
 
   "common.language": "فارسی",
   "common.theme.light": "روشن",
@@ -1630,6 +1643,19 @@ const fa: Dictionary = {
   "positions.balance": "بالانس",
   "positions.flat": "باز نیست",
   "positions.flatNote": "چیزی باز نیست. این جواب خود ترمینال است، نه یک فرض.",
+  "orders.title": "سفارش‌ها",
+  "orders.subtitle": "ماشین حالتی که یک سفارش طی می‌کند، و گذرهایی که رد می‌کند.",
+  "orders.unknownTitle": "چرا حالت نامعلوم وجود دارد",
+  "orders.unknownBody": "سفارشی که تایم‌اوت شده ممکن است پر شده باشد. حساب کردن آن به‌عنوان ردشده، همان راهی است که سامانه پوزیشن دوم روی پوزیشنی که از وجودش خبر ندارد باز می‌کند.",
+  "orders.machine": "حالت‌ها و گذرها",
+  "orders.machineSubtitle": "از همان جدولی که موتور اعمال می‌کند، نه یک کپی کنارش.",
+  "orders.state": "حالت",
+  "orders.kind": "نوع",
+  "orders.canBecome": "می‌تواند بشود",
+  "orders.terminal": "پایانی",
+  "orders.open": "باز",
+  "orders.nowhere": "جایی — تمام شده",
+  "orders.note": "هنوز سفارشی ثبت نشده. وقتی بشود، با حالتی که بروکر گزارش می‌کند اینجا می‌آید، نه حالتی که این سامانه امیدوار بود.",
   "health.title": "Ø³ÙØ§ÙØª Ø³Ø§ÙØ§ÙÙ",
   "health.subtitle":
     "بررسی آمادگی در هر درخواست به همه وابستگی‌ها سر می‌زند — مقدار ثابتی نیست.",

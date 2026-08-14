@@ -28,7 +28,7 @@ export const NAV: NavItem[] = [
 
   { key: "signals", labelKey: "nav.signals", href: "/decisions", group: "trading" },
   { key: "positions", labelKey: "nav.positions", href: "/positions", group: "trading" },
-  { key: "orders", labelKey: "nav.orders", planned: true, group: "trading" },
+  { key: "orders", labelKey: "nav.orders", href: "/orders", group: "trading" },
   { key: "portfolio", labelKey: "nav.portfolio", href: "/risk", group: "trading" },
   { key: "risk", labelKey: "nav.risk", href: "/risk", group: "trading" },
   { key: "challenge", labelKey: "nav.challenge", href: "/challenge", group: "trading" },
