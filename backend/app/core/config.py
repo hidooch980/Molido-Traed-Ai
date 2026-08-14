@@ -60,6 +60,26 @@ class Settings(BaseSettings):
     #: channel rather than a person, which is why the channel is read-only.
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
+
+    #: An SMTP relay, not a mail server on this host. A fresh VPS address has no
+    #: sending reputation, and mail from one lands in spam whatever SPF, DKIM
+    #: and DMARC say - reputation is earned over months, so verification mail
+    #: sent from here would produce users who cannot finish registering and an
+    #: operator hunting a bug in working code.
+    #:
+    #: Empty means this deployment does not send, stated rather than silent.
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_from: str = ""
+
+    #: Where a verification link points. Set per deployment because the API
+    #: cannot know the address a browser reached it on - behind a proxy the
+    #: Host header is whatever the proxy was told, and a link built from it is
+    #: a link an attacker can aim somewhere else.
+    public_base_url: str = "http://185.204.169.240"
+
     rate_limit_per_minute: int = 120
 
     # Execution. Three separate switches on purpose: enabling the engine and

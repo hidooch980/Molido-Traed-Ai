@@ -127,12 +127,30 @@ class TestTheFundedNextFiguresAreWhatThePagePublishes:
         assert one.max_daily_drawdown_pct == 0.04
         assert one.max_total_drawdown_pct == 0.08
 
-    def test_instant_is_the_only_trailing_floor(self):
-        """The page marks exactly one program Trailing. Getting this backwards
-        moves the floor by the whole account once it is in profit."""
-        trailing = [b.key for b in rb.RULEBOOKS if b.rules.total_drawdown_trailing]
+    def test_instant_is_the_only_trailing_fundednext_floor(self):
+        """The FundedNext page marks exactly one program Trailing. Getting this
+        backwards moves the floor by the whole account once it is in profit.
+
+        Scoped to FundedNext, which is what it always meant: FTMO trails every
+        program, and a provider-wide assertion in a class about one provider's
+        page would have made adding any other firm look like a regression.
+        """
+        trailing = [
+            b.key
+            for b in rb.RULEBOOKS
+            if b.provider == "FundedNext" and b.rules.total_drawdown_trailing
+        ]
 
         assert trailing == ["fundednext-stellar-instant"]
+
+    def test_every_ftmo_floor_trails(self):
+        """FTMO calls it "an end-of-day trailing limit" that "can only
+        increase". Reading it as static would report headroom the account does
+        not have, exactly when it is in profit."""
+        ftmo = [b for b in rb.RULEBOOKS if b.provider == "FTMO"]
+
+        assert ftmo, "the FTMO rulebooks went missing"
+        assert all(b.rules.total_drawdown_trailing is True for b in ftmo)
 
     def test_instant_has_no_target_and_no_daily_limit_but_says_so(self):
         """Absent is not unknown here: the page states there is none, so the
@@ -176,11 +194,26 @@ class TestWhatThePageDoesNotSayStaysUnknown:
         """Published per symbol, not on the rules page."""
         assert book.rules.max_leverage is None
 
-    @pytest.mark.parametrize("book", rb.RULEBOOKS, ids=lambda b: b.key)
-    def test_news_trading_is_recorded_as_allowed_because_it_is_stated(self, book):
+    @pytest.mark.parametrize(
+        "book",
+        [b for b in rb.RULEBOOKS if b.provider == "FundedNext"],
+        ids=lambda b: b.key,
+    )
+    def test_fundednext_news_trading_is_allowed_because_it_is_stated(self, book):
         """"allowed, with no restrictions on when or how you trade", and the
         news profit split explicitly excludes the challenge phases."""
         assert book.rules.news_trading_allowed is True
+
+    @pytest.mark.parametrize(
+        "book",
+        [b for b in rb.RULEBOOKS if b.provider == "FTMO"],
+        ids=lambda b: b.key,
+    )
+    def test_ftmo_news_trading_stays_unknown(self, book):
+        """The FTMO trading-objectives page does not mention news trading at
+        all. Copying FundedNext's "allowed" across because both are prop firms
+        is exactly how a rulebook acquires a rule its provider never wrote."""
+        assert book.rules.news_trading_allowed is None
 
 
 class TestThePayloadKeepsAbsentApartFromUnknown:

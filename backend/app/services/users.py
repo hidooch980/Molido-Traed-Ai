@@ -35,6 +35,7 @@ from app.core.enums import UserRole
 from app.core.errors import ConflictError, NotFoundError, ValidationFailedError
 from app.core.security import hash_password, verify_password
 from app.models.tenancy import ApiKey, Tenant, User
+from app.services import referrals
 from app.services.sessions_auth import SESSION_LABEL
 
 #: Long enough to matter, short enough that nobody writes it on paper. This
@@ -209,18 +210,27 @@ def register(
     email: str,
     password: str,
     display_name: str = "",
+    referral_code: str | None = None,
     now: datetime | None = None,
 ) -> Created:
     """Sign yourself up. Always a viewer, never anything more.
 
     A viewer reads. It cannot connect a broker, simulate an order or send one -
     which is the only reason this form can be open to anybody at all.
+
+    A referral code, if given, is resolved before the account is written. A bad
+    code fails the registration rather than being dropped: registering with a
+    code that credits nobody looks identical to registering with one that
+    works, and the person who introduced you finds out weeks later when they
+    ask where their points went.
     """
     if not is_claimed(session):
         raise ConflictError(
             "This deployment has no owner yet, so the first account must claim "
             "it rather than register."
         )
+
+    referrer = referrals.resolve_code(session, referral_code) if referral_code else None
 
     user = _place(
         session,
@@ -230,6 +240,10 @@ def register(
         role=SELF_REGISTERED_ROLE,
         now=now,
     )
+    if referrer is not None:
+        referrals.attach(session, user, referrer)
+    referrals.ensure_code(session, user)
+
     return Created(
         id=user.id,
         email=user.email,

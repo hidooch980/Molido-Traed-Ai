@@ -35,10 +35,13 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import Principal, require
 from app.api.guard import public_mutation
+from app.core.config import get_settings
 from app.core.enums import Permission, UserRole
 from app.core.errors import ValidationFailedError
 from app.db.session import get_db
-from app.services import sessions_auth
+from app.integrations import email
+from app.models.tenancy import User
+from app.services import referrals, sessions_auth, verification
 from app.services import users as user_service
 
 router = APIRouter(prefix="/users", tags=["users"])
@@ -64,6 +67,9 @@ MANAGING_ROLES: frozenset[UserRole] = frozenset({UserRole.OWNER, UserRole.ADMIN}
 
 class Signup(BaseModel):
     email: str = Field(min_length=3, max_length=320)
+    #: Optional. A code that does not exist fails the registration rather than
+    #: being dropped - see `referrals.resolve_code` for why silence is worse.
+    referral_code: str = Field(default="", max_length=32)
     # Never echoed, never logged, never returned in an error. `repr=False` so
     # it cannot arrive in a traceback either.
     password: str = Field(min_length=1, max_length=256, repr=False)
@@ -92,6 +98,10 @@ class NewUser(Signup):
 
 class ActiveFlag(BaseModel):
     active: bool
+
+
+class VerificationToken(BaseModel):
+    token: str = Field(min_length=8, max_length=256, repr=False)
 
 
 class PasswordChange(BaseModel):
@@ -172,9 +182,17 @@ def register_user(
         email=body.email,
         password=body.password,
         display_name=body.display_name,
+        referral_code=body.referral_code or None,
     )
+
+    # Issued and attempted in the same request, and the outcome of the attempt
+    # is reported. A registration that says "check your email" on a deployment
+    # with no relay configured is a dead end the person cannot diagnose.
+    user = session.get(User, created.id)
+    delivery = _send_verification(session, user) if user else {"sent": False}
+
     session.commit()
-    return created.as_dict()
+    return {**created.as_dict(), "verification": delivery}
 
 
 @router.get("")
@@ -265,3 +283,100 @@ def change_own_password(
     )
     session.commit()
     return result
+
+
+def _send_verification(session: Session, user: User) -> dict[str, Any]:
+    """Issue a link and try to deliver it, reporting what actually happened.
+
+    The token is created either way. A deployment with no relay still has a
+    working verification path - an owner can read the link from the admin list
+    and pass it on - and refusing to issue one because the mail cannot go out
+    would make the two failures the same failure.
+    """
+    issued = verification.issue(session, user)
+    link = f"{get_settings().public_base_url.rstrip('/')}/verify?token={issued.token}"
+
+    delivery = email.send(
+        to=user.email,
+        subject="Verify your MolidoTrade account",
+        body=(
+            "Open this link to verify your account:\n\n"
+            f"{link}\n\n"
+            "It works once and expires in 24 hours. If you did not create an "
+            "account, ignore this message - nothing happens until the link is "
+            "opened."
+        ),
+    )
+    return {
+        "issued": True,
+        "expires_at": issued.expires_at.isoformat(),
+        "sent": delivery.sent,
+        # The reason travels, so "no relay configured" reaches the person who
+        # can fix it instead of dying in a log nobody reads.
+        "reason": delivery.reason,
+    }
+
+
+@router.post("/verify")
+@public_mutation(
+    "spends a verification link, which is held by somebody who by definition "
+    "has no session yet; the token is the credential"
+)
+def verify_account(
+    body: VerificationToken,
+    _: Principal = READ,
+    session: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Spend a verification link.
+
+    Public because the person holding it has no session - that is the whole
+    point of the link. The token is the credential, it is single-use, it
+    expires, and it is stored only as a hash.
+    """
+    user = verification.redeem(session, body.token)
+    marked = verification.mark_verified(session, user)
+    # Verifying is what confirms a referral, and nothing else does. Registering
+    # proves nothing and costs nothing, which is exactly what makes it worth
+    # faking a hundred times.
+    credited = referrals.confirm(session, user)
+    session.commit()
+    return {
+        "verified": True,
+        "already_verified": marked["already"],
+        "points_awarded": credited.get("awarded", 0),
+        "referrer_awarded": credited.get("awarded_to_referrer", 0),
+    }
+
+
+@router.post("/me/verification")
+def resend_verification(
+    principal: Principal = SIMULATE,
+    session: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Ask for a new link. The previous unused one stops working."""
+    if principal.user_id is None:
+        raise ValidationFailedError("This needs a signed-in account.")
+
+    user = session.get(User, principal.user_id)
+    if user is None:
+        raise ValidationFailedError("This needs a signed-in account.")
+    if user.email_verified_at is not None:
+        return {"issued": False, "reason": "this address is already verified"}
+
+    result = _send_verification(session, user)
+    session.commit()
+    return result
+
+
+@router.get("/me/referrals")
+def read_own_standing(
+    principal: Principal = READ,
+    session: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Your code, your points, and how your invitations are going."""
+    if principal.user_id is None:
+        raise ValidationFailedError("This needs a signed-in account.")
+
+    standing = referrals.standing(session, principal.user_id)
+    session.commit()
+    return standing.as_dict()

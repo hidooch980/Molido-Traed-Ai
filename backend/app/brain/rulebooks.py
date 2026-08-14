@@ -149,7 +149,139 @@ _AUTOMATION = (
 _CLOSED_ONLY = "the profit target is calculated on closed trades only"
 
 
+#: When the FTMO page below was read.
+FTMO_RETRIEVED = date(2026, 8, 14)
+FTMO_SOURCE = "https://ftmo.com/en/trading-objectives/"
+
+# FTMO differs from FundedNext in the one place it matters most, and the
+# difference is the whole account once it is in profit:
+#
+#   "The Maximum Loss rule establishes an end-of-day trailing limit". The floor
+#   is recalculated daily at 00:00 CE(S)T from "the highest account balance
+#   achieved at 00:00 CE(S)T of any preceding trading day or, if higher, the
+#   amount of Initial Simulated Capital", less 10% of Initial Simulated
+#   Capital. FundedNext's Stellar floor is static. Reading FTMO's as static
+#   would report headroom the account does not have the moment it is up.
+#
+#   "The limit can only increase" - it never falls back after a losing day.
+#
+#   Both limits are watched on equity: "Balance + Open Positions P/L +/- Swaps
+#   - Commissions". A floating loss counts the moment it exists.
+#
+#   The daily limit is recalculated at 00:00 CE(S)T from "the account balance
+#   recorded at 00:00 CE(S)T of the current day" less 3% of Initial Simulated
+#   Capital - so the amount is a share of the starting capital while the anchor
+#   is that day's opening balance. On the first day the anchor is the Initial
+#   Simulated Capital.
+#
+#   The profit target is met "once your account balance exceeds the Initial
+#   Simulated Capital by the required Profit Target with all positions closed"
+#   - closed trades only, the same as FundedNext.
+#
+#   Minimum 4 trading days, "measured from 00:00:00 to 23:59:59 CE(S)T - during
+#   which at least one position is opened", and it "applies to both phases".
+#
+#   "No time limit" on the challenge, so there is no deadline to pass.
+
+_FTMO_COMMON: dict[str, Any] = {
+    "drawdown_basis": DrawdownBasis.EQUITY,
+    "allowance_basis": AllowanceBasis.STARTING_BALANCE,
+    "total_drawdown_trailing": True,
+    "max_trading_days": NOT_IMPOSED,       # "No time limit"
+    "max_single_day_profit_share": None,   # not stated on this page
+    "news_trading_allowed": None,          # not stated on this page
+    "weekend_holding_allowed": None,       # not stated on this page
+    "max_leverage": None,                  # varies by account type, not here
+    "max_concurrent_positions": None,      # not stated
+}
+
+_FTMO_TRAIL = (
+    "the maximum loss floor trails the highest balance recorded at 00:00 CE(S)T "
+    "of any preceding day, not the live equity peak - an intraday spike does "
+    "not raise it, and it only ever increases"
+)
+_FTMO_DAILY = (
+    "the daily floor is that day's 00:00 CE(S)T balance less 3% of the initial "
+    "capital, so the amount is a share of the starting capital while the anchor "
+    "moves with each day's opening balance"
+)
+_FTMO_EQUITY = (
+    "both limits are watched on equity - balance plus open P/L, swaps and "
+    "commissions - so a floating loss counts against them before it is realised"
+)
+_FTMO_DAYS = (
+    "a trading day is any day from 00:00:00 to 23:59:59 CE(S)T in which at "
+    "least one position is opened, and the 4-day minimum applies to both phases"
+)
+
+
 RULEBOOKS: tuple[Rulebook, ...] = (
+    Rulebook(
+        key="ftmo-challenge-2step-phase1",
+        provider="FTMO",
+        program="FTMO Challenge 2-Step",
+        phase="phase 1 (FTMO Challenge)",
+        rules=ChallengeRules(
+            profit_target_pct=0.10,
+            max_daily_drawdown_pct=0.03,
+            max_total_drawdown_pct=0.10,
+            min_trading_days=4,
+            **_FTMO_COMMON,
+        ),
+        source=FTMO_SOURCE,
+        retrieved=FTMO_RETRIEVED,
+        notes=(_CLOSED_ONLY, _FTMO_TRAIL, _FTMO_DAILY, _FTMO_EQUITY, _FTMO_DAYS),
+    ),
+    Rulebook(
+        key="ftmo-challenge-2step-phase2",
+        provider="FTMO",
+        program="FTMO Challenge 2-Step",
+        phase="phase 2 (Verification)",
+        rules=ChallengeRules(
+            profit_target_pct=0.05,
+            max_daily_drawdown_pct=0.03,
+            max_total_drawdown_pct=0.10,
+            min_trading_days=4,
+            **_FTMO_COMMON,
+        ),
+        source=FTMO_SOURCE,
+        retrieved=FTMO_RETRIEVED,
+        notes=(_CLOSED_ONLY, _FTMO_TRAIL, _FTMO_DAILY, _FTMO_EQUITY, _FTMO_DAYS),
+    ),
+    Rulebook(
+        key="ftmo-challenge-1step",
+        provider="FTMO",
+        program="FTMO Challenge 1-Step",
+        phase="single phase",
+        rules=ChallengeRules(
+            profit_target_pct=0.10,
+            max_daily_drawdown_pct=0.03,
+            max_total_drawdown_pct=0.10,
+            min_trading_days=4,
+            **_FTMO_COMMON,
+        ),
+        source=FTMO_SOURCE,
+        retrieved=FTMO_RETRIEVED,
+        notes=(_CLOSED_ONLY, _FTMO_TRAIL, _FTMO_DAILY, _FTMO_EQUITY, _FTMO_DAYS),
+    ),
+    Rulebook(
+        key="ftmo-account-2step",
+        provider="FTMO",
+        program="FTMO Account (2-Step)",
+        phase="funded",
+        rules=ChallengeRules(
+            # "There is no Profit Target on the subsequent FTMO Account
+            # (2-Step)" - stated absence, not an unknown.
+            profit_target_pct=NOT_IMPOSED,
+            max_daily_drawdown_pct=0.03,
+            max_total_drawdown_pct=0.10,
+            min_trading_days=NOT_IMPOSED,
+            **_FTMO_COMMON,
+        ),
+        source=FTMO_SOURCE,
+        retrieved=FTMO_RETRIEVED,
+        notes=(_FTMO_TRAIL, _FTMO_DAILY, _FTMO_EQUITY),
+    ),
     Rulebook(
         key="fundednext-stellar-1step",
         provider="FundedNext",

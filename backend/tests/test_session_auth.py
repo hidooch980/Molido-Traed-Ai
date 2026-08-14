@@ -72,11 +72,11 @@ class TestTheExemptionStaysNarrow:
 
         assert find_ungated_routes(app, require_auth=False) == []
 
-    def test_only_these_four_routes_claim_it(self, client):
+    def test_only_these_five_routes_claim_it(self, client):
         """The list is asserted exactly. A new public mutation fails this test
         and makes somebody justify it, which is the entire mechanism.
 
-        Four, and each one is public because requiring a session to reach it
+        Five, and each one is public because requiring a session to reach it
         would require a session that cannot exist yet:
 
           sign-in / sign-out  the session itself
@@ -84,6 +84,9 @@ class TestTheExemptionStaysNarrow:
                               in to, and refused with 409 forever after
           users/register      self sign-up, which lands as a viewer and can
                               reach nothing that moves money
+          users/verify        spends a verification link, held by somebody who
+                              by definition has no session - the token is the
+                              credential, single-use, expiring, stored hashed
 
         The fourth is the one to watch. It is safe only while a viewer holds
         READ and nothing more, which `test_a_viewer_cannot_reach_anything_that_
@@ -99,6 +102,7 @@ class TestTheExemptionStaysNarrow:
             "/api/v1/session/sign-out",
             "/api/v1/users/claim",
             "/api/v1/users/register",
+            "/api/v1/users/verify",
         }
 
     def test_every_claim_carries_a_reason(self, client):
