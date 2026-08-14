@@ -32,6 +32,7 @@ from __future__ import annotations
 import csv
 import json
 import pathlib
+import re
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -46,10 +47,26 @@ DEFAULT_BRIDGE_DIR = pathlib.Path(
     "/home/ubuntu/.mt5/drive_c/users/ubuntu/AppData/Roaming/MetaQuotes/Terminal/Common/Files"
 )
 
+#: Where the terminal writes its own log. Mounted read-only, and read only to
+#: answer one question: when a login fails, MetaTrader already knows exactly
+#: why, and guessing at the cause instead of reading it produced two wrong
+#: diagnoses in a row here - "the expert stopped" (it had not) and "a failed
+#: login stops the bridge" (it does not; it publishes with no account).
+DEFAULT_LOG_DIR = pathlib.Path("/home/ubuntu/.mt5/drive_c/Program Files/MetaTrader 5/logs")
+
 #: A heartbeat older than this means the expert stopped, whatever the other
 #: files still say. Three publish cycles: one missed beat is a slow disk, three
 #: is a stopped process.
 STALE_AFTER = timedelta(seconds=90)
+
+#: `CD	2	09:25:03.172	Network	'111099517': authorization on MetaQuotes-Demo
+#: failed (Invalid account)`. The parenthesised part is the useful half: an
+#: invalid account and a wrong password need completely different actions, and
+#: "login failed" covers both while helping with neither.
+_AUTH_LINE = re.compile(
+    r"(?P<time>\d{2}:\d{2}:\d{2})\.\d+\s+Network\s+"
+    r"'(?P<login>\d+)':\s*(?P<detail>.*?authoriz\w*\s+on\s+\S+.*)$"
+)
 
 #: MetaTrader writes `2026.08.14 07:53:24` in the terminal's own timezone,
 #: which this deployment runs as GMT+0. Parsed explicitly rather than by a
@@ -97,13 +114,67 @@ class BridgeState:
         }
 
 
+def _with_authorization(reason: str, authorization: str | None) -> str:
+    """Append what the terminal said, when it said anything.
+
+    Kept separate so the two callers cannot drift apart, and so the absence of
+    a log line changes nothing about the message that was already true.
+    """
+    return f"{reason}. {authorization}" if authorization else reason
+
+
 class MetaTraderBridge:
     """Reads the files an expert inside the terminal writes."""
 
     name = "metatrader"
 
-    def __init__(self, directory: pathlib.Path | str | None = None) -> None:
+    def __init__(
+        self,
+        directory: pathlib.Path | str | None = None,
+        *,
+        log_directory: pathlib.Path | str | None = None,
+    ) -> None:
         self.directory = pathlib.Path(directory or DEFAULT_BRIDGE_DIR)
+        self.log_directory = pathlib.Path(log_directory or DEFAULT_LOG_DIR)
+
+    # ------------------------------------------------------------ the reason
+    def last_authorization(self) -> str | None:
+        """What MetaTrader itself said about the most recent login attempt.
+
+        Read rather than inferred. The terminal writes the exact refusal -
+        `(Invalid account)` is a login that does not exist and no password will
+        fix, `(Invalid password)` is one that does - and those need opposite
+        actions from whoever is reading the screen.
+
+        Returns None when there is nothing to report: no log directory, no log,
+        or no authorization line in it. None means "MetaTrader has not said",
+        never "everything is fine".
+        """
+        try:
+            logs = sorted(self.log_directory.glob("*.log"))
+        except OSError:
+            return None
+        if not logs:
+            return None
+
+        try:
+            # UTF-16LE with a BOM, and errors are replaced rather than raised:
+            # one unreadable byte in a log must not cost the diagnosis.
+            text = logs[-1].read_text(encoding="utf-16", errors="replace")
+        except (OSError, ValueError, UnicodeError):
+            return None
+
+        found: str | None = None
+        for line in text.splitlines():
+            match = _AUTH_LINE.search(line)
+            if match:
+                # The last one wins: an earlier failure followed by a success
+                # must not be reported as the current state.
+                found = (
+                    f"MetaTrader at {match['time']} for account "
+                    f"{match['login']}: {match['detail'].strip()}"
+                )
+        return found
 
     # ---------------------------------------------------------------- state
     def state(self, *, now: datetime | None = None) -> BridgeState:
@@ -144,18 +215,13 @@ class MetaTraderBridge:
                 login=0,
                 published_at=published,
                 age_seconds=age,
-                # Named as stale rather than absent, and with the cause rather
-                # than only the symptom. An expert needs a chart, a chart needs
-                # a symbol, and a symbol needs a logged-in account - so a
-                # failed login stops the bridge entirely instead of leaving it
-                # running with nothing behind it. "The expert stopped" alone
-                # reads as a fault in the expert.
-                reason=(
-                    f"heartbeat is {age:.0f}s old. The usual cause is that no "
-                    "account is logged in: an expert runs on a chart, a chart "
-                    "needs a symbol, and a symbol needs a connected account - "
-                    "so a failed login stops the bridge rather than leaving it "
-                    "publishing empty data"
+                # Named as stale rather than absent, and followed by what the
+                # terminal itself said rather than a guess at why. Two guesses
+                # were wrong here before this line read the log.
+                reason=_with_authorization(
+                    f"heartbeat is {age:.0f}s old - the expert has stopped "
+                    "publishing, or is publishing far slower than its timer",
+                    self.last_authorization(),
                 ),
             )
 
@@ -172,8 +238,11 @@ class MetaTraderBridge:
             reason=(
                 None
                 if (connected and login > 0)
-                else "the terminal is running but no account is logged in, so "
-                "every price it shows is cached from a session that ended"
+                else _with_authorization(
+                    "the terminal is running but no account is logged in, so "
+                    "every price it shows is cached from a session that ended",
+                    self.last_authorization(),
+                )
             ),
         )
 

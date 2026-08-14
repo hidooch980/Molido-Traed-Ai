@@ -26,8 +26,32 @@ STAMP = "2026.08.14 12:00:00"
 
 
 @pytest.fixture()
-def bridge(tmp_path):
-    return MetaTraderBridge(tmp_path)
+def logs(tmp_path):
+    directory = tmp_path / "logs"
+    directory.mkdir()
+    return directory
+
+
+@pytest.fixture()
+def bridge(tmp_path, logs):
+    return MetaTraderBridge(tmp_path, log_directory=logs)
+
+
+def write_log(directory, *lines, name="20260814.log"):
+    """A terminal log, in the encoding the terminal actually writes.
+
+    UTF-16 rather than UTF-8: reading it as UTF-8 yields text with a null byte
+    between every character, which matches no pattern and fails silently.
+    """
+    (directory / name).write_text("\n".join(lines), encoding="utf-16")
+
+
+#: Copied from the server, byte for byte, tab characters and all. A pattern
+#: written against a remembered format is a pattern that matches nothing.
+REAL_FAILURE = (
+    "CD\t2\t09:25:03.172\tNetwork\t'111099517': authorization on "
+    "MetaQuotes-Demo failed (Invalid account)"
+)
 
 
 def write_heartbeat(directory, stamp=STAMP, **extra):
@@ -83,7 +107,7 @@ class TestTheThreeStatesStayApart:
         state = bridge.state(now=NOW)
 
         assert state.running is False
-        assert "no account is logged in" in state.reason
+        assert "stopped publishing" in state.reason
 
     def test_running_with_no_account_is_not_usable(self, bridge, tmp_path):
         """The exact state that looked healthy for hours: a terminal up,
@@ -221,3 +245,79 @@ class TestBars:
         bars = bridge.fetch_ohlcv("EURUSD", Timeframe.H1, now=NOW)
 
         assert bars[0].event_time.tzinfo is not None
+
+
+class TestItReadsTheReasonRatherThanGuessingIt:
+    """Two diagnoses were guessed here and both were wrong: "the expert
+    stopped" when it had not, and "a failed login stops the bridge" when it
+    does not - it publishes with no account behind it. The terminal had written
+    the real reason to its own log the whole time."""
+
+    def test_the_terminals_own_words_reach_the_reader(self, bridge, tmp_path, logs):
+        write_log(logs, REAL_FAILURE)
+        write_heartbeat(tmp_path)
+        write_account(tmp_path, login=0, connected=False)
+
+        reason = bridge.state(now=NOW).reason
+
+        assert "Invalid account" in reason
+        assert "111099517" in reason
+
+    def test_an_invalid_account_is_not_flattened_into_login_failed(self, bridge, logs):
+        """An account that does not exist and a wrong password need opposite
+        actions, and no password fixes the first one."""
+        write_log(logs, REAL_FAILURE)
+
+        assert "Invalid account" in bridge.last_authorization()
+
+    def test_the_last_attempt_wins(self, bridge, logs):
+        """An earlier failure followed by a success must not be reported as the
+        current state."""
+        write_log(
+            logs,
+            REAL_FAILURE,
+            "DP\t0\t09:40:11.004\tNetwork\t'501165913': authorization on "
+            "RoboMarketsCY-Pro performed",
+        )
+
+        latest = bridge.last_authorization()
+
+        assert "501165913" in latest
+        assert "111099517" not in latest
+
+    def test_no_log_says_nothing_rather_than_inventing_a_cause(self, bridge):
+        """None means "MetaTrader has not said", never "everything is fine"."""
+        assert bridge.last_authorization() is None
+
+    def test_a_missing_log_directory_does_not_break_the_state(self, tmp_path):
+        """The reason must survive a deployment where the log is not mounted."""
+        bridge = MetaTraderBridge(tmp_path, log_directory=tmp_path / "absent")
+
+        state = bridge.state(now=NOW)
+
+        assert state.usable is False
+        assert state.reason
+
+    def test_a_utf8_log_does_not_raise_or_half_parse(self, bridge, logs):
+        """The terminal writes UTF-16. Reading it as UTF-8 gives text with a
+        null between every character, which matches nothing and fails quietly -
+        so this asserts the encoding is handled, not tolerated."""
+        (logs / "20260814.log").write_text(REAL_FAILURE, encoding="utf-8")
+
+        result = bridge.last_authorization()
+
+        assert result is None or "Invalid account" in result
+
+    def test_a_healthy_account_reports_no_reason_even_with_an_old_failure(
+        self, bridge, tmp_path, logs
+    ):
+        """The log keeps yesterday's failures forever. Appending one to a
+        working bridge would report a problem that is over."""
+        write_log(logs, REAL_FAILURE)
+        write_heartbeat(tmp_path)
+        write_account(tmp_path)
+
+        state = bridge.state(now=NOW)
+
+        assert state.usable is True
+        assert state.reason is None

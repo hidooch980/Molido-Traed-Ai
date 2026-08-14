@@ -89,6 +89,11 @@ services:
       # this feed and must never be able to write into MetaTrader's own folder,
       # where a stray file would be picked up as terminal data.
       - ${MOLIDO_MT5_BRIDGE_HOST:-/home/ubuntu/.mt5/drive_c/users/ubuntu/AppData/Roaming/MetaQuotes/Terminal/Common/Files}:/home/ubuntu/.mt5/drive_c/users/ubuntu/AppData/Roaming/MetaQuotes/Terminal/Common/Files:ro
+      # MetaTrader's own log, read-only. One reason to mount it: when a login
+      # fails the terminal writes exactly why - `(Invalid account)` needs a
+      # different account, `(Invalid password)` needs a different password -
+      # and inferring that instead of reading it produced two wrong diagnoses.
+      - ${MOLIDO_MT5_LOG_HOST:-/home/ubuntu/.mt5/drive_c/Program Files/MetaTrader 5/logs}:/home/ubuntu/.mt5/drive_c/Program Files/MetaTrader 5/logs:ro
     depends_on:
       postgres:
         condition: service_healthy
