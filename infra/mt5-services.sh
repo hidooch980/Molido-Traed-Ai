@@ -102,6 +102,20 @@ install_services() {
   # System units running as ubuntu rather than user units: user units need
   # lingering enabled to start at boot without a login, and one more thing that
   # has to be remembered is one more thing that gets forgotten.
+  # The launcher holds the Windows path, so systemd never sees a backslash.
+  sudo tee /usr/local/bin/molido-mt5-launch >/dev/null <<'LAUNCH'
+#!/bin/sh
+# Start MetaTrader with the config that enables algorithmic trading and
+# attaches the bridge expert. The path is here rather than in the unit
+# file because systemd strips backslashes out of ExecStart, leaving the
+# terminal to start with a mangled argument and no expert - a failure
+# that reports itself as a bridge which stopped publishing.
+set -e
+cd "$HOME/.mt5/drive_c/Program Files/MetaTrader 5"
+exec /usr/bin/wine terminal64.exe "/config:C:\Program Files\MetaTrader 5\config\molido-startup.ini"
+LAUNCH
+  sudo chmod 755 /usr/local/bin/molido-mt5-launch
+
   sudo tee /etc/systemd/system/molido-xvfb.service >/dev/null <<UNIT
 [Unit]
 Description=Virtual display for MetaTrader
@@ -189,8 +203,12 @@ Environment=WINEDEBUG=-all
 # The config path is given in Windows form. Passed as a Unix path the
 # terminal starts, ignores it in silence, and publishes nothing - which
 # reads as a broken bridge rather than an unread argument.
-WorkingDirectory=${PREFIX}/drive_c/Program Files/MetaTrader 5
-ExecStart=/usr/bin/wine terminal64.exe "/config:C:\Program Files\MetaTrader 5\config\molido-startup.ini"
+# Launched through a script rather than directly. The config path is a
+# Windows path, systemd strips backslashes out of ExecStart with only a
+# warning in the journal, and the terminal then starts with a mangled
+# argument, ignores it, and runs with no expert attached - which presents
+# as a bridge that quietly stopped publishing.
+ExecStart=/usr/local/bin/molido-mt5-launch
 Restart=always
 RestartSec=10
 
