@@ -296,3 +296,72 @@ def read_autopilot(
             "not produce, not a lesser version of live"
         ),
     }
+
+
+@router.get("/positions")
+def read_positions(_: Principal = READ) -> dict[str, Any]:
+    """What is open at the broker right now.
+
+    Read from the bridge rather than from anything this system believes it
+    opened. The two disagree exactly when it matters - an order that filled
+    without the reply arriving, a position closed by the broker's own stop -
+    and the broker's answer is the one the account is judged on.
+    """
+    from app.providers.metatrader import MetaTraderBridge
+
+    bridge = MetaTraderBridge()
+    published = bridge.positions()
+    account = bridge.account()
+
+    return {
+        **published,
+        "account": {
+            "login": account.get("login"),
+            "server": account.get("server"),
+            "equity": account.get("equity"),
+            "balance": account.get("balance"),
+        }
+        if account.get("available")
+        else None,
+        "note": (
+            "read from the terminal, not from this system's own record. They "
+            "disagree exactly when it matters, and the broker's answer is the "
+            "one the account is judged on"
+        ),
+    }
+
+
+@router.get("/control")
+def read_control(_: Principal = READ) -> dict[str, Any]:
+    """The random benchmark the live results will be measured against.
+
+    Published now rather than derived later. A benchmark chosen after the
+    results are in is a benchmark chosen to make them look a particular way,
+    which is the thing pre-registration exists to prevent - and this project has
+    already had one CONFIRMED that was wrong for exactly that reason.
+    """
+    from app.learning import control as control_module
+
+    return {
+        "seed": control_module.SEED,
+        "how_it_works": (
+            "for every bar the brain decides on, a control entry is derived "
+            "from a hash of the seed, the symbol and the instant. Same bar, "
+            "same stop, same target - only the direction differs, and the "
+            "direction is what the brain claims to know"
+        ),
+        "why": (
+            "a rule that beats breakeven while not beating a coin flip on the "
+            "same bars has beaten nothing. A script in this project printed "
+            "CONFIRMED on a 50.84% hit rate whose control scored 50.32%"
+        ),
+        "sample_needed": {
+            "for_a_2pp_edge": control_module.Comparison(
+                rule_wins=0, rule_losses=0, control_wins=0, control_losses=0
+            ).trials_needed(for_edge=0.02),
+            "for_a_half_pp_edge": control_module.Comparison(
+                rule_wins=0, rule_losses=0, control_wins=0, control_losses=0
+            ).trials_needed(for_edge=0.005),
+            "note": "per arm, at z = 1.96",
+        },
+    }
