@@ -788,6 +788,9 @@ const en: Dictionary = {
   "autopilot.unmeasured": "Not measured for this moment:",
   "autopilot.rejected": "Tested and rejected",
 
+  "nav.collapse": "Hide the menu",
+  "nav.expand": "Show the menu",
+  "nav.close": "Close the menu",
   "health.title": "System health",
   "health.subtitle":
     "Readiness touches every dependency on each request — it is not a constant.",
@@ -1574,6 +1577,9 @@ const fa: Dictionary = {
   "autopilot.unmeasured": "برای این لحظه اندازه‌گیری نشد:",
   "autopilot.rejected": "آزموده و رد شد",
 
+  "nav.collapse": "بستن منو",
+  "nav.expand": "باز کردن منو",
+  "nav.close": "بستن منو",
   "health.title": "Ø³ÙØ§ÙØª Ø³Ø§ÙØ§ÙÙ",
   "health.subtitle":
     "بررسی آمادگی در هر درخواست به همه وابستگی‌ها سر می‌زند — مقدار ثابتی نیست.",

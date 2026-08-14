@@ -49,15 +49,21 @@ function Logo({ size = 30 }: { size?: number }) {
 export default function Shell({
   locale,
   theme,
+  initialCollapsed = false,
   children,
 }: {
   locale: Locale;
   theme: Theme;
+  initialCollapsed?: boolean;
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
   const router = useRouter();
   const [menuOpen, setMenuOpen] = useState(false);
+  // Collapsed on wide screens is a preference, not a viewport question, so it
+  // is remembered. A drawer that reopens on every navigation is a drawer
+  // nobody closes twice.
+  const [railCollapsed, setRailCollapsed] = useState(initialCollapsed);
   const t = translator(locale);
   // Counted from the nav table on every render rather than typed into the
   // translation file, so the badge cannot claim a page that was never wired.
@@ -87,6 +93,15 @@ export default function Shell({
    * the server renders the right theme into the first byte of HTML - no stored
    * choice that quietly forgets itself, and no frame of the wrong theme.
    */
+  /** Remembered like the theme and the language, and for the same reason: a
+   *  preference that resets on the next page load is not a preference. Written
+   *  to a cookie so the server renders the rail at the right width in the first
+   *  byte - no frame of a wide menu collapsing after the page arrives. */
+  function toggleRail(next: boolean) {
+    setRailCollapsed(next);
+    document.cookie = `molido_rail=${next ? "collapsed" : "open"}; path=/; max-age=31536000; samesite=lax`;
+  }
+
   function switchTheme(next: Theme) {
     document.cookie = `molido_theme=${next}; path=/; max-age=31536000; samesite=lax`;
     document.documentElement.classList.toggle("dark", next === "dark");
@@ -104,6 +119,20 @@ export default function Shell({
           className="md:hidden text-lg px-1"
           onClick={() => setMenuOpen(!menuOpen)}
           aria-label="menu"
+        >
+          ☰
+        </button>
+
+        {/* The same control on wide screens, where it collapses the rail
+            rather than sliding a drawer over the page. One button, two
+            behaviours, because "show me the menu" is one intention and the
+            screen decides how that looks. */}
+        <button
+          type="button"
+          className="hidden md:block text-lg px-1"
+          onClick={() => toggleRail(!railCollapsed)}
+          aria-label={railCollapsed ? t("nav.expand") : t("nav.collapse")}
+          title={railCollapsed ? t("nav.expand") : t("nav.collapse")}
         >
           ☰
         </button>
@@ -160,10 +189,23 @@ export default function Shell({
       </header>
 
       <div className="flex flex-1 min-h-0">
+        {/* The scrim. Only on narrow screens, where the drawer covers the
+            page - tapping beside it is how people close a drawer, and without
+            this the only way out is the same small button they came from. */}
+        {menuOpen && (
+          <button
+            type="button"
+            aria-label={t("nav.close")}
+            onClick={() => setMenuOpen(false)}
+            className="md:hidden fixed inset-0 z-[9]"
+            style={{ background: "rgba(0,0,0,0.45)" }}
+          />
+        )}
+
         <nav
-          className={`panel-flat w-56 shrink-0 overflow-y-auto p-2.5 ${
-            menuOpen ? "block absolute inset-y-0 z-10 mt-12" : "hidden"
-          } md:block`}
+          className={`panel-flat shrink-0 overflow-y-auto p-2.5 transition-all duration-200 ${
+            menuOpen ? "block fixed inset-y-0 z-10 mt-12 w-56" : "hidden"
+          } md:block ${railCollapsed ? "md:w-0 md:p-0 md:overflow-hidden" : "md:w-56"}`}
           style={{ borderBlock: "none", borderInlineStart: "none" }}
         >
           {GROUPS.map((group) => (

@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 
 import Shell from "@/components/Shell";
 import { direction } from "@/lib/i18n";
-import { getLocale, getTheme } from "@/lib/locale";
+import { getLocale, getRailCollapsed, getTheme } from "@/lib/locale";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -26,11 +26,14 @@ export default async function RootLayout({
   // Read on the server for the same reason as the locale: a theme applied by a
   // client effect shows one frame of the wrong one on every navigation.
   const theme = await getTheme();
+  const railCollapsed = await getRailCollapsed();
 
   return (
     <html lang={locale} dir={direction(locale)} className={theme === "dark" ? "dark" : ""}>
       <body className="font-sans antialiased">
-        <Shell locale={locale} theme={theme}>{children}</Shell>
+        <Shell locale={locale} theme={theme} initialCollapsed={railCollapsed}>
+          {children}
+        </Shell>
       </body>
     </html>
   );

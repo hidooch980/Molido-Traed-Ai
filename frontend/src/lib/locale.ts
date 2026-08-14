@@ -47,3 +47,16 @@ export async function getTheme(): Promise<Theme> {
   const value = store.get(THEME_COOKIE)?.value;
   return THEMES.includes(value as Theme) ? (value as Theme) : DEFAULT_THEME;
 }
+
+export const RAIL_COOKIE = "molido_rail";
+
+/** Whether the navigation rail starts collapsed.
+ *
+ *  Read on the server for the same reason the theme is: a rail that starts
+ *  wide and snaps shut after hydration is a visible flinch on every page load,
+ *  and the reader notices it every single time.
+ */
+export async function getRailCollapsed(): Promise<boolean> {
+  const store = await cookies();
+  return store.get(RAIL_COOKIE)?.value === "collapsed";
+}
