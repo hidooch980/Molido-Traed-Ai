@@ -34,6 +34,8 @@ const en: Dictionary = {
   "signin.anonymous": "Not signed in",
   "signin.anonymousHint": "Reading needs no account. Sign in to connect a broker or add a challenge.",
   "broker.connected": "Connected. The terminal is logged in and the account is visible.",
+  "broker.signInFirst":
+    "You are not signed in, so this cannot connect an account yet. Sign in at /access first - the account number and server above are fine.",
   "broker.add": "Add a broker account",
   "broker.login": "Account number",
   "broker.server": "Server",
@@ -748,6 +750,27 @@ const en: Dictionary = {
     "Outcomes are direction-agnostic: favourable and adverse are undefined until something decides to be long or short, and nothing does yet.",
   "episodes.empty": "No episodes built yet.",
 
+  "signin.title": "Access",
+  "signin.subtitleClaimed": "Sign in, or create an account.",
+  "signin.subtitleUnclaimed":
+    "Nobody can sign in to this deployment yet. The first account claims it.",
+  "signin.claimTitle": "Claim this deployment",
+  "signin.claimBody":
+    "No account here has a password, so nobody can sign in. The first person to fill this in becomes the owner, and this window closes for good.",
+  "signin.signInTitle": "Sign in",
+  "signin.registerTitle": "Create an account",
+  "signin.registerBody": "You choose the password and nobody else ever sees it.",
+  "signin.displayName": "Name",
+  "signin.claim": "Claim and become owner",
+  "signin.register": "Register",
+  "signin.tooShort": "At least {n} characters.",
+  "signin.switchToRegister": "No account? Create one",
+  "signin.switchToSignIn": "Already have an account? Sign in",
+  "signin.viewerNote":
+    "A new account reads only. It cannot connect a broker or send an order until an owner raises its role.",
+  "signin.passwordNote":
+    "The password goes from this form into the request and is dropped. It is never written to a log, never returned by the API, and never placed in a URL.",
+
   "health.title": "System health",
   "health.subtitle":
     "Readiness touches every dependency on each request — it is not a constant.",
@@ -780,6 +803,8 @@ const fa: Dictionary = {
   "signin.anonymous": "وارد نشده‌اید",
   "signin.anonymousHint": "خواندن نیازی به حساب ندارد. برای اتصال بروکر یا افزودن چلنج وارد شوید.",
   "broker.connected": "متصل شد. ترمینال وارد حساب شده و حساب دیده می‌شود.",
+  "broker.signInFirst":
+    "وارد نشده‌اید، پس فعلاً نمی‌تواند حسابی وصل کند. اول از /access وارد شوید — شماره حساب و سروری که زدید درست است.",
   "broker.add": "افزودن حساب بروکر",
   "broker.login": "شماره حساب",
   "broker.server": "سرور",
@@ -1494,7 +1519,29 @@ const fa: Dictionary = {
     "نتایج جهت‌ناوابسته‌اند: «مطلوب» و «نامطلوب» تا وقتی چیزی تصمیم به خرید یا فروش نگیرد تعریف‌نشده‌اند، و هنوز چیزی تصمیم نمی‌گیرد.",
   "episodes.empty": "هنوز اپیزودی ساخته نشده است.",
 
-  "health.title": "سلامت سامانه",
+  "signin.title": "ÙØ±ÙØ¯",
+  "signin.subtitleClaimed": "ÙØ§Ø±Ø¯ Ø´ÙÛØ¯Ø ÛØ§ Ø­Ø³Ø§Ø¨ Ø¨Ø³Ø§Ø²ÛØ¯.",
+  "signin.subtitleUnclaimed":
+    "ÙÙÙØ² ÙÛÚâÚ©Ø³ ÙÙÛâØªÙØ§ÙØ¯ ÙØ§Ø±Ø¯ Ø§ÛÙ Ø³Ø§ÙØ§ÙÙ Ø´ÙØ¯. Ø§ÙÙÛÙ Ø­Ø³Ø§Ø¨Ø ÙØ§ÙÚ© Ø¢Ù ÙÛâØ´ÙØ¯.",
+  "signin.claimTitle": "ÙØ§ÙÚ©ÛØª Ø§ÛÙ Ø³Ø§ÙØ§ÙÙ",
+  "signin.claimBody":
+    "ÙÛÚ Ø­Ø³Ø§Ø¨Û Ø§ÛÙØ¬Ø§ Ø±ÙØ² ÙØ¯Ø§Ø±Ø¯Ø Ù¾Ø³ ÙÛÚâÚ©Ø³ ÙÙÛâØªÙØ§ÙØ¯ ÙØ§Ø±Ø¯ Ø´ÙØ¯. Ø§ÙÙÛÙ Ú©Ø³Û Ú©Ù Ø§ÛÙ Ø±Ø§ Ù¾Ø± Ú©ÙØ¯ ÙØ§ÙÚ© ÙÛâØ´ÙØ¯ Ù Ø§ÛÙ Ù¾ÙØ¬Ø±Ù Ø¨Ø±Ø§Û ÙÙÛØ´Ù Ø¨Ø³ØªÙ ÙÛâØ´ÙØ¯.",
+  "signin.signInTitle": "ÙØ±ÙØ¯",
+  "signin.registerTitle": "Ø³Ø§Ø®Øª Ø­Ø³Ø§Ø¨",
+  "signin.registerBody":
+    "Ø±ÙØ² Ø±Ø§ Ø®ÙØ¯ØªØ§Ù Ø§ÙØªØ®Ø§Ø¨ ÙÛâÚ©ÙÛØ¯ Ù ÙÛÚâÚ©Ø³ Ø¯ÛÚ¯Ø±Û Ø¢Ù Ø±Ø§ ÙÙÛâØ¨ÛÙØ¯.",
+  "signin.displayName": "ÙØ§Ù",
+  "signin.claim": "ÙØ§ÙÚ© Ø´Ø¯Ù",
+  "signin.register": "Ø«Ø¨ØªâÙØ§Ù",
+  "signin.tooShort": "Ø­Ø¯Ø§ÙÙ {n} Ú©Ø§Ø±Ø§Ú©ØªØ±.",
+  "signin.switchToRegister": "Ø­Ø³Ø§Ø¨ ÙØ¯Ø§Ø±ÛØ¯Ø Ø¨Ø³Ø§Ø²ÛØ¯",
+  "signin.switchToSignIn": "Ø­Ø³Ø§Ø¨ Ø¯Ø§Ø±ÛØ¯Ø ÙØ§Ø±Ø¯ Ø´ÙÛØ¯",
+  "signin.viewerNote":
+    "Ø­Ø³Ø§Ø¨ ØªØ§Ø²Ù ÙÙØ· ÙÛâØ®ÙØ§ÙØ¯. ØªØ§ ÙÙØªÛ ÙØ§ÙÚ© ÙÙØ´Ø´ Ø±Ø§ Ø¨Ø§ÙØ§ ÙØ¨Ø±Ø¯Ø ÙÙ Ø¨Ø±ÙÚ©Ø±Û ÙØµÙ ÙÛâÚ©ÙØ¯ Ù ÙÙ Ø³ÙØ§Ø±Ø´Û ÙÛâÙØ±Ø³ØªØ¯.",
+  "signin.passwordNote":
+    "Ø±ÙØ² Ø§Ø² Ø§ÛÙ ÙØ±Ù Ø¨Ù Ø¯Ø±Ø®ÙØ§Ø³Øª ÙÛâØ±ÙØ¯ Ù Ø±ÙØ§ ÙÛâØ´ÙØ¯. Ø¯Ø± ÙÛÚ ÙØ§Ú¯Û ÙÙØ´ØªÙ ÙÙÛâØ´ÙØ¯Ø Ø§Ø² API Ø¨Ø±ÙÙÛâÚ¯Ø±Ø¯Ø¯Ø Ù Ø¯Ø± ÙÛÚ Ø¢Ø¯Ø±Ø³Û ÙØ±Ø§Ø± ÙÙÛâÚ¯ÛØ±Ø¯.",
+
+  "health.title": "Ø³ÙØ§ÙØª Ø³Ø§ÙØ§ÙÙ",
   "health.subtitle":
     "بررسی آمادگی در هر درخواست به همه وابستگی‌ها سر می‌زند — مقدار ثابتی نیست.",
   "health.status": "وضعیت",

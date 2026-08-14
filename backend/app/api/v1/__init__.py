@@ -22,6 +22,7 @@ from app.api.v1 import (
     symbol_dna,
     system,
     world_state,
+    users,
 )
 from app.api.v1 import (
     session as session_router,
@@ -47,6 +48,7 @@ api_router.include_router(risk.router)
 api_router.include_router(learning.router)
 api_router.include_router(execution.router)
 api_router.include_router(integrations.router)
+api_router.include_router(users.router)
 api_router.include_router(system.router)
 api_router.include_router(market_map.router)
 api_router.include_router(brokers.router)

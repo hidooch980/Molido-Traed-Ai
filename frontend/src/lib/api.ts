@@ -624,7 +624,15 @@ export interface Readiness {
   note: string;
 }
 
+export interface SetupView {
+  claimed: boolean;
+  password_min_length: number;
+  self_registration_role: string;
+  note: string;
+}
+
 export const api = {
+  setup: () => request<SetupView>("/api/v1/users/setup"),
   health: () => request<Health>("/health/ready"),
   systemSettings: () => request<SystemSettings>("/api/v1/system/settings"),
   riskLimits: () => request<RiskLimits>("/api/v1/risk/limits"),

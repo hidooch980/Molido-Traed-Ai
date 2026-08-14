@@ -72,6 +72,19 @@ class NotFoundError(MolidoError):
     http_status = 404
 
 
+class ConflictError(MolidoError):
+    """The request is well-formed but the world is already in a state that
+    refuses it - an address that is taken, a deployment already claimed.
+
+    409 rather than 422: nothing about the request is malformed, so retrying it
+    unchanged after the conflict clears is the correct thing for a caller to
+    do, and 422 tells them the opposite.
+    """
+
+    code = "conflict"
+    http_status = 409
+
+
 class SafeModeError(MolidoError):
     """The system is in safe mode and refuses risk-increasing actions."""
 

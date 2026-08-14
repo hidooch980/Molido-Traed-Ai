@@ -40,6 +40,7 @@ export interface BrokerFormLabels {
   applied: string;
   failed: string;
   refused: string;
+  signInFirst: string;
   stillWaiting: string;
   connected: string;
 }
@@ -72,7 +73,21 @@ export function AddBrokerAccount({ labels }: { labels: BrokerFormLabels }) {
 
       if (!response.ok) {
         setTone("critical");
-        setStatus(body?.detail?.message ?? body?.detail ?? labels.refused);
+        // `message` first, because that is the field this API uses. Domain
+        // errors are serialised as {error, message, context} by the handler in
+        // main.py - not FastAPI's {detail} - so reading `detail` first threw
+        // away every real reason and showed the generic fallback instead. That
+        // fallback says "check the account number and server", which sent
+        // somebody hunting through a login that was perfectly correct while
+        // the actual answer, "you are not signed in", sat unread in the body.
+        //
+        // 401 is special-cased because no message about the account number is
+        // the right thing to show a person who simply has no session.
+        setStatus(
+          response.status === 401
+            ? labels.signInFirst
+            : (body?.message ?? body?.detail?.message ?? body?.detail ?? labels.refused),
+        );
         return;
       }
 

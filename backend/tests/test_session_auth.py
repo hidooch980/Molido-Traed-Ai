@@ -72,9 +72,24 @@ class TestTheExemptionStaysNarrow:
 
         assert find_ungated_routes(app, require_auth=False) == []
 
-    def test_only_the_session_routes_claim_it(self, client):
-        """The list is asserted exactly. A new public mutation should fail this
-        test and make somebody justify it, which is the entire mechanism."""
+    def test_only_these_four_routes_claim_it(self, client):
+        """The list is asserted exactly. A new public mutation fails this test
+        and makes somebody justify it, which is the entire mechanism.
+
+        Four, and each one is public because requiring a session to reach it
+        would require a session that cannot exist yet:
+
+          sign-in / sign-out  the session itself
+          users/claim         the first owner of a deployment nobody can sign
+                              in to, and refused with 409 forever after
+          users/register      self sign-up, which lands as a viewer and can
+                              reach nothing that moves money
+
+        The fourth is the one to watch. It is safe only while a viewer holds
+        READ and nothing more, which `test_a_viewer_cannot_reach_anything_that_
+        moves_money` asserts separately - if that ever changes, an open
+        registration form becomes a way in to the broker connection.
+        """
         from app.main import app
 
         claimed = {path for path, _ in public_mutations(app)}
@@ -82,6 +97,8 @@ class TestTheExemptionStaysNarrow:
         assert claimed == {
             "/api/v1/session/sign-in",
             "/api/v1/session/sign-out",
+            "/api/v1/users/claim",
+            "/api/v1/users/register",
         }
 
     def test_every_claim_carries_a_reason(self, client):

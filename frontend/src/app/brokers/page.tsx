@@ -203,6 +203,7 @@ export default async function BrokersPage() {
               applied: t("broker.applied"),
               failed: t("broker.failed"),
               refused: t("broker.refused"),
+              signInFirst: t("broker.signInFirst"),
               stillWaiting: t("broker.stillWaiting"),
               connected: t("broker.connected"),
             }}
