@@ -39,7 +39,7 @@ from app.core.config import get_settings
 from app.core.enums import Permission, Timeframe
 from app.db.session import get_db
 from app.execution.safety import ExecutionPolicy, KillSwitch
-from app.ops import bottlenecks, disk, health_score
+from app.ops import bottlenecks, disk, health_score, self_healing
 from app.ops import incidents as incident_memory
 from app.ops import readiness as rd
 from app.pipeline import decide as pipeline
@@ -206,6 +206,46 @@ def read_bottlenecks(
     footprint on a two-core host would be measuring a slowdown it caused.
     """
     return bottlenecks.analyse(session)
+
+
+@router.get("/healing")
+def read_healing(
+    _: Principal = READ,
+    session: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """What repair the system would attempt, and why it would refuse.
+
+    A GET, and there is no POST beside it. `apply` exists in the module and
+    takes both an explicit confirmation and the function that does the work, so
+    nothing can be repaired by calling a URL. Turning that into a scheduled job
+    is a separate decision with its own consequences, and it belongs to whoever
+    owns the machine rather than to whoever can reach the API.
+    """
+    plans = [
+        self_healing.plan(session, incident.fingerprint).as_dict()
+        for incident in incident_memory.open_incidents(session)
+    ]
+    return {
+        "plans": plans,
+        "would_act_on": [p["fingerprint"] for p in plans if p["allowed"]],
+        "catalogue": [
+            {
+                "action": action.name,
+                "description": action.description,
+                "why_safe": action.why_safe,
+                "reversible": action.reversible,
+            }
+            for action in self_healing.CATALOGUE.values()
+        ],
+        "budget_per_hour": self_healing.MAX_ATTEMPTS_PER_WINDOW,
+        "automatic": False,
+        "note": (
+            "no route here repairs anything. Every action is reversible, "
+            "budgeted three to the hour, recorded before it runs and credited "
+            "only when the raising signal clears - a command exiting zero is a "
+            "command exiting zero, not a repair"
+        ),
+    }
 
 
 @router.get("/{instrument_id}")
