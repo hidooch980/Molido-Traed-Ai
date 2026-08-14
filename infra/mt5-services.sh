@@ -114,6 +114,26 @@ RestartSec=3
 WantedBy=multi-user.target
 UNIT
 
+  # A window manager, which is not decoration. Without one no window can take
+  # focus, so every keystroke goes nowhere - including the ones the account
+  # holder types into MetaTrader's login box over VNC.
+  sudo tee /etc/systemd/system/molido-wm.service >/dev/null <<UNIT
+[Unit]
+Description=Window manager for the MetaTrader display
+After=molido-xvfb.service
+Requires=molido-xvfb.service
+
+[Service]
+User=ubuntu
+Environment=DISPLAY=:${DISPLAY_NUM}
+ExecStart=/usr/bin/openbox --sm-disable
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
   sudo tee /etc/systemd/system/molido-vnc.service >/dev/null <<UNIT
 [Unit]
 Description=VNC view of the MetaTrader display, loopback only
@@ -151,8 +171,8 @@ UNIT
   sudo tee /etc/systemd/system/molido-mt5.service >/dev/null <<UNIT
 [Unit]
 Description=MetaTrader 5 terminal under Wine
-After=molido-xvfb.service
-Requires=molido-xvfb.service
+After=molido-wm.service
+Requires=molido-wm.service
 
 [Service]
 User=ubuntu
@@ -194,6 +214,7 @@ UNIT
 
   # The hand-started processes have to go first or the units fight them for the
   # display and the ports.
+  pkill -f openbox 2>/dev/null || true
   pkill -f "Xvfb :${DISPLAY_NUM}" 2>/dev/null || true
   pkill -f "x11vnc -display :${DISPLAY_NUM}" 2>/dev/null || true
   pkill -f "websockify --web" 2>/dev/null || true
@@ -201,7 +222,7 @@ UNIT
   sleep 2
 
   sudo systemctl daemon-reload
-  sudo systemctl enable --now molido-xvfb molido-vnc molido-novnc molido-mt5 2>&1 | tail -2
+  sudo systemctl enable --now molido-xvfb molido-wm molido-vnc molido-novnc molido-mt5 2>&1 | tail -2
   if [ -x "$(wine_python)" ]; then
     sudo systemctl enable --now molido-mt5-bridge 2>&1 | tail -1
   else
