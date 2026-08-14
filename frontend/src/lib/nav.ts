@@ -27,7 +27,7 @@ export const NAV: NavItem[] = [
   { key: "charts", labelKey: "nav.charts", href: "/charts", group: "market" },
 
   { key: "signals", labelKey: "nav.signals", href: "/decisions", group: "trading" },
-  { key: "positions", labelKey: "nav.positions", planned: true, group: "trading" },
+  { key: "positions", labelKey: "nav.positions", href: "/positions", group: "trading" },
   { key: "orders", labelKey: "nav.orders", planned: true, group: "trading" },
   { key: "portfolio", labelKey: "nav.portfolio", href: "/risk", group: "trading" },
   { key: "risk", labelKey: "nav.risk", href: "/risk", group: "trading" },
@@ -41,7 +41,7 @@ export const NAV: NavItem[] = [
   { key: "journal", labelKey: "nav.journal", planned: true, group: "intelligence" },
   { key: "lab", labelKey: "nav.lab", href: "/lab", group: "intelligence" },
   { key: "backtest", labelKey: "nav.backtest", href: "/lab", group: "intelligence" },
-  { key: "research", labelKey: "nav.research", planned: true, group: "intelligence" },
+  { key: "research", labelKey: "nav.research", href: "/research", group: "intelligence" },
   { key: "benchmark", labelKey: "nav.benchmark", href: "/lab", group: "intelligence" },
   { key: "registry", labelKey: "nav.registry", href: "/learning", group: "intelligence" },
 

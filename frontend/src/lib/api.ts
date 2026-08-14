@@ -652,7 +652,32 @@ export interface AutopilotView {
   note: string;
 }
 
+export interface ResearchView {
+  live_trading_allowed: boolean;
+  reason: string;
+  proven: Array<{ key: string; description: string; verdict: { proven: boolean } }>;
+  rejected: Array<{
+    key: string;
+    description: string;
+    evidence: Record<string, number | string | boolean>;
+    verdict: { proven: boolean; failures: string[]; passes: string[] };
+  }>;
+  requirements: string[];
+  sample_needed: Record<string, number | string>;
+  note: string;
+}
+
+export interface PositionsView {
+  available: boolean;
+  reason?: string;
+  positions: Array<Record<string, unknown>>;
+  account: { login?: number; server?: string; equity?: number; balance?: number } | null;
+  note: string;
+}
+
 export const api = {
+  research: () => request<ResearchView>("/api/v1/learning/research"),
+  positions: () => request<PositionsView>("/api/v1/execution/positions"),
   autopilot: () => request<AutopilotView>("/api/v1/execution/autopilot"),
   setup: () => request<SetupView>("/api/v1/users/setup"),
   health: () => request<Health>("/health/ready"),

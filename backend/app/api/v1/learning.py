@@ -218,3 +218,60 @@ def read_registry(_: Principal = READ) -> dict[str, Any]:
         "somewhere it cost nothing first",
     }
     return payload
+
+
+@router.get("/research")
+def read_research(_: Principal = READ) -> dict[str, Any]:
+    """Where the search for an edge actually stands.
+
+    The one page in this system whose job is to say "nothing yet" clearly. Every
+    other page reports what the system knows; this one reports what it has
+    failed to establish, which is the more useful fact when a person is deciding
+    whether to trust it with money.
+
+    Nothing here is computed on request. The claims are registered, the numbers
+    are the ones they were registered with, and the verdicts are recomputed from
+    those numbers so a reader can check the arithmetic rather than trust it.
+    """
+    from app.learning import control as control_module
+    from app.learning import edge as edge_registry
+
+    proven = [e.as_dict() for e in edge_registry.PROVEN if e.verdict.proven]
+    rejected = [e.as_dict() for e in edge_registry.REJECTED]
+    allowed, why = edge_registry.live_trading_allowed()
+
+    empty = control_module.Comparison(
+        rule_wins=0, rule_losses=0, control_wins=0, control_losses=0
+    )
+
+    return {
+        "live_trading_allowed": allowed,
+        "reason": why,
+        "proven": proven,
+        # Kept and published. "We tried nothing" and "we tried this and it did
+        # not clear the bar" are different facts, and hiding the second invites
+        # the same rule being proposed again next month as a new idea.
+        "rejected": rejected,
+        "requirements": [
+            "pre-registered: the hypothesis, geometry, data slice and threshold "
+            "written down before the held-out data is read",
+            "beats a random control on the same bars, not breakeven - the "
+            "control is what no information scores on that data",
+            "significant after correcting for how many candidates were tried",
+            "net of a spread the broker actually charges: an edge smaller than "
+            "the spread is not a small edge, it is a loss",
+            "confirmed on data generated after registration, not only on a "
+            "held-out slice of history",
+        ],
+        "sample_needed": {
+            "for_a_2pp_edge": empty.trials_needed(for_edge=0.02),
+            "for_a_1pp_edge": empty.trials_needed(for_edge=0.01),
+            "for_a_half_pp_edge": empty.trials_needed(for_edge=0.005),
+            "note": "per arm, at z = 1.96",
+        },
+        "note": (
+            "the forward measurement started when the live loop did. Until it "
+            "has the sample above, the honest answer to 'does this work' is "
+            "that nobody knows - including this system"
+        ),
+    }
