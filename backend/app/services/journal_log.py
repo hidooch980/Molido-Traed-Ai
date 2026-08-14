@@ -1,0 +1,249 @@
+"""Store what the brain decided, and compare the two arms afterwards.
+
+`app/brain/journal.py` decides what a decision is and refuses to score one it
+cannot; this puts those decisions somewhere they survive a restart, and answers
+the one question the whole forward measurement exists for: **did the rule beat
+the coin flip on the same bars?**
+
+Two arms in one table. A comparison is then a filter rather than a join between
+two shapes that drift apart, and - more importantly - it is impossible to build
+the rule's series while forgetting the control's, which is exactly the mistake
+that produced a CONFIRMED on a result with no edge.
+
+Nothing here invents a value. A decision with no probability is stored with
+none, because 0.5 is a forecast the system never made and is indistinguishable
+afterwards from one it did. An open entry has no outcome rather than a
+placeholder outcome. Every count this module returns is a count of things that
+actually happened.
+"""
+
+from __future__ import annotations
+
+import uuid
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from typing import Any
+
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session
+
+from app.learning import control as control_module
+from app.models.journal import ARM_CONTROL, ARM_RULE, JournalEntry
+
+
+@dataclass(frozen=True)
+class Recorded:
+    """What was written, and whether it was new."""
+
+    entry_id: uuid.UUID | None
+    arm: str
+    new: bool
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "entry_id": str(self.entry_id) if self.entry_id else None,
+            "arm": self.arm,
+            "new": self.new,
+        }
+
+
+def record_decision(
+    session: Session,
+    *,
+    symbol: str,
+    decision: str,
+    at: datetime,
+    arm: str = ARM_RULE,
+    account_key: str | None = None,
+    probability: float | None = None,
+    before: dict[str, Any] | None = None,
+    during: dict[str, Any] | None = None,
+) -> Recorded:
+    """Write one decision. Idempotent on (symbol, bar, arm).
+
+    The loop republishes the same decision whenever one cycle overlaps the
+    previous, and a duplicated entry inflates the very sample the measurement
+    rests on - so the constraint decides, not the caller's care.
+    """
+    moment = at.astimezone(UTC)
+    existing = session.scalar(
+        select(JournalEntry).where(
+            JournalEntry.symbol == symbol,
+            JournalEntry.opened_at == moment,
+            JournalEntry.arm == arm,
+        )
+    )
+    if existing is not None:
+        return Recorded(entry_id=existing.id, arm=arm, new=False)
+
+    entry = JournalEntry(
+        symbol=symbol,
+        decision=decision,
+        account_key=account_key,
+        opened_at=moment,
+        probability=probability,
+        arm=arm,
+        before=before or {},
+        during=during or {},
+    )
+    session.add(entry)
+    session.flush()
+    return Recorded(entry_id=entry.id, arm=arm, new=True)
+
+
+def record_with_control(
+    session: Session,
+    *,
+    symbol: str,
+    decision: str,
+    at: datetime,
+    price: float,
+    stop_distance: float,
+    account_key: str | None = None,
+    probability: float | None = None,
+    before: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Write the decision and its control together, or neither.
+
+    One call, because the two must never diverge. A rule series built over
+    months beside a control series that was skipped on the days somebody was
+    debugging is a comparison with a hole in it, and the hole is invisible
+    afterwards.
+    """
+    rule = record_decision(
+        session,
+        symbol=symbol,
+        decision=decision,
+        at=at,
+        arm=ARM_RULE,
+        account_key=account_key,
+        probability=probability,
+        before=before,
+    )
+
+    entry = control_module.entry_for(
+        symbol=symbol, at=at, price=price, stop_distance=stop_distance
+    )
+    if entry is None:
+        # The control could not be formed, so the rule's row is marked as
+        # having no partner rather than left looking like a matched pair. An
+        # unmatched entry silently included in a comparison is a bias.
+        return {
+            "rule": rule.as_dict(),
+            "control": None,
+            "reason": (
+                "the geometry was unusable, so no control was formed - this "
+                "decision is excluded from the comparison rather than counted "
+                "against a partner that does not exist"
+            ),
+        }
+
+    control_row = record_decision(
+        session,
+        symbol=symbol,
+        decision="long" if entry.side > 0 else "short",
+        at=at,
+        arm=ARM_CONTROL,
+        account_key=account_key,
+        before=entry.as_dict(),
+    )
+    return {"rule": rule.as_dict(), "control": control_row.as_dict()}
+
+
+def close(
+    session: Session,
+    entry_id: uuid.UUID,
+    *,
+    outcome: str,
+    r_multiple: float | None = None,
+    after: dict[str, Any] | None = None,
+    at: datetime | None = None,
+) -> bool:
+    """Resolve one entry. Returns whether it changed anything.
+
+    An entry already closed is left alone rather than overwritten. A late
+    duplicate resolution would rewrite a result that has already been counted.
+    """
+    entry = session.get(JournalEntry, entry_id)
+    if entry is None or entry.closed_at is not None:
+        return False
+
+    entry.closed_at = (at or datetime.now(UTC)).astimezone(UTC)
+    entry.outcome = outcome
+    entry.r_multiple = r_multiple
+    entry.after = after or {}
+    session.flush()
+    return True
+
+
+def comparison(
+    session: Session, *, since: datetime | None = None
+) -> control_module.Comparison:
+    """The rule against the control, over resolved entries only.
+
+    Open entries are excluded from both arms. Counting an open position as a
+    loss because it has not closed yet would make every measurement pessimistic
+    in exactly the periods the system was most active.
+    """
+
+    def tally(arm: str) -> tuple[int, int]:
+        query = select(
+            func.count().filter(JournalEntry.r_multiple > 0),
+            func.count().filter(JournalEntry.r_multiple <= 0),
+        ).where(
+            JournalEntry.arm == arm,
+            JournalEntry.closed_at.is_not(None),
+            JournalEntry.r_multiple.is_not(None),
+        )
+        if since is not None:
+            query = query.where(JournalEntry.opened_at >= since)
+        wins, losses = session.execute(query).one()
+        return int(wins or 0), int(losses or 0)
+
+    rule_wins, rule_losses = tally(ARM_RULE)
+    control_wins, control_losses = tally(ARM_CONTROL)
+
+    return control_module.Comparison(
+        rule_wins=rule_wins,
+        rule_losses=rule_losses,
+        control_wins=control_wins,
+        control_losses=control_losses,
+    )
+
+
+def summary(session: Session) -> dict[str, Any]:
+    """What the journal holds, and what the comparison says so far."""
+    totals = session.execute(
+        select(
+            JournalEntry.arm,
+            func.count(JournalEntry.id),
+            func.count(JournalEntry.closed_at),
+            func.min(JournalEntry.opened_at),
+            func.max(JournalEntry.opened_at),
+        ).group_by(JournalEntry.arm)
+    ).all()
+
+    by_arm = {
+        arm: {
+            "recorded": int(recorded or 0),
+            "resolved": int(resolved or 0),
+            # Stated rather than left to subtraction. "40 recorded, 12
+            # resolved" reads as two unrelated numbers until the third is
+            # spelled out.
+            "still_open": int(recorded or 0) - int(resolved or 0),
+            "first_at": first.isoformat() if first else None,
+            "last_at": last.isoformat() if last else None,
+        }
+        for arm, recorded, resolved, first, last in totals
+    }
+
+    measured = comparison(session)
+    return {
+        "arms": by_arm,
+        "comparison": measured.as_dict(),
+        "note": (
+            "the comparison counts resolved entries only. An open position "
+            "counted as a loss would make every measurement pessimistic in "
+            "exactly the periods the system was most active"
+        ),
+    }

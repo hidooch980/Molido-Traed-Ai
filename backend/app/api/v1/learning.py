@@ -27,9 +27,11 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from fastapi import APIRouter, Depends, Query
+from sqlalchemy.orm import Session
 
 from app.api.deps import Principal, require
 from app.core.enums import Permission
+from app.db.session import get_db
 from app.learning import drift as drift_module
 from app.learning import lab as lab_module
 from app.learning import registry as registry_module
@@ -275,3 +277,21 @@ def read_research(_: Principal = READ) -> dict[str, Any]:
             "that nobody knows - including this system"
         ),
     }
+
+
+@router.get("/journal")
+def read_journal(
+    _: Principal = READ,
+    session: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Every decision recorded, and what the two arms say so far.
+
+    The rule and the random control are counted from the same table over the
+    same bars, so the headline is the difference between them rather than the
+    rule's hit rate on its own. A rule that beats breakeven while matching a
+    coin flip has beaten nothing, and this project has already published one
+    CONFIRMED that missed exactly that.
+    """
+    from app.services import journal_log
+
+    return journal_log.summary(session)

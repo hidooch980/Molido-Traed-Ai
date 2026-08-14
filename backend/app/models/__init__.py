@@ -19,12 +19,14 @@ from app.models.ingestion import (
     IngestionRun,
 )
 from app.models.instruments import BrokerSymbol, Instrument, Provider
+from app.models.journal import JournalEntry
 from app.models.market_data import Bar, Tick
 from app.models.symbol_dna import SymbolProfile
 from app.models.tenancy import ApiKey, Tenant, User
 
 __all__ = [
     "Incident",
+    "JournalEntry",
     "ChallengeAccount",
     "ApiKey",
     "AuditEvent",
