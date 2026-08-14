@@ -45,7 +45,10 @@ status() {
   systemctl list-units --type=service --all --no-legend 'molido-*' 2>/dev/null |
     awk '{printf "%-26s %s %s\n", $1, $3, $4}' || echo "no units"
   log "windows python"
-  if [ -x "$(wine_python)" ]; then
+  # -f rather than -x: a Windows executable on a Linux filesystem carries no
+  # exec bit and does not need one, so testing for it reports a working
+  # interpreter as absent.
+  if [ -f "$(wine_python)" ]; then
     WINEPREFIX="$PREFIX" WINEDEBUG=-all wine "$(wine_python)" -c \
       "import MetaTrader5 as m; print('MetaTrader5', m.__version__)" 2>/dev/null ||
       echo "python present, MetaTrader5 not importable"
@@ -223,7 +226,10 @@ UNIT
 
   sudo systemctl daemon-reload
   sudo systemctl enable --now molido-xvfb molido-wm molido-vnc molido-novnc molido-mt5 2>&1 | tail -2
-  if [ -x "$(wine_python)" ]; then
+  # -f rather than -x: a Windows executable on a Linux filesystem carries no
+  # exec bit and does not need one, so testing for it reports a working
+  # interpreter as absent.
+  if [ -f "$(wine_python)" ]; then
     sudo systemctl enable --now molido-mt5-bridge 2>&1 | tail -1
   else
     echo "bridge unit written but not started: no Windows python yet"
