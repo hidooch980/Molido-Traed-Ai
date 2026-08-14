@@ -182,7 +182,11 @@ User=ubuntu
 Environment=DISPLAY=:${DISPLAY_NUM}
 Environment=WINEPREFIX=${PREFIX}
 Environment=WINEDEBUG=-all
-ExecStart=/usr/bin/wine "${PREFIX}/drive_c/Program Files/MetaTrader 5/terminal64.exe"
+# /config: names the startup file that both enables algorithmic trading
+# and attaches the bridge expert. Doing it here rather than by hand is
+# the point: the Navigator panel that would otherwise start it does not
+# render its expanders under Wine, so there is no node to click.
+ExecStart=/usr/bin/wine "${PREFIX}/drive_c/Program Files/MetaTrader 5/terminal64.exe" "/config:${PREFIX}/drive_c/Program Files/MetaTrader 5/config/molido-startup.ini"
 Restart=always
 RestartSec=10
 
