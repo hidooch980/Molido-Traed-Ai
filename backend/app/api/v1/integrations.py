@@ -25,12 +25,14 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, Depends, Query
+from sqlalchemy.orm import Session
 
 from app.api.deps import ROLE_PERMISSIONS, Principal, require
 from app.api.guard import PERMISSION_ATTR, find_ungated_routes, mutating_routes
 from app.core.config import get_settings
 from app.core.enums import Permission
 from app.core.errors import ValidationFailedError
+from app.db.session import get_db
 from app.integrations import notify, telegram
 
 router = APIRouter(prefix="/integrations", tags=["integrations"])
@@ -177,3 +179,29 @@ def read_telegram(_: Principal = READ) -> dict[str, Any]:
             "alert everybody learns to ignore is the one that mattered"
         ),
     }
+
+
+@router.get("/mcp")
+def read_mcp(_: Principal = READ) -> dict[str, Any]:
+    """What an AI agent may ask this system, and what it may never do."""
+    from app.integrations import mcp
+
+    return mcp.manifest()
+
+
+@router.get("/mcp/{tool_name}")
+def call_mcp(
+    tool_name: str,
+    _: Principal = READ,
+    session: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Run one read-only tool.
+
+    A GET, and deliberately: every tool here reads, so making them GETs means
+    the execution gate never has to decide whether an agent may mutate - the
+    question does not arise. A POST here would be a mutating route one refactor
+    away from doing something.
+    """
+    from app.integrations import mcp
+
+    return mcp.call(session, tool_name)

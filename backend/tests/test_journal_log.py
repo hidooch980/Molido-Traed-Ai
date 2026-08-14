@@ -15,8 +15,6 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-import pytest
-
 from app.models.journal import ARM_CONTROL, ARM_RULE, JournalEntry
 from app.services import journal_log
 
