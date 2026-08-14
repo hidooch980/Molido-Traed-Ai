@@ -85,6 +85,10 @@ services:
       # writes a broker-login request here and the host agent applies it; the
       # container never touches the terminal, its config or systemd.
       - ${MOLIDO_MT5_QUEUE_HOST:-/var/molido/mt5-queue}:/var/molido/mt5-queue
+      # What the expert inside the terminal publishes. Read-only: the API reads
+      # this feed and must never be able to write into MetaTrader's own folder,
+      # where a stray file would be picked up as terminal data.
+      - ${MOLIDO_MT5_BRIDGE_HOST:-/home/ubuntu/.mt5/drive_c/users/ubuntu/AppData/Roaming/MetaQuotes/Terminal/Common/Files}:/home/ubuntu/.mt5/drive_c/users/ubuntu/AppData/Roaming/MetaQuotes/Terminal/Common/Files:ro
     depends_on:
       postgres:
         condition: service_healthy
