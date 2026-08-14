@@ -321,3 +321,25 @@ class TestItReadsTheReasonRatherThanGuessingIt:
 
         assert state.usable is True
         assert state.reason is None
+
+    def test_metaeditor_log_does_not_shadow_the_terminal_log(self, bridge, logs):
+        """The real directory holds 20260813.log, 20260814.log and
+        metaeditor.log. The last of those sorts highest and has no login lines
+        in it, so taking the alphabetically last file reported "MetaTrader has
+        not said" on a server that had said it twice."""
+        write_log(logs, REAL_FAILURE, name="20260814.log")
+        (logs / "metaeditor.log").write_text("nothing relevant here", encoding="utf-16")
+
+        assert "Invalid account" in bridge.last_authorization()
+
+    def test_the_newest_day_wins_over_an_older_one(self, bridge, logs):
+        """Yesterday's failure must not outrank today's success."""
+        write_log(logs, REAL_FAILURE, name="20260813.log")
+        write_log(
+            logs,
+            "DP	0	09:40:11.004	Network	'501165913': authorization on "
+            "RoboMarketsCY-Pro performed",
+            name="20260814.log",
+        )
+
+        assert "501165913" in bridge.last_authorization()

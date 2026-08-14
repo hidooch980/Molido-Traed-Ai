@@ -19,6 +19,25 @@ cd "$(dirname "$0")/.."
 BUILD_STAMP="$(date -u '+%Y-%m-%d %H:%M')"
 export BUILD_STAMP
 
+# Pull first, and say which commit is being deployed.
+#
+# This script used to build whatever happened to be in the working tree. A
+# deploy would then restart every container, report all of them healthy, and
+# run the previous commit - which looks exactly like a successful deploy from
+# the outside. It cost one wrong "deployed" claim before it was noticed.
+#
+# --ff-only rather than a merge: an unexpected divergence must stop the deploy
+# rather than resolve itself into something nobody wrote.
+echo "-> at ${BEFORE:=$(git rev-parse --short HEAD)}, pulling"
+git pull --ff-only --quiet origin main
+AFTER="$(git rev-parse --short HEAD)"
+if [ "$BEFORE" = "$AFTER" ]; then
+  echo "-> already at ${AFTER} - nothing new to deploy, rebuilding anyway"
+else
+  echo "-> ${BEFORE} -> ${AFTER}"
+fi
+git --no-pager log --oneline -1
+
 # A function, not a string variable. The stamp contains a space, so an unquoted
 # "$COMPOSE" expansion would split it into two arguments; and `sudo -E` is
 # silently ignored under a sudoers policy that does not keep the environment,

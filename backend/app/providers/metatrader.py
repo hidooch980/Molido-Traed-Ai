@@ -151,7 +151,15 @@ class MetaTraderBridge:
         never "everything is fine".
         """
         try:
-            logs = sorted(self.log_directory.glob("*.log"))
+            # Dated logs only. The directory also holds `metaeditor.log`, which
+            # sorts last alphabetically and contains no login lines at all -
+            # picking it produced a correct-looking None on a server whose
+            # terminal had written the failure two files earlier.
+            logs = sorted(
+                path
+                for path in self.log_directory.glob("*.log")
+                if path.stem.isdigit() and len(path.stem) == 8
+            )
         except OSError:
             return None
         if not logs:
