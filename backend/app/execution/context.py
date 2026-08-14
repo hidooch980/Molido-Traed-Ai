@@ -68,27 +68,20 @@ def peak_equity(
 ) -> float | None:
     """The highest equity recorded for this account, or None.
 
-    Currently always None, and deliberately: **nothing in this system records
-    an equity history.** The bridge publishes a snapshot every twenty seconds
-    and nothing stores it, so there is no series to take a maximum of.
+    Reads the recorded series. It returned a flat None until there was a series
+    to read - and before that, an even worse version queried
+    `max(ChallengeAccount.starting_balance)`, which compared a UUID column to
+    the string "metatrader" and would, with the types fixed, have returned the
+    starting balance as though it were the peak. A query that answers with a
+    confident wrong number is worse than one that answers with nothing.
 
-    The first version of this function queried
-    `max(ChallengeAccount.starting_balance)`, which was wrong twice over. It
-    compared a UUID column against the string "metatrader", which Postgres
-    refused outright - and even with the types fixed it would have returned the
-    starting balance, which is not the peak equity and would have been quietly
-    believed. A query that returns a confident wrong number is worse than one
-    that returns nothing.
-
-    None means nobody was watching. That is a different fact from "the peak is
-    today's equity", and the second is the dangerous one: it puts a trailing
-    floor at today's level and reports rope the account does not have.
-
-    Recording the series is real work - a table, a writer on the bridge poll,
-    and a retention policy - and it is the next thing this needs. Until then
-    the caller flags it as unmeasured, which is the honest state.
+    None still means nobody was watching, which is a different fact from "the
+    peak is today's equity" - the second places a trailing floor at today's
+    level and reports rope the account does not have.
     """
-    return None
+    from app.services import equity as equity_series
+
+    return equity_series.peak_equity(session, account_id, since=since)
 
 
 def build(

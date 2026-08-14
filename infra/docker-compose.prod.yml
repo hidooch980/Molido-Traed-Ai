@@ -23,6 +23,37 @@ x-backend-env: &backend-env
   MOLIDO_COLLECTOR_PROVIDER: ${MOLIDO_COLLECTOR_PROVIDER:-yfinance}
   MOLIDO_COLLECTOR_INTERVAL_SECONDS: ${MOLIDO_COLLECTOR_INTERVAL_SECONDS:-900}
   MOLIDO_WATCHLIST: ${MOLIDO_WATCHLIST}
+
+  # Execution. Listed here because this block is an allow-list, not a
+  # pass-through: `--env-file` only feeds interpolation in this file, so a
+  # variable set in .env.prod and absent from here never reaches the container.
+  # Four of these were set on the server and silently did nothing, which is the
+  # exact failure this explicitness is supposed to prevent in the other
+  # direction - so every one of them names its own default below.
+  #
+  # Every default refuses. An unset variable must never be the reason an order
+  # goes out.
+  MOLIDO_ENABLE_EXECUTION: ${MOLIDO_ENABLE_EXECUTION:-false}
+  MOLIDO_EXECUTION_DRY_RUN: ${MOLIDO_EXECUTION_DRY_RUN:-true}
+  MOLIDO_TRADE_WITHOUT_PROVEN_EDGE: ${MOLIDO_TRADE_WITHOUT_PROVEN_EDGE:-false}
+  # Separate from the three above on purpose: those are decisions about this
+  # deployment, this is a decision about the account being traded.
+  MOLIDO_ALLOW_REAL_MONEY_ORDERS: ${MOLIDO_ALLOW_REAL_MONEY_ORDERS:-false}
+  MOLIDO_REQUIRE_AUTH: ${MOLIDO_REQUIRE_AUTH:-false}
+
+  # Outbound mail, for account verification. Unset means this deployment does
+  # not send, stated rather than silent.
+  MOLIDO_SMTP_HOST: ${MOLIDO_SMTP_HOST:-}
+  MOLIDO_SMTP_PORT: ${MOLIDO_SMTP_PORT:-587}
+  MOLIDO_SMTP_USER: ${MOLIDO_SMTP_USER:-}
+  MOLIDO_SMTP_PASSWORD: ${MOLIDO_SMTP_PASSWORD:-}
+  MOLIDO_SMTP_FROM: ${MOLIDO_SMTP_FROM:-}
+  MOLIDO_PUBLIC_BASE_URL: ${MOLIDO_PUBLIC_BASE_URL:-http://185.204.169.240}
+
+  # Telegram, same rule: unset means off, never open.
+  MOLIDO_TELEGRAM_BOT_TOKEN: ${MOLIDO_TELEGRAM_BOT_TOKEN:-}
+  MOLIDO_TELEGRAM_CHAT_ID: ${MOLIDO_TELEGRAM_CHAT_ID:-}
+
   TZ: UTC
 
 x-logging: &logging

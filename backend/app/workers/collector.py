@@ -287,6 +287,42 @@ def _materialize(session, instrument: Instrument, timeframe: Timeframe, now: dat
 
 
 # ------------------------------------------------------------------ arq glue
+def sample_equity() -> dict[str, Any]:
+    """Record one equity snapshot from the bridge, if an account is connected.
+
+    Runs on the collection cadence rather than the bridge's twenty seconds. A
+    trailing floor is recalculated daily and the peak it trails moves slowly, so
+    a sample every fifteen minutes places it correctly while a sample every
+    twenty seconds would write four thousand rows a day per account to answer
+    the same question.
+
+    Silent when no account is connected. That is not a failure - it is the
+    normal state of a deployment nobody has linked a broker to yet, and logging
+    it as an error every cycle would bury the cycles that matter.
+    """
+    from app.providers.metatrader import MetaTraderBridge
+    from app.services import equity as equity_series
+
+    published = MetaTraderBridge().account()
+    if not published.get("available"):
+        return {"recorded": False, "reason": published.get("reason") or "no account"}
+
+    login = str(published.get("login") or "")
+    if not login:
+        return {"recorded": False, "reason": "the account has no login to key on"}
+
+    with session_scope() as session:
+        stored = equity_series.record(
+            session,
+            account_key=login,
+            equity=float(published.get("equity") or 0.0),
+            balance=float(published.get("balance") or 0.0),
+            margin=float(published.get("margin") or 0.0),
+            currency=str(published.get("currency") or "USD"),
+        )
+    return {"recorded": stored, "account": login}
+
+
 async def collect(ctx: dict) -> dict[str, Any]:
     """ARQ task wrapper.
 
@@ -295,7 +331,19 @@ async def collect(ctx: dict) -> dict[str, Any]:
     own heartbeat.
     """
     report = await asyncio.to_thread(run_cycle)
-    return report.as_payload()
+    payload = report.as_payload()
+
+    # The equity sample rides on the same cycle. Its failure must not fail the
+    # collection: bars are the thing this worker exists for, and a bridge that
+    # is down is a normal state that must not stop market data being recorded.
+    try:
+        payload["equity"] = await asyncio.to_thread(sample_equity)
+    except Exception as problem:  # noqa: BLE001 - reported, never fatal
+        payload["equity"] = {
+            "recorded": False,
+            "reason": f"{type(problem).__name__} while sampling equity",
+        }
+    return payload
 
 
 async def startup(ctx: dict) -> None:

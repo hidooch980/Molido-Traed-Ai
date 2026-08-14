@@ -9,6 +9,7 @@ from app.models.audit import AuditEvent
 from app.models.calendar import MarketHoliday
 from app.models.challenge_accounts import ChallengeAccount
 from app.models.episodes import Episode
+from app.models.equity import EquitySample
 from app.models.features import FeatureValue
 from app.models.incidents import Incident
 from app.models.ingestion import (
@@ -33,6 +34,7 @@ __all__ = [
     "DataQualityFinding",
     "DatasetQuality",
     "Episode",
+    "EquitySample",
     "FeatureValue",
     "IngestionCheckpoint",
     "IngestionRun",
