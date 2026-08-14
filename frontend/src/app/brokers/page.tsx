@@ -206,6 +206,7 @@ export default async function BrokersPage() {
               failed: t("broker.failed"),
               refused: t("broker.refused"),
               stillWaiting: t("broker.stillWaiting"),
+              connected: t("broker.connected"),
             }}
           />
         </div>

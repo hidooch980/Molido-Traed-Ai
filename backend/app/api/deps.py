@@ -25,7 +25,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from fastapi import Depends, Header
+from fastapi import Cookie, Depends, Header
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -86,12 +86,54 @@ ANONYMOUS = Principal(
 )
 
 
+def _principal_for(session: Session, key: ApiKey) -> Principal:
+    """One `Principal` from one stored credential, whichever kind it is.
+
+    A browser session and an API key are stored the same way on purpose, so
+    everything above this line is spared knowing which arrived. A permission
+    check that had to ask would eventually be written twice and drift.
+    """
+    role = UserRole.VIEWER
+    if key.user_id:
+        user = session.get(User, key.user_id)
+        if user is not None:
+            if not user.is_active:
+                raise AuthenticationError("This user account is disabled.")
+            role = UserRole(user.role)
+
+    bind_tenant(str(key.tenant_id))
+    return Principal(
+        tenant_id=key.tenant_id,
+        user_id=key.user_id,
+        role=role,
+        permissions=frozenset(ROLE_PERMISSIONS.get(role, {Permission.READ})),
+        authenticated=True,
+    )
+
+
 def resolve_principal(
     x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+    molido_session: str | None = Cookie(default=None, alias="molido_session"),
     session: Session = Depends(get_db),
 ) -> Principal:
-    """Identify the caller from an API key, or fall back to anonymous."""
+    """Identify the caller from a session cookie or an API key.
+
+    The cookie is tried first because it is the ordinary case: somebody signed
+    in on the site. The key remains for scripts and for anything that cannot
+    hold a cookie, and both resolve to the same principal with the same
+    permissions - a session grants nothing a key would not.
+    """
     settings = get_settings()
+
+    if molido_session:
+        from app.services import sessions_auth
+
+        row = sessions_auth.resolve(session, molido_session)
+        if row is not None:
+            return _principal_for(session, row)
+        # A stale cookie falls through to the key rather than failing. The
+        # ordinary end of a session is not an error, and refusing here would
+        # lock somebody out of the public pages for holding an old cookie.
 
     if not x_api_key:
         if settings.require_auth:
@@ -114,23 +156,8 @@ def resolve_principal(
         if key.expires_at is not None and key.expires_at <= now:
             raise AuthenticationError("This API key has expired.")
 
-        role = UserRole.VIEWER
-        if key.user_id:
-            user = session.get(User, key.user_id)
-            if user is not None:
-                if not user.is_active:
-                    raise AuthenticationError("This user account is disabled.")
-                role = UserRole(user.role)
-
         key.last_used_at = now
-        bind_tenant(str(key.tenant_id))
-        return Principal(
-            tenant_id=key.tenant_id,
-            user_id=key.user_id,
-            role=role,
-            permissions=frozenset(ROLE_PERMISSIONS.get(role, {Permission.READ})),
-            authenticated=True,
-        )
+        return _principal_for(session, key)
 
     # Deliberately identical to the revoked/expired message shape: a caller
     # must not be able to tell a wrong key from a disabled one.

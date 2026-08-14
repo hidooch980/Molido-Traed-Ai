@@ -23,9 +23,13 @@ from app.api.v1 import (
     system,
     world_state,
 )
+from app.api.v1 import (
+    session as session_router,
+)
 
 api_router = APIRouter(prefix="/api/v1")
 api_router.include_router(access.router)
+api_router.include_router(session_router.router)
 api_router.include_router(auth.router)
 api_router.include_router(brain.router)
 api_router.include_router(instruments.router)

@@ -22,6 +22,7 @@ export function direction(locale: Locale): "rtl" | "ltr" {
 type Dictionary = Record<string, string>;
 
 const en: Dictionary = {
+  "broker.connected": "Connected. The terminal is logged in and the account is visible.",
   "broker.add": "Add a broker account",
   "broker.login": "Account number",
   "broker.server": "Server",
@@ -756,6 +757,7 @@ const en: Dictionary = {
 };
 
 const fa: Dictionary = {
+  "broker.connected": "متصل شد. ترمینال وارد حساب شده و حساب دیده می‌شود.",
   "broker.add": "افزودن حساب بروکر",
   "broker.login": "شماره حساب",
   "broker.server": "سرور",

@@ -32,6 +32,11 @@ from app.core.enums import Permission
 # so the marker is what makes the permission visible to this walk.
 PERMISSION_ATTR = "__molido_permission__"
 
+#: Set by `public_mutation` on the handful of routes that must change state
+#: before anybody can authenticate. Never inferred, never defaulted: a route
+#: without it that mutates on READ alone still refuses to start the app.
+PUBLIC_MUTATION_ATTR = "__molido_public_mutation__"
+
 # HTTP methods that cannot change state. Everything else is a mutation and
 # must be gated, whatever the handler happens to do today.
 SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS", "TRACE"})
@@ -130,6 +135,43 @@ def mutating_routes(app: Any) -> list[tuple[str, tuple[str, ...]]]:
     return out
 
 
+
+def public_mutation(reason: str):
+    """Mark a mutating route as reachable without authentication.
+
+    For sign-in and nothing that is not sign-in shaped: a route that has to
+    change state before a caller can possibly hold a credential. The reason is
+    required and is published in the security posture, because an exemption
+    nobody can see is an exemption nobody will re-examine.
+
+        @router.post("/sign-in")
+        @public_mutation("creates a session; unreachable if it needed one")
+        def sign_in(...): ...
+    """
+    if not reason or len(reason) < 20:
+        raise ValueError(
+            "a public mutation needs a written reason - it is the only thing "
+            "standing between this exemption and a habit"
+        )
+
+    def decorate(function):
+        setattr(function, PUBLIC_MUTATION_ATTR, reason)
+        return function
+
+    return decorate
+
+
+def public_mutations(app: Any) -> list[tuple[str, str]]:
+    """Every route claiming the exemption, with its stated reason."""
+    found: list[tuple[str, str]] = []
+    for path, route, _permissions in iter_leaf_routes(app):
+        endpoint = getattr(route, "endpoint", None)
+        reason = getattr(endpoint, PUBLIC_MUTATION_ATTR, None)
+        if reason:
+            found.append((path, reason))
+    return sorted(found)
+
+
 def find_ungated_routes(app: Any, *, require_auth: bool) -> list[UngatedRoute]:
     """Mutating routes that are not safely reachable. Empty means the gate holds."""
     offenders: list[UngatedRoute] = []
@@ -153,6 +195,13 @@ def find_ungated_routes(app: Any, *, require_auth: bool) -> list[UngatedRoute]:
             continue
 
         if permissions == {Permission.READ}:
+            # The one exemption, and it has to be claimed by name. Sign-in
+            # changes state and cannot require more than READ, because a door
+            # that needs a key to reach the key is not a door. Anything that
+            # has not written down why it deserves this still refuses to start.
+            exempt = getattr(getattr(route, "endpoint", None), PUBLIC_MUTATION_ATTR, None)
+            if exempt:
+                continue
             offenders.append(
                 UngatedRoute(
                     path,

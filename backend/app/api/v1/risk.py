@@ -19,9 +19,13 @@ must not be able to mistake a risk verdict for permission.
 
 from __future__ import annotations
 
+import uuid
+from decimal import Decimal
 from typing import Any
 
 from fastapi import APIRouter, Depends, Query
+from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session
 
 from app.api.deps import Principal, require
 from app.brain import challenge as challenge_brain
@@ -30,10 +34,37 @@ from app.brain import risk as risk_brain
 from app.brain import rulebooks as rulebook_module
 from app.brain import stress as stress_brain
 from app.core.enums import Permission
+from app.db.session import get_db
+from app.services import challenge_accounts
 
 router = APIRouter(prefix="/risk", tags=["risk"])
 
 READ = Depends(require(Permission.READ))
+#: Adding a challenge account changes state, so it sits above READ. Not
+#: EXECUTE: recording which rules an account is measured against is not
+#: permission to trade it, and a route asking for more authority than it needs
+#: is how those two stop being separate questions.
+SIMULATE = Depends(require(Permission.SIMULATE))
+
+
+
+class ChallengeAccountPayload(BaseModel):
+    """A challenge account, as its holder describes it."""
+
+    label: str = Field(min_length=1, max_length=120)
+    rulebook_key: str = Field(min_length=1, max_length=80)
+    starting_balance: Decimal = Field(gt=0)
+    currency: str = Field(default="USD", max_length=8)
+    currency_per_r: Decimal | None = Field(default=None, gt=0)
+    # Defaults to false. A holder who has not checked their contract has not
+    # checked it, and a form that pre-ticks the box collects agreement nobody
+    # gave.
+    rules_confirmed: bool = False
+    notes: str = Field(default="", max_length=2000)
+
+
+class ConfirmPayload(BaseModel):
+    notes: str = Field(default="", max_length=2000)
 
 
 def _account(
@@ -310,3 +341,81 @@ def read_challenge(
         "endpoint says anything useful about it"
     )
     return payload
+
+
+@router.get("/challenge-accounts")
+def read_challenge_accounts(
+    _: Principal = READ,
+    session: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Every recorded challenge account, and whether it can be tracked.
+
+    Confirmed and unconfirmed are counted apart. They are different states of
+    readiness, and one total would let an account nobody has verified pad the
+    number that suggests the system is set up.
+    """
+    return challenge_accounts.summary(session, tenant_id=challenge_accounts.default_tenant(session))
+
+
+@router.post("/challenge-accounts")
+def create_challenge_account(
+    payload: ChallengeAccountPayload,
+    _: Principal = SIMULATE,
+    session: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Record a challenge account against a transcribed rulebook.
+
+    An unconfirmed account is stored rather than refused. Somebody part-way
+    through setup has a real account with rules nobody has checked yet, and
+    recording that honestly is better than refusing the row or pretending the
+    check happened.
+    """
+    account = challenge_accounts.create(
+        session,
+        tenant_id=challenge_accounts.default_tenant(session),
+        label=payload.label,
+        rulebook_key=payload.rulebook_key,
+        starting_balance=payload.starting_balance,
+        currency=payload.currency,
+        currency_per_r=payload.currency_per_r,
+        rules_confirmed=payload.rules_confirmed,
+        notes=payload.notes,
+    )
+    view = challenge_accounts.AccountView(
+        account=account, rulebook=challenge_accounts._resolve(account.rulebook_key)
+    )
+    return {
+        "created": True,
+        "account": view.as_dict(),
+        "note": (
+            "confirming the rules unlocks challenge tracking. Until then the "
+            "account is recorded and measured against nothing, because a "
+            "verdict from unverified rules is a verdict about the wrong "
+            "document"
+        ),
+    }
+
+
+@router.post("/challenge-accounts/{account_id}/confirm")
+def confirm_challenge_account(
+    account_id: uuid.UUID,
+    payload: ConfirmPayload,
+    _: Principal = SIMULATE,
+    session: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Mark an account's rules as checked against its own contract.
+
+    Per account rather than per rulebook: two holders on the same program can
+    be on different contracts, because providers change terms and honour the
+    old ones for accounts already open.
+    """
+    account = challenge_accounts.confirm(
+        session,
+        tenant_id=challenge_accounts.default_tenant(session),
+        account_id=account_id,
+        notes=payload.notes,
+    )
+    view = challenge_accounts.AccountView(
+        account=account, rulebook=challenge_accounts._resolve(account.rulebook_key)
+    )
+    return {"confirmed": True, "account": view.as_dict()}

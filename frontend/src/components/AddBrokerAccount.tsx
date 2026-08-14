@@ -45,6 +45,7 @@ export interface BrokerFormLabels {
   failed: string;
   refused: string;
   stillWaiting: string;
+  connected: string;
 }
 
 export function AddBrokerAccount({ labels }: { labels: BrokerFormLabels }) {
@@ -84,16 +85,21 @@ export function AddBrokerAccount({ labels }: { labels: BrokerFormLabels }) {
       const id: string = body.request_id;
       setStatus(labels.queued);
 
-      // The agent runs on the host on its own clock. Ten tries at two seconds
-      // covers a terminal restart; past that, saying "still waiting" is more
-      // honest than spinning forever.
-      for (let attempt = 0; attempt < 10; attempt++) {
+      // The agent restarts the terminal and then waits for it to report a
+      // live account, so a real answer takes up to a minute and a half.
+      // Forty-five tries at two seconds covers that; past it, saying "still
+      // waiting" is more honest than spinning forever.
+      for (let attempt = 0; attempt < 45; attempt++) {
         await new Promise((resolve) => setTimeout(resolve, 2000));
         const check = await fetch(`/api/v1/brokers/link/${id}`);
         const result = await check.json();
         if (result.known) {
-          setTone(result.applied ? "good" : "critical");
-          setStatus(result.applied ? labels.applied : `${labels.failed}: ${result.reason}`);
+          // Applied and connected are different facts. A wrong server name
+          // applies perfectly and connects to nothing, and calling that a
+          // success sends the reader looking for a bug in the form.
+          const ok = result.applied && result.connected;
+          setTone(ok ? "good" : "critical");
+          setStatus(ok ? labels.connected : `${labels.failed}: ${result.reason ?? ""}`);
           return;
         }
       }

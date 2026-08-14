@@ -82,6 +82,22 @@ def mint(label: str, role: UserRole) -> str:
     return raw
 
 
+def set_password(email: str, role: UserRole, password: str) -> None:
+    """Give the owner account a password they can sign in with.
+
+    The plaintext is hashed here and nowhere else keeps it. This exists so the
+    owner never has to find an API key in a terminal to press a button on their
+    own site - the key path stays for scripts, and a person gets a sign-in.
+    """
+    from app.core.security import hash_password
+
+    with session_scope() as session:
+        tenant, user = _tenant_and_user(session, role)
+        user.email = email.strip().lower()
+        user.password_hash = hash_password(password)
+        user.is_active = True
+
+
 def listing() -> list[str]:
     with session_scope() as session:
         rows = session.scalars(select(ApiKey).order_by(ApiKey.created_at)).all()
@@ -115,6 +131,17 @@ def main() -> int:
         help="trader carries read+simulate+execute; analyst stops at simulate",
     )
 
+    owner = sub.add_parser(
+        "set-password",
+        help="set the sign-in password for the owner account, read from stdin",
+    )
+    owner.add_argument("--email", default="owner@molidotrade.local")
+    owner.add_argument(
+        "--role",
+        default=UserRole.TRADER.value,
+        choices=[r.value for r in UserRole],
+    )
+
     sub.add_parser("list", help="show every key by prefix, never the key itself")
 
     revoker = sub.add_parser("revoke", help="revoke by prefix")
@@ -130,6 +157,18 @@ def main() -> int:
             "hash and a prefix, so a lost key is replaced rather than recovered.",
             file=sys.stderr,
         )
+        return 0
+
+    if args.command == "set-password":
+        # Read from stdin rather than an argument: a password on a command line
+        # is in the shell history, in `ps` output, and in any process listing
+        # anybody on the box can read.
+        password = sys.stdin.readline().strip()
+        if len(password) < 10:
+            print("A password of at least 10 characters is required.", file=sys.stderr)
+            return 2
+        set_password(args.email, UserRole(args.role), password)
+        print(f"Sign in at the site with {args.email}")
         return 0
 
     if args.command == "list":

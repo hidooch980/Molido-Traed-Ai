@@ -7,6 +7,7 @@ Alembic autogenerate reads. New model modules must be imported here.
 from app.db.base import Base
 from app.models.audit import AuditEvent
 from app.models.calendar import MarketHoliday
+from app.models.challenge_accounts import ChallengeAccount
 from app.models.episodes import Episode
 from app.models.features import FeatureValue
 from app.models.ingestion import (
@@ -21,6 +22,7 @@ from app.models.symbol_dna import SymbolProfile
 from app.models.tenancy import ApiKey, Tenant, User
 
 __all__ = [
+    "ChallengeAccount",
     "ApiKey",
     "AuditEvent",
     "Bar",

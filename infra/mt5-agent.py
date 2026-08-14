@@ -89,6 +89,45 @@ def restart_terminal() -> tuple[bool, str]:
     return ok, (result.stderr or result.stdout).strip()
 
 
+
+#: Where the in-terminal bridge publishes what it can see. Read rather than
+#: guessed: the terminal is the only thing that knows whether a login worked.
+BRIDGE_FILES = PREFIX / "drive_c/users" / os.environ.get("USER", "ubuntu") / (
+    "AppData/Roaming/MetaQuotes/Terminal/Common/Files"
+)
+
+
+def wait_for_connection(timeout: float = 90.0, interval: float = 3.0) -> dict:
+    """Watch the bridge until the terminal reports a live account, or give up.
+
+    Ninety seconds covers a restart, a handshake and the first publish cycle.
+    Past that, saying so is more useful than waiting longer: the failure is
+    almost always a server name, and no amount of patience fixes one.
+    """
+    account_file = BRIDGE_FILES / "molido_account.json"
+    deadline = time.monotonic() + timeout
+
+    while time.monotonic() < deadline:
+        try:
+            payload = json.loads(account_file.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            time.sleep(interval)
+            continue
+
+        # `login` is the honest signal. `connected` can be true against a cached
+        # session with no account behind it, which is exactly the state this
+        # deployment sat in for hours looking healthy.
+        if payload.get("connected") and int(payload.get("login") or 0) > 0:
+            return {
+                "connected": True,
+                "account_visible": True,
+                "balance": payload.get("balance"),
+                "currency": payload.get("currency"),
+            }
+        time.sleep(interval)
+
+    return {"connected": False, "account_visible": False}
+
 def apply(request: pathlib.Path) -> dict:
     """Apply one request and return what happened.
 
@@ -112,9 +151,26 @@ def apply(request: pathlib.Path) -> dict:
 
     write_config(login, server, password)
     restarted, detail = restart_terminal()
+    connection = wait_for_connection() if restarted else {"connected": False}
+
     return {
         "applied": restarted,
-        "reason": None if restarted else f"terminal restart failed: {detail}",
+        # Applied and connected are different facts. A wrong server name
+        # applies perfectly and connects to nothing, and reporting the first as
+        # though it were the second sends somebody looking for a bug in the
+        # form. This is also the only way a mistyped server surfaces in
+        # seconds rather than through a search of everything else.
+        "connected": connection.get("connected", False),
+        "account_visible": connection.get("account_visible", False),
+        "reason": (
+            None
+            if restarted and connection.get("connected")
+            else f"terminal restart failed: {detail}"
+            if not restarted
+            else "the terminal restarted but did not connect. The usual cause is "
+            "a server name that does not exist - it comes from the broker in "
+            "writing, and a near-miss is not accepted"
+        ),
         "login": login,
         "server": server,
         "config_written": str(CONFIG),
