@@ -189,7 +189,25 @@ export default async function BrokersPage() {
 
       <Panel title={t("broker.add")} subtitle={t("broker.howTo")}>
         <div className="p-4">
-          <AddBrokerAccount t={t} />
+          <AddBrokerAccount
+            labels={{
+              add: t("broker.add"),
+              login: t("broker.login"),
+              server: t("broker.server"),
+              password: t("broker.password"),
+              passwordHint: t("broker.passwordHint"),
+              apiKey: t("broker.apiKey"),
+              apiKeyHint: t("broker.apiKeyHint"),
+              connect: t("broker.connect"),
+              cancel: t("broker.cancel"),
+              submitting: t("broker.submitting"),
+              queued: t("broker.queued"),
+              applied: t("broker.applied"),
+              failed: t("broker.failed"),
+              refused: t("broker.refused"),
+              stillWaiting: t("broker.stillWaiting"),
+            }}
+          />
         </div>
         <p className="px-4 pb-4 text-xs ink-3 leading-relaxed">{t("broker.howToBody")}</p>
       </Panel>

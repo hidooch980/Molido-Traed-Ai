@@ -24,11 +24,30 @@ import { useState } from "react";
  * the second one takes a few seconds to arrive. Reporting the first as though
  * it were the second is how a login that silently failed looks like a success.
  */
-export function AddBrokerAccount({
-  t,
-}: {
-  t: (key: string) => string;
-}) {
+/** Every label this form needs, resolved on the server and handed over as
+ *  plain strings. A `t` function cannot cross that boundary - React refuses to
+ *  serialise it, and the page 500s with "Functions cannot be passed directly to
+ *  Client Components", which is a runtime error no type check or build catches.
+ */
+export interface BrokerFormLabels {
+  add: string;
+  login: string;
+  server: string;
+  password: string;
+  passwordHint: string;
+  apiKey: string;
+  apiKeyHint: string;
+  connect: string;
+  cancel: string;
+  submitting: string;
+  queued: string;
+  applied: string;
+  failed: string;
+  refused: string;
+  stillWaiting: string;
+}
+
+export function AddBrokerAccount({ labels }: { labels: BrokerFormLabels }) {
   const [open, setOpen] = useState(false);
   const [login, setLogin] = useState("");
   const [server, setServer] = useState("");
@@ -41,7 +60,7 @@ export function AddBrokerAccount({
   async function submit(event: React.FormEvent) {
     event.preventDefault();
     setBusy(true);
-    setStatus(t("broker.submitting"));
+    setStatus(labels.submitting);
     setTone("warning");
 
     try {
@@ -54,7 +73,7 @@ export function AddBrokerAccount({
 
       if (!response.ok) {
         setTone("critical");
-        setStatus(body?.detail?.message ?? body?.detail ?? t("broker.refused"));
+        setStatus(body?.detail?.message ?? body?.detail ?? labels.refused);
         return;
       }
 
@@ -63,7 +82,7 @@ export function AddBrokerAccount({
       setPassword("");
 
       const id: string = body.request_id;
-      setStatus(t("broker.queued"));
+      setStatus(labels.queued);
 
       // The agent runs on the host on its own clock. Ten tries at two seconds
       // covers a terminal restart; past that, saying "still waiting" is more
@@ -74,15 +93,15 @@ export function AddBrokerAccount({
         const result = await check.json();
         if (result.known) {
           setTone(result.applied ? "good" : "critical");
-          setStatus(result.applied ? t("broker.applied") : `${t("broker.failed")}: ${result.reason}`);
+          setStatus(result.applied ? labels.applied : `${labels.failed}: ${result.reason}`);
           return;
         }
       }
       setTone("warning");
-      setStatus(t("broker.stillWaiting"));
+      setStatus(labels.stillWaiting);
     } catch (error) {
       setTone("critical");
-      setStatus(`${t("broker.failed")}: ${String(error)}`);
+      setStatus(`${labels.failed}: ${String(error)}`);
     } finally {
       setBusy(false);
     }
@@ -96,7 +115,7 @@ export function AddBrokerAccount({
         className="pill"
         style={{ color: "var(--accent)", borderColor: "var(--accent)", cursor: "pointer" }}
       >
-        + {t("broker.add")}
+        + {labels.add}
       </button>
     );
   }
@@ -115,7 +134,7 @@ export function AddBrokerAccount({
     <form onSubmit={submit} className="p-4 space-y-3" style={{ maxWidth: "34rem" }}>
       <div className="grid gap-3 sm:grid-cols-2">
         <label className="space-y-1 block">
-          <span className="eyebrow">{t("broker.login")}</span>
+          <span className="eyebrow">{labels.login}</span>
           <input
             value={login}
             onChange={(e) => setLogin(e.target.value)}
@@ -126,7 +145,7 @@ export function AddBrokerAccount({
           />
         </label>
         <label className="space-y-1 block">
-          <span className="eyebrow">{t("broker.server")}</span>
+          <span className="eyebrow">{labels.server}</span>
           <input
             value={server}
             onChange={(e) => setServer(e.target.value)}
@@ -138,7 +157,7 @@ export function AddBrokerAccount({
       </div>
 
       <label className="space-y-1 block">
-        <span className="eyebrow">{t("broker.password")}</span>
+        <span className="eyebrow">{labels.password}</span>
         <input
           type="password"
           value={password}
@@ -147,11 +166,11 @@ export function AddBrokerAccount({
           autoComplete="off"
           style={field}
         />
-        <span className="text-xs ink-3 block">{t("broker.passwordHint")}</span>
+        <span className="text-xs ink-3 block">{labels.passwordHint}</span>
       </label>
 
       <label className="space-y-1 block">
-        <span className="eyebrow">{t("broker.apiKey")}</span>
+        <span className="eyebrow">{labels.apiKey}</span>
         <input
           type="password"
           value={apiKey}
@@ -160,7 +179,7 @@ export function AddBrokerAccount({
           autoComplete="off"
           style={field}
         />
-        <span className="text-xs ink-3 block">{t("broker.apiKeyHint")}</span>
+        <span className="text-xs ink-3 block">{labels.apiKeyHint}</span>
       </label>
 
       <div className="flex items-center gap-2 flex-wrap">
@@ -174,7 +193,7 @@ export function AddBrokerAccount({
             cursor: busy ? "wait" : "pointer",
           }}
         >
-          {busy ? t("broker.submitting") : t("broker.connect")}
+          {busy ? labels.submitting : labels.connect}
         </button>
         <button
           type="button"
@@ -182,7 +201,7 @@ export function AddBrokerAccount({
           className="pill"
           style={{ color: "var(--ink-3)", cursor: "pointer" }}
         >
-          {t("broker.cancel")}
+          {labels.cancel}
         </button>
       </div>
 
