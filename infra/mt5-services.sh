@@ -245,9 +245,18 @@ UNIT
   # API cannot: the API is in a container, and MetaTrader's config and systemd
   # unit are on the other side of that boundary. Handing the container the
   # host's systemd to close the gap would be worse than the gap.
+  # Shared between two users that are not the same user: the agent runs on the
+  # host as ubuntu, the API runs in its container as uid 10001. A group both
+  # can be in is the narrow fix; widening the mode to 777 would be the broad
+  # one, and this directory carries broker passwords in transit.
+  sudo groupadd -f -g 10001 molido 2>/dev/null || true
   sudo mkdir -p /var/molido/mt5-queue
-  sudo chown ubuntu:ubuntu /var/molido/mt5-queue
-  sudo chmod 700 /var/molido/mt5-queue
+  sudo chown ubuntu:molido /var/molido/mt5-queue
+  # setgid so files created by either side stay group-owned and the other side
+  # can still read them - without it the first write locks the second out
+  # again, one directory deeper.
+  sudo chmod 2770 /var/molido/mt5-queue
+  sudo usermod -aG molido ubuntu 2>/dev/null || true
 
   # One narrow sudo rule rather than blanket rights: this agent restarts one
   # unit and can do nothing else as root.
