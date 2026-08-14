@@ -68,11 +68,43 @@ _AUTH_LINE = re.compile(
     r"'(?P<login>\d+)':\s*(?P<detail>.*?authoriz\w*\s+on\s+\S+.*)$"
 )
 
+#: MetaTrader's account types, as the terminal reports them.
+#:
+#: Read rather than inferred from the server name: "RoboForex-Pro" is a demo
+#: server and "…-Demo" is not a naming rule any broker is obliged to follow.
+#: Guessing from the name is how a funded account gets treated as practice.
+TRADE_MODE_DEMO = 0
+TRADE_MODE_CONTEST = 1
+TRADE_MODE_REAL = 2
+
+TRADE_MODE_NAMES = {
+    TRADE_MODE_DEMO: "demo",
+    TRADE_MODE_CONTEST: "contest",
+    TRADE_MODE_REAL: "real money",
+}
+
 #: MetaTrader writes `2026.08.14 07:53:24` in the terminal's own timezone,
 #: which this deployment runs as GMT+0. Parsed explicitly rather than by a
 #: general parser: a format guessed right most of the time is a format that
 #: silently shifts an hour somewhere.
 STAMP_FORMAT = "%Y.%m.%d %H:%M:%S"
+
+
+def _trade_mode(payload: dict[str, Any]) -> int:
+    """Demo, contest or real, from the terminal.
+
+    An absent field returns REAL, not DEMO. If the bridge cannot say what kind
+    of account this is, the safe assumption is the one that refuses to trade -
+    treating an unknown account as practice is the mistake that costs money,
+    and treating a practice account as real costs a confirmation click.
+    """
+    raw = payload.get("trade_mode")
+    if raw is None:
+        return TRADE_MODE_REAL
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return TRADE_MODE_REAL
 
 
 def _parse_stamp(value: str) -> datetime:
@@ -286,6 +318,12 @@ class MetaTraderBridge:
             "free_margin": float(payload.get("free_margin") or 0.0),
             "leverage": int(payload.get("leverage") or 0),
             "trade_allowed": bool(payload.get("trade_allowed")),
+            # MetaTrader's own answer: 0 demo, 1 contest, 2 real. The expert has
+            # published it since the bridge was built and nothing read it, which
+            # meant one deployment-wide switch would have sent live orders to a
+            # funded account the same way it sends them to a practice one.
+            "trade_mode": _trade_mode(payload),
+            "is_real_money": _trade_mode(payload) == TRADE_MODE_REAL,
             "state": state.as_dict(),
         }
 

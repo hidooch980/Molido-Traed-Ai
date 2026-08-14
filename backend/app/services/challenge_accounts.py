@@ -103,18 +103,31 @@ def default_tenant(session: Session) -> uuid.UUID:
     error at the first insert - in a test, luckily, rather than the first time
     somebody pressed the button.
     """
+    from sqlalchemy import select
+
     from app.models.tenancy import Tenant
 
     tenant = session.get(Tenant, DEFAULT_TENANT_ID)
-    if tenant is None:
-        tenant = Tenant(
-            id=DEFAULT_TENANT_ID,
-            slug="default",
-            name="MolidoTrade",
-            locale="fa",
-        )
-        session.add(tenant)
-        session.flush()
+    if tenant is not None:
+        return tenant.id
+
+    # By slug before inserting. Looking up only by the fixed id and then
+    # inserting produced a 500 on a deployment where a tenant with this slug
+    # already existed under a different id: the lookup missed, the insert hit
+    # the unique constraint, and every read of this endpoint failed with a
+    # database error rather than a list.
+    existing = session.scalar(select(Tenant).where(Tenant.slug == "default"))
+    if existing is not None:
+        return existing.id
+
+    tenant = Tenant(
+        id=DEFAULT_TENANT_ID,
+        slug="default",
+        name="MolidoTrade",
+        locale="fa",
+    )
+    session.add(tenant)
+    session.flush()
     return tenant.id
 
 

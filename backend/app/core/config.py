@@ -88,6 +88,30 @@ class Settings(BaseSettings):
     # refuses, and `app.execution.safety` re-checks all of them per order.
     enable_execution: bool = False
     execution_dry_run: bool = True
+
+    #: Send live orders even though no registered edge clears the bar.
+    #:
+    #: Named for what it does rather than something comfortable, because the
+    #: name is the only warning somebody gets at the moment they set it. The
+    #: measured edge over a random control is currently z = 1.10 against a
+    #: required 1.96 - not distinguishable from entering at random - and an
+    #: edge that small is smaller than the spread, so live trading under this
+    #: setting pays the broker on every round trip for a return of about zero.
+    #:
+    #: It exists because it is the account holder's money and their decision.
+    #: It defaults to refusing, cannot be reached by accident, and `autopilot`
+    #: reports it in every response so it cannot be forgotten once set.
+    trade_without_proven_edge: bool = False
+
+    #: Send live orders to a real-money account.
+    #:
+    #: Separate from every other switch, and separate on purpose. The other
+    #: three are decisions about this deployment; this one is a decision about
+    #: this account, and the difference between practising and losing money is
+    #: not a difference that should ride on a flag somebody set weeks ago for a
+    #: demo. MetaTrader reports the account type and the bridge publishes it, so
+    #: this is checked against the terminal rather than trusted from config.
+    allow_real_money_orders: bool = False
     max_risk_r_per_order: float = 1.0
 
     # Collector (the long-running data-gathering worker)
