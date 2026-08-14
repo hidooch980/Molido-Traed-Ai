@@ -681,7 +681,30 @@ export interface OrderStatesView {
   transitions: Record<string, string[]>;
 }
 
+export interface JournalArm {
+  recorded: number;
+  resolved: number;
+  still_open: number;
+  first_at: string | null;
+  last_at: string | null;
+}
+
+export interface JournalView {
+  arms: Record<string, JournalArm>;
+  comparison: {
+    rule: { trials: number; wins: number; hit_rate: number | null };
+    control: { trials: number; wins: number; hit_rate: number | null };
+    edge_over_control: number | null;
+    z_score: number | null;
+    significant: boolean;
+    trials_needed_for_2pp: number;
+    note: string;
+  };
+  note: string;
+}
+
 export const api = {
+  journal: () => request<JournalView>("/api/v1/learning/journal"),
   orderStates: () => request<OrderStatesView>("/api/v1/execution/order-states"),
   research: () => request<ResearchView>("/api/v1/learning/research"),
   positions: () => request<PositionsView>("/api/v1/execution/positions"),
