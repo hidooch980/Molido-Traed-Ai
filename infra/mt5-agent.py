@@ -128,6 +128,62 @@ def wait_for_connection(timeout: float = 90.0, interval: float = 3.0) -> dict:
 
     return {"connected": False, "account_visible": False}
 
+
+#: Where the terminal writes its own account of what happened. Read rather than
+#: guessed: the first version of this agent reported "the usual cause is a
+#: server name that does not exist" for every failure, and the first real test
+#: had a correct server and a wrong password. A guess dressed as a diagnosis
+#: sends somebody to check the one thing that was right.
+TERMINAL_LOGS = PREFIX / "drive_c/Program Files/MetaTrader 5/logs"
+
+#: What MetaTrader says, and what it means to somebody who has to fix it.
+LOGIN_FAILURES = (
+    ("invalid account", "the account number or password was not accepted by the broker"),
+    ("account disabled", "the broker has disabled this account"),
+    ("invalid password", "the password was not accepted"),
+    ("no connection", "the terminal could not reach the broker's server"),
+    ("authorization failed", "the broker refused the login"),
+)
+
+
+def terminal_verdict(login: str) -> str | None:
+    """What the terminal logged about this login, in plain words.
+
+    Returns None when it said nothing, which is itself an answer - a terminal
+    that logged no authorization attempt did not reach the broker at all, and
+    that is a different problem from being turned away by one.
+    """
+    try:
+        logs = sorted(TERMINAL_LOGS.glob("*.log"), key=lambda p: p.stat().st_mtime)
+    except OSError:
+        return None
+    if not logs:
+        return None
+
+    try:
+        # The terminal writes UTF-16LE. Decoded wrongly this is a wall of NULs
+        # and every match silently fails.
+        text = logs[-1].read_bytes().decode("utf-16-le", errors="replace")
+    except OSError:
+        return None
+
+    lines = [
+        line.strip()
+        for line in text.splitlines()
+        if login in line and "authoriz" in line.lower()
+    ]
+    if not lines:
+        return None
+
+    last = lines[-1]
+    lowered = last.lower()
+    for needle, meaning in LOGIN_FAILURES:
+        if needle in lowered:
+            return meaning
+    if "ok" in lowered or "success" in lowered:
+        return None
+    return last.split("	")[-1].strip()
+
 def apply(request: pathlib.Path) -> dict:
     """Apply one request and return what happened.
 
@@ -167,9 +223,12 @@ def apply(request: pathlib.Path) -> dict:
             if restarted and connection.get("connected")
             else f"terminal restart failed: {detail}"
             if not restarted
-            else "the terminal restarted but did not connect. The usual cause is "
-            "a server name that does not exist - it comes from the broker in "
-            "writing, and a near-miss is not accepted"
+            else (
+                terminal_verdict(login)
+                or "the terminal restarted and did not connect, and logged no "
+                "authorization attempt - which usually means the server name "
+                "does not exist, so it never reached a broker to be refused by"
+            )
         ),
         "login": login,
         "server": server,

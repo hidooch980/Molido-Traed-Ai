@@ -114,3 +114,119 @@ class TestValidationProtectsTheConfigFile:
             mt5_link.validate("12345678", "Broker-Demo", "secret\nmore")
 
         assert "secret" not in str(exc.value)
+
+
+class TestTheShapesBrokersActuallyIssue:
+    """Real registration output, not invented examples.
+
+    Two demo accounts were opened while this was being built and both are in
+    here: a MetaQuotes one and a RoboMarkets one. A validator that rejects the
+    format its users are handed is worse than no validator, because the error
+    points at them rather than at itself.
+    """
+
+    @pytest.mark.parametrize(
+        "login,server",
+        [
+            ("111099517", "MetaQuotes-Demo"),
+            ("501165913", "RoboMarketsCY-Pro"),
+            ("12345678", "ICMarketsSC-Demo"),
+            ("9876543", "Pepperstone-Demo01"),
+            ("1234", "FTMO-Server"),
+            ("123456789012", "Exness-MT5Trial8"),
+        ],
+    )
+    def test_it_accepts_what_brokers_issue(self, queue, login, server):
+        request = mt5_link.validate(login, server, "whatever-they-set")
+
+        assert request.login == login
+        assert request.server == server
+
+    @pytest.mark.parametrize(
+        "password",
+        [
+            "SrDuP@K8",
+            "@aNp56Ow",
+            "a b c d",
+            "Ünïcødé-Ü",
+            "'; DROP TABLE users; --",
+            "x" * 200,
+        ],
+    )
+    def test_it_accepts_the_passwords_brokers_generate(self, queue, password):
+        """Broker-generated passwords carry punctuation, and a validator that
+        rejects them sends somebody to change a password that was fine."""
+        request = mt5_link.validate("111099517", "MetaQuotes-Demo", password)
+
+        assert request.password == password
+
+    def test_a_password_with_punctuation_survives_the_queue(self, queue):
+        """It travels through JSON and into an ini file. Either could mangle
+        it, and a mangled password fails authentication with a message about
+        the account rather than about the transport."""
+        password = "SrDuP@K8"
+        result = mt5_link.submit(
+            mt5_link.validate("111099517", "MetaQuotes-Demo", password)
+        )
+
+        written = json.loads(
+            (queue / f"{result.request_id}.request.json").read_text(encoding="utf-8")
+        )
+
+        assert written["password"] == password
+
+    def test_surrounding_whitespace_is_trimmed(self, queue):
+        """Copied from a registration screen, values arrive with spaces, and a
+        trailing space in a server name is an hour of debugging."""
+        request = mt5_link.validate("  111099517  ", "  MetaQuotes-Demo  ", "secret")
+
+        assert request.login == "111099517"
+        assert request.server == "MetaQuotes-Demo"
+
+    def test_the_password_is_not_trimmed(self, queue):
+        """A leading or trailing space may be part of it, and silently removing
+        one produces an authentication failure nobody can explain."""
+        request = mt5_link.validate("111099517", "MetaQuotes-Demo", " secret ")
+
+        assert request.password == " secret "
+
+
+class TestTwoRequestsDoNotCollide:
+    def test_each_request_gets_its_own_id(self, queue):
+        first = mt5_link.submit(mt5_link.validate("111099517", "MetaQuotes-Demo", "a"))
+        second = mt5_link.submit(mt5_link.validate("501165913", "RoboMarketsCY-Pro", "b"))
+
+        assert first.request_id != second.request_id
+        assert len(list(queue.glob("*.request.json"))) == 2
+
+    def test_a_request_is_never_visible_half_written(self, queue):
+        """Written under a temporary name and renamed into place. The agent
+        globs for finished requests, and a rename is atomic on one filesystem -
+        so it cannot read half a file and log into half an account."""
+        result = mt5_link.submit(
+            mt5_link.validate("111099517", "MetaQuotes-Demo", "secret")
+        )
+
+        assert (queue / f"{result.request_id}.request.json").exists()
+        assert not list(queue.glob("*.partial"))
+
+
+class TestTheQueueReportsItsOwnState:
+    def test_a_missing_directory_is_reported_not_crashed(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(mt5_link, "queue_dir", lambda: tmp_path / "absent")
+
+        state = mt5_link.agent_state()
+
+        assert state["reachable"] is False
+        assert "not mounted" in state["reason"]
+
+    def test_depth_is_published_rather_than_summarised(self, queue):
+        """A queue nobody is draining looks exactly like an empty one from this
+        side, so the count is reported instead of a verdict."""
+        for i in range(3):
+            mt5_link.submit(mt5_link.validate(f"1110995{i}7", "MetaQuotes-Demo", "x"))
+
+        state = mt5_link.agent_state()
+
+        assert state["reachable"] is True
+        assert state["pending_requests"] == 3
