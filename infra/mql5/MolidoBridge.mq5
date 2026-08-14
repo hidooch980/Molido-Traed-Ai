@@ -19,7 +19,11 @@
 //| When that changes, the gate belongs in the risk layer that        |
 //| already exists, not in a service nobody is watching.               |
 //+------------------------------------------------------------------+
-#property service
+//--- An expert rather than a service. A service starts only from the
+//--- Navigator panel, and that panel does not render its expanders under
+//--- Wine, so there is no way to click the thing. An expert can be named
+//--- in a startup config file, which the terminal reads from the command
+//--- line - no window, no click, and it survives every restart.
 #property copyright "MolidoTrade AI"
 #property version   "1.00"
 
@@ -253,30 +257,52 @@ void WriteHeartbeat(int cycle)
   }
 
 //+------------------------------------------------------------------+
-void OnStart()
+int OnInit()
   {
    Print("MolidoBridge: publishing every ", RefreshSeconds, "s to the common Files folder");
-   int cycle = 0;
+   //--- One timer rather than OnTick: this publishes on a clock, not on price
+   //--- movement. Tying it to ticks would stop publishing exactly when the
+   //--- market goes quiet, which is when a stale-feed check needs it most.
+   EventSetTimer(RefreshSeconds);
+   Publish();
+   return INIT_SUCCEEDED;
+  }
 
-   while(!IsStopped())
+void OnDeinit(const int reason)
+  {
+   EventKillTimer();
+   Print("MolidoBridge: stopped, reason ", reason);
+  }
+
+void OnTimer()
+  {
+   Publish();
+  }
+
+//--- Required for an expert, and deliberately empty. Publishing is on the
+//--- timer; doing it per tick would rewrite every file hundreds of times a
+//--- minute for no extra information.
+void OnTick()
+  {
+  }
+
+void Publish()
+  {
+   static int cycle = 0;
+   cycle++;
+
+   WriteAccount();
+   WriteSymbols();
+   WritePositions();
+
+   int total = SymbolsTotal(true);
+   for(int i = 0; i < total; i++)
      {
-      cycle++;
-      WriteAccount();
-      WriteSymbols();
-      WritePositions();
-
-      int total = SymbolsTotal(true);
-      for(int i = 0; i < total; i++)
-        {
-         string name = SymbolName(i, true);
-         WriteBars(name, PERIOD_H1);
-         WriteBars(name, PERIOD_M15);
-        }
-
-      WriteHeartbeat(cycle);
-      Sleep(RefreshSeconds * 1000);
+      string name = SymbolName(i, true);
+      WriteBars(name, PERIOD_H1);
+      WriteBars(name, PERIOD_M15);
      }
 
-   Print("MolidoBridge: stopped after ", cycle, " cycle(s)");
+   WriteHeartbeat(cycle);
   }
 //+------------------------------------------------------------------+
