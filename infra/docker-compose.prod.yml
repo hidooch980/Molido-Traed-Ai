@@ -80,6 +80,11 @@ services:
       context: ../backend
     restart: unless-stopped
     environment: *backend-env
+    volumes:
+      # The seam between this container and MetaTrader on the host. The API
+      # writes a broker-login request here and the host agent applies it; the
+      # container never touches the terminal, its config or systemd.
+      - ${MOLIDO_MT5_QUEUE_HOST:-/var/molido/mt5-queue}:/var/molido/mt5-queue
     depends_on:
       postgres:
         condition: service_healthy

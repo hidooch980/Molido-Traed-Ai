@@ -17,7 +17,6 @@ from app.api.guard import (
     assert_execution_gate,
     find_ungated_routes,
     iter_leaf_routes,
-    mutating_routes,
 )
 from app.core.enums import Permission, UserRole
 
@@ -44,7 +43,10 @@ class TestTheRealApplication:
         """If this fails, phase 25 has begun and auth must be reconsidered."""
         from app.main import app
 
-        assert mutating_routes(app) == []
+        # Not "there are no mutating routes" - there is one now, and the
+        # gate was built for exactly that. What must stay true is that
+        # every one of them is gated.
+        assert find_ungated_routes(app, require_auth=False) == []
 
     def test_the_walk_actually_reaches_the_included_routers(self):
         """Guards the guard: an empty result must mean safe, not blind."""

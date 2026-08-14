@@ -48,6 +48,12 @@ class Settings(BaseSettings):
     # refuses to start the application if an execute route exists while it is
     # false, so the first execution endpoint cannot ship without it.
     require_auth: bool = False
+
+    #: Where the API drops broker-login requests for the host agent to apply.
+    #: The API runs in a container and MetaTrader runs on the host under Wine,
+    #: so a shared directory is the seam - the alternative is handing a
+    #: web-facing process the host's systemd, which is not a trade worth making.
+    mt5_queue_dir: str = "/var/molido/mt5-queue"
     rate_limit_per_minute: int = 120
 
     # Execution. Three separate switches on purpose: enabling the engine and

@@ -114,7 +114,11 @@ class TestSecurityPosture:
     def test_it_reads_the_live_router_table(self, client):
         payload = client.get("/api/v1/integrations/security").json()
 
-        assert payload["routes"]["mutating"] == []
+        # One mutating route exists now: the broker link. The claim worth
+        # holding is not that the list is empty - it is that the ungated list
+        # is, which is the one the gate refuses to boot on.
+        assert payload["routes"]["ungated"] == []
+        assert payload["routes"]["mutating"] == ["POST /api/v1/brokers/link"]
         assert payload["routes"]["ungated"] == []
 
     def test_anonymous_holds_read_only(self, client):
@@ -151,8 +155,10 @@ class TestSecurityPosture:
 
 class TestTheGateStillHolds:
     def test_no_route_added_by_this_chapter_mutates(self, client):
-        from app.api.guard import find_ungated_routes, mutating_routes
+        from app.api.guard import find_ungated_routes
         from app.main import app
 
-        assert mutating_routes(app) == []
+        # Not "there are no mutating routes" - there is one now, and the
+        # gate was built for exactly that. What must stay true is that
+        # every one of them is gated.
         assert find_ungated_routes(app, require_auth=False) == []

@@ -448,6 +448,55 @@ export interface WebhookPosture {
   environment: string;
 }
 
+/** Roles and what each carries, from `/access/roles`. */
+export interface RoleRow {
+  role: string;
+  permissions: string[];
+  can_execute: boolean;
+}
+
+export interface RolesView {
+  roles: RoleRow[];
+  permissions: string[];
+  anonymous_holds: string[];
+  note: string;
+}
+
+export interface PlanFeature {
+  feature: string;
+  plan: string;
+  why: string;
+  condition: string | null;
+}
+
+export interface PlansView {
+  plans: string[];
+  conditions: string[];
+  features: PlanFeature[];
+  by_plan: Record<
+    string,
+    { included: string[]; awaiting_condition: string[]; beyond_plan: string[] }
+  >;
+  billing: string;
+  note: string;
+}
+
+export interface MatrixRow {
+  role: string;
+  plan: string;
+  holds_execute_permission: boolean;
+  plan_includes_live_execution: boolean;
+  could_place_an_order: boolean;
+}
+
+export interface MatrixView {
+  matrix: MatrixRow[];
+  roles: string[];
+  plans: string[];
+  note: string;
+  still_refused_here: string;
+}
+
 /** Measured cross-instrument correlation, from stored DNA snapshots. */
 export interface MarketMap {
   timeframe: string;
@@ -608,6 +657,9 @@ export const api = {
     request<Breakeven>(`/api/v1/learning/breakeven?reward_risk=${rewardRisk}`),
   modelRegistry: () => request<RegistryView>("/api/v1/learning/registry"),
   security: () => request<SecurityPosture>("/api/v1/integrations/security"),
+  roles: () => request<RolesView>("/api/v1/access/roles"),
+  plans: () => request<PlansView>("/api/v1/access/plans"),
+  accessMatrix: () => request<MatrixView>("/api/v1/access/matrix"),
   commands: () => request<CommandsView>("/api/v1/integrations/commands"),
   webhooks: () => request<WebhookPosture>("/api/v1/integrations/webhooks"),
   marketMap: (limit = 25) =>

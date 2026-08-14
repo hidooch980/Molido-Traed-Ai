@@ -1,4 +1,5 @@
 import { Offline, Panel, Stat, StatusBadge } from "@/components/ui";
+import { AddBrokerAccount } from "@/components/AddBrokerAccount";
 import { api } from "@/lib/api";
 import { getT } from "@/lib/locale";
 
@@ -184,6 +185,13 @@ export default async function BrokersPage() {
 
       <Panel title={t("brokers.whyNoList")}>
         <p className="p-4 text-xs ink-3 leading-relaxed">{b.why}</p>
+      </Panel>
+
+      <Panel title={t("broker.add")} subtitle={t("broker.howTo")}>
+        <div className="p-4">
+          <AddBrokerAccount t={t} />
+        </div>
+        <p className="px-4 pb-4 text-xs ink-3 leading-relaxed">{t("broker.howToBody")}</p>
       </Panel>
     </div>
   );

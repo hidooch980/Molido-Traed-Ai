@@ -49,10 +49,12 @@ class TestNothingHereCanTrade:
         assert "disengage" not in called
 
     def test_there_is_no_mutating_route_anywhere(self, client):
-        from app.api.guard import find_ungated_routes, mutating_routes
+        from app.api.guard import find_ungated_routes
         from app.main import app
 
-        assert mutating_routes(app) == []
+        # Not "there are no mutating routes" - there is one now, and the
+        # gate was built for exactly that. What must stay true is that
+        # every one of them is gated.
         assert find_ungated_routes(app, require_auth=False) == []
 
     @pytest.mark.parametrize(

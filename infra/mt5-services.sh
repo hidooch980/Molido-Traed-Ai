@@ -223,6 +223,38 @@ RestartSec=10
 WantedBy=multi-user.target
 UNIT
 
+  # The agent that applies broker logins. It runs on the host because the
+  # API cannot: the API is in a container, and MetaTrader's config and systemd
+  # unit are on the other side of that boundary. Handing the container the
+  # host's systemd to close the gap would be worse than the gap.
+  sudo mkdir -p /var/molido/mt5-queue
+  sudo chown ubuntu:ubuntu /var/molido/mt5-queue
+  sudo chmod 700 /var/molido/mt5-queue
+
+  # One narrow sudo rule rather than blanket rights: this agent restarts one
+  # unit and can do nothing else as root.
+  printf 'ubuntu ALL=(root) NOPASSWD: /usr/bin/systemctl restart molido-mt5
+' |
+    sudo tee /etc/sudoers.d/molido-mt5-agent >/dev/null
+  sudo chmod 440 /etc/sudoers.d/molido-mt5-agent
+
+  sudo tee /etc/systemd/system/molido-mt5-agent.service >/dev/null <<UNIT
+[Unit]
+Description=Applies broker logins the API cannot apply itself
+After=molido-mt5.service
+
+[Service]
+User=ubuntu
+Environment=WINEPREFIX=${PREFIX}
+Environment=MOLIDO_MT5_QUEUE=/var/molido/mt5-queue
+ExecStart=/usr/bin/python3 ${REPO}/infra/mt5-agent.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
   # The hand-started processes have to go first or the units fight them for the
   # display and the ports.
   pkill -f openbox 2>/dev/null || true
@@ -233,7 +265,7 @@ UNIT
   sleep 2
 
   sudo systemctl daemon-reload
-  sudo systemctl enable --now molido-xvfb molido-wm molido-vnc molido-novnc molido-mt5 2>&1 | tail -2
+  sudo systemctl enable --now molido-xvfb molido-wm molido-vnc molido-novnc molido-mt5 molido-mt5-agent 2>&1 | tail -2
   # -f rather than -x: a Windows executable on a Linux filesystem carries no
   # exec bit and does not need one, so testing for it reports a working
   # interpreter as absent.

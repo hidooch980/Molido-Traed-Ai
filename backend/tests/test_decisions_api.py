@@ -59,7 +59,11 @@ class TestPosture:
         incident it should be flagging."""
         payload = client.get("/api/v1/decisions/posture").json()
 
-        assert payload["routes"]["mutating"] == []
+        # One mutating route exists now: the broker link. The claim worth
+        # holding is not that the list is empty - it is that the ungated list
+        # is, which is the one the gate refuses to boot on.
+        assert payload["routes"]["ungated"] == []
+        assert payload["routes"]["mutating"] == ["POST /api/v1/brokers/link"]
         assert payload["routes"]["ungated"] == []
 
     def test_it_changes_nothing(self, client):

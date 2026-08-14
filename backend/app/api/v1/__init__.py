@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 
 from app.api.v1 import (
+    access,
     auth,
     brain,
     brokers,
@@ -24,6 +25,7 @@ from app.api.v1 import (
 )
 
 api_router = APIRouter(prefix="/api/v1")
+api_router.include_router(access.router)
 api_router.include_router(auth.router)
 api_router.include_router(brain.router)
 api_router.include_router(instruments.router)
