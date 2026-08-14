@@ -28,10 +28,12 @@ from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, Query
+from sqlalchemy.orm import Session
 
 from app.api.deps import Principal, require
 from app.core.config import get_settings
 from app.core.enums import Permission
+from app.db.session import get_db
 from app.execution import broker as broker_module
 from app.execution import engine as engine_module
 from app.execution import routing as routing_module
@@ -241,3 +243,56 @@ def read_accounts(_: Principal = READ) -> dict[str, Any]:
         "100k account and 4 R on a 10k challenge are different money"
     )
     return payload
+
+
+@router.get("/autopilot")
+def read_autopilot(
+    _: Principal = READ,
+    session: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """What the autopilot would do right now, and every gate standing in its way.
+
+    A read, not a run. Four separate gates decide whether an order can be sent,
+    and an operator looking at a system that is not trading needs to see which
+    one is shut - "it is not trading" is not an answer, and a single boolean
+    would make four different situations look identical.
+    """
+    from app.execution import autopilot, context
+    from app.learning import edge as edge_registry
+    from app.providers.metatrader import MetaTraderBridge
+
+    mode, reason, override = autopilot.mode_now()
+    published = MetaTraderBridge().account()
+    account_ok, account_why = autopilot.account_gate(published)
+    edge_ok, edge_why = edge_registry.live_trading_allowed()
+    built = context.build(session)
+
+    return {
+        "mode": mode,
+        "reason": reason,
+        "would_send_live_orders": mode == autopilot.LIVE and account_ok,
+        "gates": {
+            "execution_enabled": {
+                "open": mode != autopilot.HALTED,
+                "detail": reason if mode == autopilot.HALTED else "execution is enabled",
+            },
+            "proven_edge": {"open": edge_ok, "detail": edge_why},
+            "account": {"open": account_ok, "detail": account_why},
+            "inputs": {
+                "open": built is not None,
+                "detail": (
+                    "the account is readable"
+                    if built
+                    else "no account is connected, so no decision can be made"
+                ),
+            },
+        },
+        "edge_override_in_use": override,
+        "context": built.as_dict() if built else None,
+        "rejected_claims": [claim.as_dict() for claim in edge_registry.REJECTED],
+        "note": (
+            "paper mode runs the whole loop against live broker prices and sends "
+            "nothing. It is the forward measurement the historical work could "
+            "not produce, not a lesser version of live"
+        ),
+    }

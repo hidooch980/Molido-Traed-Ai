@@ -771,6 +771,23 @@ const en: Dictionary = {
   "signin.passwordNote":
     "The password goes from this form into the request and is dropped. It is never written to a log, never returned by the API, and never placed in a URL.",
 
+  "autopilot.title": "Autopilot",
+  "autopilot.subtitlePaper":
+    "Running the whole loop against live broker prices and sending nothing.",
+  "autopilot.subtitleLive": "Sending real orders.",
+  "autopilot.override": "edge gate overridden",
+  "autopilot.gate": "Gate",
+  "autopilot.state": "State",
+  "autopilot.why": "Why",
+  "autopilot.open": "open",
+  "autopilot.shut": "shut",
+  "autopilot.gate.execution_enabled": "Execution switch",
+  "autopilot.gate.proven_edge": "Proven edge",
+  "autopilot.gate.account": "Account type",
+  "autopilot.gate.inputs": "Decision inputs",
+  "autopilot.unmeasured": "Not measured for this moment:",
+  "autopilot.rejected": "Tested and rejected",
+
   "health.title": "System health",
   "health.subtitle":
     "Readiness touches every dependency on each request — it is not a constant.",
@@ -1540,6 +1557,22 @@ const fa: Dictionary = {
     "Ø­Ø³Ø§Ø¨ ØªØ§Ø²Ù ÙÙØ· ÙÛâØ®ÙØ§ÙØ¯. ØªØ§ ÙÙØªÛ ÙØ§ÙÚ© ÙÙØ´Ø´ Ø±Ø§ Ø¨Ø§ÙØ§ ÙØ¨Ø±Ø¯Ø ÙÙ Ø¨Ø±ÙÚ©Ø±Û ÙØµÙ ÙÛâÚ©ÙØ¯ Ù ÙÙ Ø³ÙØ§Ø±Ø´Û ÙÛâÙØ±Ø³ØªØ¯.",
   "signin.passwordNote":
     "Ø±ÙØ² Ø§Ø² Ø§ÛÙ ÙØ±Ù Ø¨Ù Ø¯Ø±Ø®ÙØ§Ø³Øª ÙÛâØ±ÙØ¯ Ù Ø±ÙØ§ ÙÛâØ´ÙØ¯. Ø¯Ø± ÙÛÚ ÙØ§Ú¯Û ÙÙØ´ØªÙ ÙÙÛâØ´ÙØ¯Ø Ø§Ø² API Ø¨Ø±ÙÙÛâÚ¯Ø±Ø¯Ø¯Ø Ù Ø¯Ø± ÙÛÚ Ø¢Ø¯Ø±Ø³Û ÙØ±Ø§Ø± ÙÙÛâÚ¯ÛØ±Ø¯.",
+
+  "autopilot.title": "خلبان خودکار",
+  "autopilot.subtitlePaper": "کل حلقه روی قیمت زندهٔ بروکر اجرا می‌شود و هیچ سفارشی فرستاده نمی‌شود.",
+  "autopilot.subtitleLive": "سفارش واقعی می‌فرستد.",
+  "autopilot.override": "دروازهٔ لبه دور زده شده",
+  "autopilot.gate": "دروازه",
+  "autopilot.state": "وضعیت",
+  "autopilot.why": "چرا",
+  "autopilot.open": "باز",
+  "autopilot.shut": "بسته",
+  "autopilot.gate.execution_enabled": "کلید اجرا",
+  "autopilot.gate.proven_edge": "لبهٔ اثبات‌شده",
+  "autopilot.gate.account": "نوع حساب",
+  "autopilot.gate.inputs": "ورودی‌های تصمیم",
+  "autopilot.unmeasured": "برای این لحظه اندازه‌گیری نشد:",
+  "autopilot.rejected": "آزموده و رد شد",
 
   "health.title": "Ø³ÙØ§ÙØª Ø³Ø§ÙØ§ÙÙ",
   "health.subtitle":

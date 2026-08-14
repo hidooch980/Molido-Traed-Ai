@@ -631,7 +631,29 @@ export interface SetupView {
   note: string;
 }
 
+export interface AutopilotGate {
+  open: boolean;
+  detail: string;
+}
+
+export interface AutopilotView {
+  mode: string;
+  reason: string;
+  would_send_live_orders: boolean;
+  gates: Record<string, AutopilotGate>;
+  edge_override_in_use: boolean;
+  context: { equity?: number; balance?: number; unmeasured: string[]; complete: boolean } | null;
+  rejected_claims: Array<{
+    key: string;
+    description: string;
+    evidence: Record<string, unknown>;
+    verdict: { proven: boolean; failures: string[]; passes: string[] };
+  }>;
+  note: string;
+}
+
 export const api = {
+  autopilot: () => request<AutopilotView>("/api/v1/execution/autopilot"),
   setup: () => request<SetupView>("/api/v1/users/setup"),
   health: () => request<Health>("/health/ready"),
   systemSettings: () => request<SystemSettings>("/api/v1/system/settings"),
