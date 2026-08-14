@@ -306,3 +306,128 @@ class TestTheClaimWindowIsReportedHonestly:
         session.flush()
 
         assert user_service.is_claimed(session) is False
+
+
+class TestChangingYourOwnPassword:
+    """The current password is required even though the caller already holds a
+    valid session, and every other session ends. Both exist for the same
+    reason: a session can be stolen, and a password change that trusts the
+    session alone lets the thief keep the account rather than lose it."""
+
+    def setup_owner(self, session):
+        created = claim_owner(session)
+        session.flush()
+        return created
+
+    def test_the_password_actually_changes(self, session):
+        owner = self.setup_owner(session)
+
+        user_service.change_password(
+            session, owner.id, current=GOOD_PASSWORD, replacement=OTHER_PASSWORD
+        )
+        session.flush()
+
+        assert sessions_auth.sign_in(
+            session, email=owner.email, password=OTHER_PASSWORD
+        ).token
+
+    def test_the_old_password_stops_working(self, session):
+        from app.core.errors import MolidoError
+
+        owner = self.setup_owner(session)
+        user_service.change_password(
+            session, owner.id, current=GOOD_PASSWORD, replacement=OTHER_PASSWORD
+        )
+        session.flush()
+
+        with pytest.raises(MolidoError):
+            sessions_auth.sign_in(session, email=owner.email, password=GOOD_PASSWORD)
+
+    def test_a_stolen_session_is_not_enough_to_take_the_account(self, session):
+        """Without the current-password check, a stolen cookie would be enough
+        to lock the real owner out of their own deployment permanently."""
+        owner = self.setup_owner(session)
+
+        with pytest.raises(ValidationFailedError):
+            user_service.change_password(
+                session, owner.id, current="not the password", replacement=OTHER_PASSWORD
+            )
+
+    def test_the_wrong_current_password_says_nothing_useful(self, session):
+        """Same wording as a failed sign-in. Confirming the current password was
+        right while rejecting the new one turns this into an oracle."""
+        owner = self.setup_owner(session)
+
+        with pytest.raises(ValidationFailedError) as exc:
+            user_service.change_password(
+                session, owner.id, current="wrong", replacement="short"
+            )
+
+        assert "do not match" in str(exc.value)
+
+    def test_the_new_password_must_meet_the_minimum(self, session):
+        owner = self.setup_owner(session)
+
+        with pytest.raises(ValidationFailedError) as exc:
+            user_service.change_password(
+                session, owner.id, current=GOOD_PASSWORD, replacement="short"
+            )
+
+        assert str(user_service.PASSWORD_MIN_LENGTH) in str(exc.value)
+
+    def test_reusing_the_same_password_is_refused(self, session):
+        """Changing it because it may be known and changing it to itself is a
+        click that achieved nothing while reading as success."""
+        owner = self.setup_owner(session)
+
+        with pytest.raises(ValidationFailedError) as exc:
+            user_service.change_password(
+                session, owner.id, current=GOOD_PASSWORD, replacement=GOOD_PASSWORD
+            )
+
+        assert "already have" in str(exc.value)
+
+    def test_other_sessions_end(self, session):
+        """The entire point of changing a password after a compromise. Leaving
+        them alive changes the lock and hands out a key that still works."""
+        owner = self.setup_owner(session)
+        first = sessions_auth.sign_in(session, email=owner.email, password=GOOD_PASSWORD)
+        second = sessions_auth.sign_in(session, email=owner.email, password=GOOD_PASSWORD)
+        session.flush()
+
+        result = user_service.change_password(
+            session, owner.id, current=GOOD_PASSWORD, replacement=OTHER_PASSWORD
+        )
+        session.flush()
+
+        assert result["other_sessions_ended"] == 2
+        assert sessions_auth.resolve(session, first.token) is None
+        assert sessions_auth.resolve(session, second.token) is None
+
+    def test_the_current_browser_keeps_its_session(self, session):
+        """Changing a password must not sign you out of the page you are
+        standing on - that reads as a failure and invites a second attempt."""
+        owner = self.setup_owner(session)
+        mine = sessions_auth.sign_in(session, email=owner.email, password=GOOD_PASSWORD)
+        theirs = sessions_auth.sign_in(session, email=owner.email, password=GOOD_PASSWORD)
+        session.flush()
+
+        user_service.change_password(
+            session,
+            owner.id,
+            current=GOOD_PASSWORD,
+            replacement=OTHER_PASSWORD,
+            keep_token_prefix=mine.token[:12],
+        )
+        session.flush()
+
+        assert sessions_auth.resolve(session, mine.token) is not None
+        assert sessions_auth.resolve(session, theirs.token) is None
+
+    def test_an_unknown_user_is_not_found(self, session):
+        import uuid
+
+        with pytest.raises(NotFoundError):
+            user_service.change_password(
+                session, uuid.uuid4(), current=GOOD_PASSWORD, replacement=OTHER_PASSWORD
+            )

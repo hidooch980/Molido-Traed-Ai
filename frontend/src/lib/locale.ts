@@ -25,3 +25,25 @@ export async function getT() {
   const locale = await getLocale();
   return { locale, t: translator(locale), dir: direction(locale) };
 }
+
+export const THEME_COOKIE = "molido_theme";
+export const THEMES = ["dark", "light"] as const;
+export type Theme = (typeof THEMES)[number];
+export const DEFAULT_THEME: Theme = "dark";
+
+/**
+ * Server-side theme, for exactly the reason the locale is server-side.
+ *
+ * The first version kept it in `useState`, which meant the choice lasted until
+ * the next page load and then silently reverted - a setting that does not
+ * survive a refresh reads as a broken button rather than as a preference.
+ *
+ * Reading it here also removes the flash: the `dark` class is on `<html>` in
+ * the first byte of HTML, so a light-theme user never gets a frame of dark
+ * before a client effect corrects it.
+ */
+export async function getTheme(): Promise<Theme> {
+  const store = await cookies();
+  const value = store.get(THEME_COOKIE)?.value;
+  return THEMES.includes(value as Theme) ? (value as Theme) : DEFAULT_THEME;
+}

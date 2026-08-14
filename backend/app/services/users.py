@@ -33,8 +33,9 @@ from sqlalchemy.orm import Session
 
 from app.core.enums import UserRole
 from app.core.errors import ConflictError, NotFoundError, ValidationFailedError
-from app.core.security import hash_password
-from app.models.tenancy import Tenant, User
+from app.core.security import hash_password, verify_password
+from app.models.tenancy import ApiKey, Tenant, User
+from app.services.sessions_auth import SESSION_LABEL
 
 #: Long enough to matter, short enough that nobody writes it on paper. This
 #: guards a system that can connect a live broker account, so the floor is not
@@ -335,3 +336,74 @@ def set_active(
     user.is_active = active
     session.flush()
     return {"id": str(user.id), "email": user.email, "is_active": user.is_active}
+
+
+def change_password(
+    session: Session,
+    user_id: uuid.UUID,
+    *,
+    current: str,
+    replacement: str,
+    keep_token_prefix: str | None = None,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Change your own password, and end every other session.
+
+    The current password is required even though the caller already holds a
+    valid session. A session can be stolen; the password is the thing only the
+    owner knows, and without this check a stolen cookie is enough to lock the
+    real owner out of their own deployment permanently.
+
+    Every other session is then revoked. That is the entire point of changing a
+    password after a suspected compromise - leaving the other sessions alive
+    changes the lock and hands the intruder a key that still works. The caller's
+    own session survives, so changing a password does not sign you out of the
+    page you are standing on.
+    """
+    user = session.get(User, user_id)
+    if user is None:
+        raise NotFoundError("No such user.")
+
+    if not verify_password(current, user.password_hash):
+        # Same wording as a failed sign-in. Confirming that the current
+        # password was right while the new one was rejected would turn this
+        # form into an oracle for guessing it.
+        raise ValidationFailedError("Those details do not match an account.")
+
+    check_password(replacement)
+
+    if verify_password(replacement, user.password_hash):
+        raise ValidationFailedError(
+            "That is the password you already have, so nothing would change. "
+            "If you are changing it because it may be known, it needs to be "
+            "different."
+        )
+
+    moment = now or datetime.now(UTC)
+    user.password_hash = hash_password(replacement)
+    user.updated_at = moment
+
+    revoked = 0
+    sessions = session.scalars(
+        select(ApiKey).where(
+            ApiKey.user_id == user_id,
+            ApiKey.label == SESSION_LABEL,
+            ApiKey.revoked_at.is_(None),
+        )
+    ).all()
+    for row in sessions:
+        if keep_token_prefix and row.key_prefix == keep_token_prefix:
+            continue
+        row.revoked_at = moment
+        revoked += 1
+
+    session.flush()
+    return {
+        "changed": True,
+        "other_sessions_ended": revoked,
+        "note": (
+            "every other signed-in browser has been signed out. Changing a "
+            "password while leaving the old sessions alive changes the lock "
+            "and hands out a key that still works"
+        ),
+    }

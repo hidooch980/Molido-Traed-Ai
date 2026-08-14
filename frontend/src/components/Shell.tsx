@@ -5,6 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useState } from "react";
 
 import { translator, type Locale } from "@/lib/i18n";
+import type { Theme } from "@/lib/locale";
 import { SignIn } from "@/components/SignIn";
 import { NAV, reachable, type NavItem } from "@/lib/nav";
 
@@ -47,14 +48,15 @@ function Logo({ size = 30 }: { size?: number }) {
 
 export default function Shell({
   locale,
+  theme,
   children,
 }: {
   locale: Locale;
+  theme: Theme;
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
   const router = useRouter();
-  const [dark, setDark] = useState(true);
   const [menuOpen, setMenuOpen] = useState(false);
   const t = translator(locale);
   // Counted from the nav table on every render rather than typed into the
@@ -76,10 +78,19 @@ export default function Shell({
     router.refresh();
   }
 
-  function toggleTheme() {
-    const nextDark = !dark;
-    setDark(nextDark);
-    document.documentElement.classList.toggle("dark", nextDark);
+  /**
+   * The theme lives in a cookie, next to the language and for the same reason.
+   *
+   * The first version held it in component state and toggled a class. That
+   * lasted until the next page load and then reverted, which reads as a broken
+   * button rather than as a preference. Writing the cookie and refreshing means
+   * the server renders the right theme into the first byte of HTML - no stored
+   * choice that quietly forgets itself, and no frame of the wrong theme.
+   */
+  function switchTheme(next: Theme) {
+    document.cookie = `molido_theme=${next}; path=/; max-age=31536000; samesite=lax`;
+    document.documentElement.classList.toggle("dark", next === "dark");
+    router.refresh();
   }
 
   return (
@@ -140,11 +151,11 @@ export default function Shell({
         </button>
         <button
           type="button"
-          onClick={toggleTheme}
+          onClick={() => switchTheme(theme === "dark" ? "light" : "dark")}
           className="pill"
           style={{ color: "var(--ink-2)" }}
         >
-          {dark ? `☀ ${t("common.theme.light")}` : `☾ ${t("common.theme.dark")}`}
+          {theme === "dark" ? `☀ ${t("common.theme.light")}` : `☾ ${t("common.theme.dark")}`}
         </button>
       </header>
 

@@ -29,7 +29,7 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Cookie, Depends
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
 
@@ -38,6 +38,7 @@ from app.api.guard import public_mutation
 from app.core.enums import Permission, UserRole
 from app.core.errors import ValidationFailedError
 from app.db.session import get_db
+from app.services import sessions_auth
 from app.services import users as user_service
 
 router = APIRouter(prefix="/users", tags=["users"])
@@ -91,6 +92,11 @@ class NewUser(Signup):
 
 class ActiveFlag(BaseModel):
     active: bool
+
+
+class PasswordChange(BaseModel):
+    current: str = Field(min_length=1, max_length=256, repr=False)
+    replacement: str = Field(min_length=1, max_length=256, repr=False)
 
 
 def _require_manager(principal: Principal) -> None:
@@ -216,6 +222,46 @@ def set_user_active(
     _require_manager(principal)
     result = user_service.set_active(
         session, user_id, active=body.active, actor_id=principal.user_id
+    )
+    session.commit()
+    return result
+
+
+@router.post("/me/password")
+def change_own_password(
+    body: PasswordChange,
+    principal: Principal = SIMULATE,
+    session: Session = Depends(get_db),
+    molido_session: str | None = Cookie(
+        default=None, alias=sessions_auth.COOKIE_NAME
+    ),
+) -> dict[str, Any]:
+    """Change your own password and end every other session.
+
+    SIMULATE rather than READ because it mutates, and the execution gate is
+    right to insist: an anonymous caller must not reach it. Which account it
+    changes comes from the session, never from the body - a `user_id` field
+    here would let anybody with a viewer account rewrite the owner's password.
+
+    The current session is spared by matching the prefix of the cookie the
+    browser sent, so changing a password does not sign you out of the page you
+    are standing on.
+    """
+    if principal.user_id is None:
+        raise ValidationFailedError(
+            "This changes the password of the account you are signed in as, "
+            "and an API key is not signed in as anybody."
+        )
+
+    result = user_service.change_password(
+        session,
+        principal.user_id,
+        current=body.current,
+        replacement=body.replacement,
+        # The prefix is the non-secret lookup half of the token. Comparing it
+        # identifies this browser's session without the request handling the
+        # secret half at all.
+        keep_token_prefix=molido_session[:12] if molido_session else None,
     )
     session.commit()
     return result
