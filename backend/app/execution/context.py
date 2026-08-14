@@ -68,21 +68,27 @@ def peak_equity(
 ) -> float | None:
     """The highest equity recorded for this account, or None.
 
-    None means nobody was watching, not that the peak equals today's equity.
-    Those are different facts and the second one is the dangerous one: it puts
-    a trailing floor at today's level and reports rope the account does not
-    have.
+    Currently always None, and deliberately: **nothing in this system records
+    an equity history.** The bridge publishes a snapshot every twenty seconds
+    and nothing stores it, so there is no series to take a maximum of.
+
+    The first version of this function queried
+    `max(ChallengeAccount.starting_balance)`, which was wrong twice over. It
+    compared a UUID column against the string "metatrader", which Postgres
+    refused outright - and even with the types fixed it would have returned the
+    starting balance, which is not the peak equity and would have been quietly
+    believed. A query that returns a confident wrong number is worse than one
+    that returns nothing.
+
+    None means nobody was watching. That is a different fact from "the peak is
+    today's equity", and the second is the dangerous one: it puts a trailing
+    floor at today's level and reports rope the account does not have.
+
+    Recording the series is real work - a table, a writer on the bridge poll,
+    and a retention policy - and it is the next thing this needs. Until then
+    the caller flags it as unmeasured, which is the honest state.
     """
-    from sqlalchemy import func, select
-
-    from app.models.challenge_accounts import ChallengeAccount
-
-    row = session.scalar(
-        select(func.max(ChallengeAccount.starting_balance)).where(
-            ChallengeAccount.id == account_id
-        )
-    )
-    return float(row) if row is not None else None
+    return None
 
 
 def build(
