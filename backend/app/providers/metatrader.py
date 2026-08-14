@@ -144,10 +144,19 @@ class MetaTraderBridge:
                 login=0,
                 published_at=published,
                 age_seconds=age,
-                # Named as stale rather than absent. A stopped expert and a
-                # missing one need different fixes, and one message for both
-                # sends the reader to the wrong one.
-                reason=f"heartbeat is {age:.0f}s old - the expert has stopped publishing",
+                # Named as stale rather than absent, and with the cause rather
+                # than only the symptom. An expert needs a chart, a chart needs
+                # a symbol, and a symbol needs a logged-in account - so a
+                # failed login stops the bridge entirely instead of leaving it
+                # running with nothing behind it. "The expert stopped" alone
+                # reads as a fault in the expert.
+                reason=(
+                    f"heartbeat is {age:.0f}s old. The usual cause is that no "
+                    "account is logged in: an expert runs on a chart, a chart "
+                    "needs a symbol, and a symbol needs a connected account - "
+                    "so a failed login stops the bridge rather than leaving it "
+                    "publishing empty data"
+                ),
             )
 
         account = self._account_payload()

@@ -83,7 +83,7 @@ class TestTheThreeStatesStayApart:
         state = bridge.state(now=NOW)
 
         assert state.running is False
-        assert "stopped publishing" in state.reason
+        assert "no account is logged in" in state.reason
 
     def test_running_with_no_account_is_not_usable(self, bridge, tmp_path):
         """The exact state that looked healthy for hours: a terminal up,
