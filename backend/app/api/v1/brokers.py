@@ -26,6 +26,7 @@ from app.brain import rulebooks as rulebook_module
 from app.core.config import get_settings
 from app.core.enums import Permission
 from app.execution import broker as broker_module
+from app.providers.metatrader import MetaTraderBridge
 from app.services import mt5_link
 
 router = APIRouter(prefix="/brokers", tags=["brokers"])
@@ -184,3 +185,33 @@ def create_link(
         tenant_id=str(principal.tenant_id) if principal.tenant_id else None,
     )
     return body
+
+
+@router.get("/metatrader")
+def read_metatrader(_: Principal = READ) -> dict[str, Any]:
+    """What the terminal is actually reporting, right now.
+
+    Three states, kept apart. Not running, running with nothing behind it, and
+    running with a live account - the middle one is where this deployment sat
+    for hours looking healthy, because the terminal was up and Market Watch was
+    full of quotes cached from a session that had ended.
+    """
+    bridge = MetaTraderBridge()
+    state = bridge.state()
+    payload: dict[str, Any] = {"state": state.as_dict()}
+
+    if not state.usable:
+        payload["account"] = {"available": False, "reason": state.reason}
+        payload["symbols"] = {"available": False, "reason": state.reason}
+        payload["next_step"] = (
+            "add the account on this page. The terminal reads the login from "
+            "its own config on start, so it stays connected across restarts "
+            "once it is set"
+        )
+        return payload
+
+    payload["account"] = bridge.account()
+    payload["symbols"] = bridge.symbols()
+    payload["positions"] = bridge.positions()
+    payload["next_step"] = None
+    return payload
