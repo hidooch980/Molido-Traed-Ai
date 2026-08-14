@@ -30,18 +30,18 @@
 :root {
   color-scheme: light;
 
-  --plane: #efece5;
-  --panel: #fdfcf9;
-  --panel-raised: #f6f3ec;
-  --border: #e0dbd0;
-  --border-strong: #c9c2b3;
+  --plane: #eef0f6;
+  --panel: #ffffff;
+  --panel-raised: #f5f6fa;
+  --border: #dfe2ec;
+  --border-strong: #c3c8d8;
 
-  --ink: #1a1815;
-  --ink-2: #4c473f;
-  --ink-3: #857e71;
+  --ink: #151824;
+  --ink-2: #474d63;
+  --ink-3: #7b8199;
 
-  --accent: #a8490b;
-  --accent-soft: rgba(168, 73, 11, 0.09);
+  --accent: #5b3fd6;
+  --accent-soft: rgba(91, 63, 214, 0.10);
 
   /* Status — reserved. Never reused as a series colour. */
   --good: #2c7a4b;
@@ -57,46 +57,56 @@
   --series-3: #2b8874;
   --series-4: #7a5fb8;
 
-  --grid: #e7e2d8;
-  --axis: #c9c2b3;
+  --grid: #e6e9f2;
+  --axis: #c3c8d8;
 
-  --shadow: none;
-  --radius: 4px;
+  --shadow: 0 1px 2px rgba(16, 20, 31, 0.06), 0 8px 24px rgba(16, 20, 31, 0.05);
+  --radius: 12px;
 }
 
 .dark {
   color-scheme: dark;
 
-  --plane: #0b0a09;
-  --panel: #151312;
-  --panel-raised: #1d1a18;
-  --border: #2a2521;
-  --border-strong: #3c352e;
+  /* Cool navy rather than warm brown, and an indigo accent. Three steps of
+     surface - plane, panel, raised - because a single flat colour with borders
+     reads as a wireframe; the depth is what makes a dense page scannable. */
+  --plane: #080b14;
+  --panel: #10141f;
+  --panel-raised: #171c2b;
+  --border: #232a3d;
+  --border-strong: #333c54;
 
-  --ink: #f2ede4;
-  --ink-2: #b5ada0;
-  --ink-3: #7c756a;
+  --ink: #e9ecf5;
+  --ink-2: #a3abc2;
+  --ink-3: #6f7691;
 
-  --accent: #e8991f;
-  --accent-soft: rgba(232, 153, 31, 0.13);
+  --accent: #7c5cff;
+  --accent-soft: rgba(124, 92, 255, 0.16);
 
-  --good: #47a86a;
-  --warning: #d99b2e;
-  --serious: #d97444;
-  --critical: #d85543;
+  /* Status stays distinguishable from the accent. Indigo is close enough to
+     blue that a blue "good" would read as chrome rather than as a verdict, so
+     good is green and warning is amber, both pushed brighter for this surface. */
+  --good: #3ecf8e;
+  --warning: #f0b429;
+  --serious: #f97b52;
+  --critical: #f45b5b;
 
-  /* The same four hues, stepped for a dark surface rather than flipped. An
-     automatic inversion produces colours nobody checked. */
-  --series-1: #4a90d9;
-  --series-2: #e07840;
-  --series-3: #3fa48d;
-  --series-4: #9b83d4;
+  /* Four hues checked against --panel at this new lightness. Not the accent:
+     a series line painted in the brand colour competes with every button on
+     the page for the same meaning. */
+  --series-1: #4d9dff;
+  --series-2: #ff8a5b;
+  --series-3: #35c5a8;
+  --series-4: #b48aff;
 
-  --grid: #221e1a;
-  --axis: #3c352e;
+  --grid: #1a2032;
+  --axis: #333c54;
 
-  --shadow: none;
-  --radius: 4px;
+  /* A soft lift under panels. The reference panel gets its separation from
+     shadow rather than from heavy borders, which is why its cards read as
+     cards at a glance. */
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.22);
+  --radius: 12px;
 }
 
 html,
@@ -110,6 +120,7 @@ body {
 .panel {
   background: var(--panel);
   border: 1px solid var(--border);
+  box-shadow: var(--shadow);
   border-radius: var(--radius);
 }
 
@@ -198,13 +209,59 @@ table.data tbody tr:last-child td {
   display: inline-flex;
   align-items: center;
   gap: 0.3rem;
-  padding: 0.1rem 0.5rem;
-  border-radius: 3px;
+  padding: 0.25rem 0.7rem;
+  border-radius: 999px;
   border: 1px solid var(--border-strong);
+  background: var(--panel-raised);
   font-size: 0.6875rem;
   font-weight: 600;
   line-height: 1.55;
   white-space: nowrap;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+
+.pill:hover {
+  border-color: var(--accent);
+}
+
+/* The one filled control on a page. Reserved for the action the page exists
+   for - the reference has exactly one of these per screen, which is why it
+   reads as the thing to press. */
+.pill-accent,
+.btn-accent {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.pill-accent:hover,
+.btn-accent:hover {
+  filter: brightness(1.08);
+}
+
+/* Text inputs. The reference gives them the same rounding as the cards and a
+   ring on focus rather than a colour change, so the field does not shift size
+   when it takes focus. */
+input[type="text"],
+input[type="email"],
+input[type="password"],
+input[type="search"],
+input[type="number"],
+select,
+textarea {
+  border-radius: 10px;
+  background: var(--panel-raised);
+  border: 1px solid var(--border);
+  color: var(--ink);
+  outline: none;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
 .dot {
@@ -226,11 +283,15 @@ table.data tbody tr:last-child td {
    scannable at a glance in a 33-item menu. */
 .nav-link {
   display: block;
-  padding: 0.3rem 0.5rem;
-  border-radius: 3px;
+  padding: 0.55rem 0.75rem;
+  margin-bottom: 0.125rem;
+  border-radius: 10px;
   font-size: 0.8125rem;
   color: var(--ink-2);
-  border-inline-start: 2px solid transparent;
+  /* The rail sits inside the rounded shape rather than outside it. A border on
+     the element itself squares off the corner it touches. */
+  position: relative;
+  transition: background 120ms ease, color 120ms ease;
 }
 
 .nav-link:hover {
@@ -240,9 +301,23 @@ table.data tbody tr:last-child td {
 
 .nav-link[data-active="true"] {
   background: var(--accent-soft);
-  border-inline-start-color: var(--accent);
   color: var(--ink);
   font-weight: 600;
+}
+
+/* The active marker: a short rounded bar on the inline-start edge, drawn as a
+   pseudo-element so it follows the writing direction without a second rule for
+   RTL - `inset-inline-start` flips itself, a hard `left` does not. */
+.nav-link[data-active="true"]::before {
+  content: "";
+  position: absolute;
+  inset-inline-start: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 1.15rem;
+  border-radius: 999px;
+  background: var(--accent);
 }
 
 .nav-link[data-planned="true"] {
