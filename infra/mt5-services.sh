@@ -186,7 +186,11 @@ Environment=WINEDEBUG=-all
 # and attaches the bridge expert. Doing it here rather than by hand is
 # the point: the Navigator panel that would otherwise start it does not
 # render its expanders under Wine, so there is no node to click.
-ExecStart=/usr/bin/wine "${PREFIX}/drive_c/Program Files/MetaTrader 5/terminal64.exe" "/config:${PREFIX}/drive_c/Program Files/MetaTrader 5/config/molido-startup.ini"
+# The config path is given in Windows form. Passed as a Unix path the
+# terminal starts, ignores it in silence, and publishes nothing - which
+# reads as a broken bridge rather than an unread argument.
+WorkingDirectory=${PREFIX}/drive_c/Program Files/MetaTrader 5
+ExecStart=/usr/bin/wine terminal64.exe "/config:C:\Program Files\MetaTrader 5\config\molido-startup.ini"
 Restart=always
 RestartSec=10
 
