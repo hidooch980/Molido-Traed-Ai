@@ -196,8 +196,6 @@ export default async function BrokersPage() {
               server: t("broker.server"),
               password: t("broker.password"),
               passwordHint: t("broker.passwordHint"),
-              apiKey: t("broker.apiKey"),
-              apiKeyHint: t("broker.apiKeyHint"),
               connect: t("broker.connect"),
               cancel: t("broker.cancel"),
               submitting: t("broker.submitting"),

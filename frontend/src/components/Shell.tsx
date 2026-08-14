@@ -5,6 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useState } from "react";
 
 import { translator, type Locale } from "@/lib/i18n";
+import { SignIn } from "@/components/SignIn";
 import { NAV, reachable, type NavItem } from "@/lib/nav";
 
 const GROUPS: NavItem["group"][] = [
@@ -112,6 +113,22 @@ export default function Shell({
         <span className="pill hidden md:inline-flex" style={{ color: "var(--ink-3)" }}>
           {coverage}
         </span>
+
+        <SignIn
+          labels={{
+            signIn: t("signin.signIn"),
+            signOut: t("signin.signOut"),
+            email: t("signin.email"),
+            password: t("signin.password"),
+            submit: t("signin.submit"),
+            cancel: t("signin.cancel"),
+            working: t("signin.working"),
+            failed: t("signin.failed"),
+            signedInAs: t("signin.signedInAs"),
+            anonymous: t("signin.anonymous"),
+            anonymousHint: t("signin.anonymousHint"),
+          }}
+        />
 
         <button
           type="button"

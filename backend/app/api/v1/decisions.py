@@ -39,6 +39,8 @@ from app.core.config import get_settings
 from app.core.enums import Permission, Timeframe
 from app.db.session import get_db
 from app.execution.safety import ExecutionPolicy, KillSwitch
+from app.ops import health_score
+from app.ops import incidents as incident_memory
 from app.ops import readiness as rd
 from app.pipeline import decide as pipeline
 from app.services import retention
@@ -124,7 +126,49 @@ def read_readiness(
         # the one thing `readiness` refuses. They fail as undeterminable, which
         # is the honest grade until an operator supplies them.
     )
-    return rd.assess(deployment, now=datetime.now(UTC)).as_dict()
+    report = rd.assess(deployment, now=datetime.now(UTC))
+    payload = report.as_dict()
+    # Computed from the checks that just ran rather than by a second pass, so
+    # the score and the list underneath it can never disagree about what was
+    # true at the same moment.
+    payload["health"] = health_score.compute(report, session).as_dict()
+    return payload
+
+
+@router.get("/incidents")
+def read_incidents(
+    _: Principal = READ,
+    session: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """What is broken now, what keeps coming back, and what fixed it before.
+
+    The three lists answer different questions and are kept apart. What is open
+    is about the present; what recurs is about the pattern, which is usually a
+    warning nobody escalated rather than the loudest failure; and a remedy is
+    listed only once the same problem was seen again after it and then cleared.
+    """
+    return {
+        "open": [
+            {
+                "fingerprint": incident.fingerprint,
+                "source": incident.source,
+                "summary": incident.summary,
+                "severity": incident.severity,
+                "occurrences": incident.occurrences,
+                "first_seen_at": incident.first_seen_at.isoformat(),
+                "last_seen_at": incident.last_seen_at.isoformat(),
+            }
+            for incident in incident_memory.open_incidents(session)
+        ],
+        "recurring": incident_memory.recurring(session, minimum=3),
+        "confirmed_remedies": incident_memory.known_remedies(session),
+        "note": (
+            "a remedy appears here only after the same problem was seen again "
+            "and then cleared. Recording one on request would store a belief, "
+            "and 'the alert stopped' would store a coincidence - the alert also "
+            "stops when the checker dies"
+        ),
+    }
 
 
 @router.get("/{instrument_id}")

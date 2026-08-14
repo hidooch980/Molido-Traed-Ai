@@ -12,12 +12,10 @@ import { useState } from "react";
  * submit, never logged, and never echoed back by the endpoint. It goes from
  * the input to the request body and is dropped.
  *
- * The API key is asked for in the form rather than stored in the page. This
- * route is the first in the application that changes state, so it carries a
- * permission above READ — which the API refuses for an anonymous caller
- * whether or not authentication is switched on. Keeping the key in a field the
- * operator pastes each time means the browser is not holding a credential that
- * can place a request while nobody is looking.
+ * No key is asked for. The route carries a permission above READ, which the
+ * API refuses for an anonymous caller, and the browser proves who it is with
+ * the session cookie set at sign-in. Asking an operator to fetch a key from a
+ * terminal is asking for a step that does not get taken.
  *
  * The result is polled rather than assumed. The API hands the request to a
  * host agent it cannot see, so "queued" and "applied" are different facts and
@@ -35,8 +33,6 @@ export interface BrokerFormLabels {
   server: string;
   password: string;
   passwordHint: string;
-  apiKey: string;
-  apiKeyHint: string;
   connect: string;
   cancel: string;
   submitting: string;
@@ -53,7 +49,6 @@ export function AddBrokerAccount({ labels }: { labels: BrokerFormLabels }) {
   const [login, setLogin] = useState("");
   const [server, setServer] = useState("");
   const [password, setPassword] = useState("");
-  const [apiKey, setApiKey] = useState("");
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [tone, setTone] = useState<"good" | "warning" | "critical">("warning");
@@ -67,7 +62,10 @@ export function AddBrokerAccount({ labels }: { labels: BrokerFormLabels }) {
     try {
       const response = await fetch("/api/v1/brokers/link", {
         method: "POST",
-        headers: { "Content-Type": "application/json", "X-API-Key": apiKey },
+        // No key. The browser carries a session cookie, and an operator
+        // hunting for a key in a terminal is a step that does not get taken.
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
         body: JSON.stringify({ login, server, password }),
       });
       const body = await response.json();
@@ -175,18 +173,6 @@ export function AddBrokerAccount({ labels }: { labels: BrokerFormLabels }) {
         <span className="text-xs ink-3 block">{labels.passwordHint}</span>
       </label>
 
-      <label className="space-y-1 block">
-        <span className="eyebrow">{labels.apiKey}</span>
-        <input
-          type="password"
-          value={apiKey}
-          onChange={(e) => setApiKey(e.target.value)}
-          required
-          autoComplete="off"
-          style={field}
-        />
-        <span className="text-xs ink-3 block">{labels.apiKeyHint}</span>
-      </label>
 
       <div className="flex items-center gap-2 flex-wrap">
         <button

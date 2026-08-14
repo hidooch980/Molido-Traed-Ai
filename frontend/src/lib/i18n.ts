@@ -22,6 +22,17 @@ export function direction(locale: Locale): "rtl" | "ltr" {
 type Dictionary = Record<string, string>;
 
 const en: Dictionary = {
+  "signin.signIn": "Sign in",
+  "signin.signOut": "Sign out",
+  "signin.email": "Email",
+  "signin.password": "Password",
+  "signin.submit": "Sign in",
+  "signin.cancel": "Cancel",
+  "signin.working": "Signing in…",
+  "signin.failed": "Those details do not match an account.",
+  "signin.signedInAs": "Signed in as",
+  "signin.anonymous": "Not signed in",
+  "signin.anonymousHint": "Reading needs no account. Sign in to connect a broker or add a challenge.",
   "broker.connected": "Connected. The terminal is logged in and the account is visible.",
   "broker.add": "Add a broker account",
   "broker.login": "Account number",
@@ -757,6 +768,17 @@ const en: Dictionary = {
 };
 
 const fa: Dictionary = {
+  "signin.signIn": "ورود",
+  "signin.signOut": "خروج",
+  "signin.email": "ایمیل",
+  "signin.password": "رمز عبور",
+  "signin.submit": "ورود",
+  "signin.cancel": "انصراف",
+  "signin.working": "در حال ورود…",
+  "signin.failed": "این مشخصات با هیچ حسابی مطابقت ندارد.",
+  "signin.signedInAs": "واردشده به عنوان",
+  "signin.anonymous": "وارد نشده‌اید",
+  "signin.anonymousHint": "خواندن نیازی به حساب ندارد. برای اتصال بروکر یا افزودن چلنج وارد شوید.",
   "broker.connected": "متصل شد. ترمینال وارد حساب شده و حساب دیده می‌شود.",
   "broker.add": "افزودن حساب بروکر",
   "broker.login": "شماره حساب",

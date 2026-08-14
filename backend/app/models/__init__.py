@@ -10,6 +10,7 @@ from app.models.calendar import MarketHoliday
 from app.models.challenge_accounts import ChallengeAccount
 from app.models.episodes import Episode
 from app.models.features import FeatureValue
+from app.models.incidents import Incident
 from app.models.ingestion import (
     DataQualityFinding,
     DatasetQuality,
@@ -22,6 +23,7 @@ from app.models.symbol_dna import SymbolProfile
 from app.models.tenancy import ApiKey, Tenant, User
 
 __all__ = [
+    "Incident",
     "ChallengeAccount",
     "ApiKey",
     "AuditEvent",
