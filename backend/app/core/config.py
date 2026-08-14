@@ -54,6 +54,12 @@ class Settings(BaseSettings):
     #: so a shared directory is the seam - the alternative is handing a
     #: web-facing process the host's systemd, which is not a trade worth making.
     mt5_queue_dir: str = "/var/molido/mt5-queue"
+
+    #: The chat channel. Empty means this deployment does not send - never
+    #: "send to nobody" and never "try anyway". A token here authenticates a
+    #: channel rather than a person, which is why the channel is read-only.
+    telegram_bot_token: str = ""
+    telegram_chat_id: str = ""
     rate_limit_per_minute: int = 120
 
     # Execution. Three separate switches on purpose: enabling the engine and

@@ -31,7 +31,7 @@ from app.api.guard import PERMISSION_ATTR, find_ungated_routes, mutating_routes
 from app.core.config import get_settings
 from app.core.enums import Permission
 from app.core.errors import ValidationFailedError
-from app.integrations import notify
+from app.integrations import notify, telegram
 
 router = APIRouter(prefix="/integrations", tags=["integrations"])
 
@@ -147,5 +147,33 @@ def read_security(_: Principal = READ) -> dict[str, Any]:
         "note": (
             "auth being off is safe only while no endpoint changes state; the "
             "application refuses to start if one is added without it"
+        ),
+    }
+
+
+@router.get("/telegram")
+def read_telegram(_: Principal = READ) -> dict[str, Any]:
+    """Whether the chat channel is configured, and whether the token works.
+
+    `getMe` proves the token without sending anything to the channel, so a
+    wrong token fails here rather than at the moment an alert matters. Nothing
+    on this route posts a message: the check and the send are separate, because
+    a health check that notifies everybody every time it runs is its own
+    outage.
+    """
+    state = telegram.check()
+    return {
+        **state,
+        "read_only": True,
+        "allowed_commands": sorted(notify.READ_ONLY_COMMANDS),
+        "why_read_only": (
+            "a chat transport authenticates a channel, not a person: anyone "
+            "holding the bot token is indistinguishable from the owner, so the "
+            "channel answers questions and nothing else"
+        ),
+        "deduplication": (
+            "outbound alerts share the incident cooldown, so a flapping "
+            "condition does not send a message every thirty seconds - the "
+            "alert everybody learns to ignore is the one that mattered"
         ),
     }
