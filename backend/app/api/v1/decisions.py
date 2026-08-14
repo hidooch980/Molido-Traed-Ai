@@ -39,7 +39,7 @@ from app.core.config import get_settings
 from app.core.enums import Permission, Timeframe
 from app.db.session import get_db
 from app.execution.safety import ExecutionPolicy, KillSwitch
-from app.ops import health_score
+from app.ops import bottlenecks, disk, health_score
 from app.ops import incidents as incident_memory
 from app.ops import readiness as rd
 from app.pipeline import decide as pipeline
@@ -132,6 +132,27 @@ def read_readiness(
     # the score and the list underneath it can never disagree about what was
     # true at the same moment.
     payload["health"] = health_score.compute(report, session).as_dict()
+
+    # Checked here rather than assumed unknowable. `readiness` said the host
+    # disk could not be seen from inside a container; it can - the container's
+    # root is the host's disk, and the reading differs by the overlay, not by
+    # the device. The assumption went untested for months while the disk
+    # reached 82% with nobody watching.
+    state = disk.measure()
+    payload["disk"] = state.as_dict()
+    if state.severity:
+        incident_memory.record(
+            session,
+            incident_memory.Report(
+                source="disk",
+                summary=state.summary,
+                severity=state.severity,
+                details=state.as_dict(),
+            ),
+        )
+    else:
+        incident_memory.clear(session, "disk", state.summary)
+
     return payload
 
 
@@ -169,6 +190,22 @@ def read_incidents(
             "stops when the checker dies"
         ),
     }
+
+
+@router.get("/bottlenecks")
+def read_bottlenecks(
+    _: Principal = READ,
+    session: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Where effort is going that produces nothing.
+
+    Ranked by estimated cost rather than severity, because the two disagree
+    constantly and the expensive thing is usually the quiet one - which is
+    exactly why nobody has fixed it. Everything is derived from data already
+    stored; nothing new is measured, because a profiler with its own memory
+    footprint on a two-core host would be measuring a slowdown it caused.
+    """
+    return bottlenecks.analyse(session)
 
 
 @router.get("/{instrument_id}")
