@@ -141,6 +141,13 @@ services:
       context: ../backend
     restart: unless-stopped
     environment: *backend-env
+    volumes:
+      # The same read-only bridge the API reads. The collector needs it because
+      # the equity sample rides on its cycle, and without the mount that sample
+      # reported "no heartbeat file" forever while the terminal was running
+      # perfectly - a failure that looks identical to a broken bridge and is
+      # not one.
+      - ${MOLIDO_MT5_BRIDGE_HOST:-/home/ubuntu/.mt5/drive_c/users/ubuntu/AppData/Roaming/MetaQuotes/Terminal/Common/Files}:/home/ubuntu/.mt5/drive_c/users/ubuntu/AppData/Roaming/MetaQuotes/Terminal/Common/Files:ro
     depends_on:
       postgres:
         condition: service_healthy
