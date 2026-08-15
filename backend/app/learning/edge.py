@@ -273,7 +273,10 @@ PENDING_FORWARD: tuple[ProvenEdge, ...] = (
             "short the most extended upward. Market-neutral by construction, "
             "which is what separates it from the twenty-four time-series rules "
             "that failed: those fire on everything at once when the market "
-            "moves, so much of what they call a signal is the market"
+            "moves, so much of what they call a signal is the market. "
+            "GENERALISATION FAILED: unchanged on eleven years of daily "
+            "bars the same rule scored -0.0015 R against its control at "
+            "t = -0.12"
         ),
         pre_registered=True,
         evidence=Evidence(
@@ -294,6 +297,22 @@ PENDING_FORWARD: tuple[ProvenEdge, ...] = (
             # Both halves of this series had already been searched when this
             # was tested. That is why it is here and not in PROVEN.
             data_ends=date(2026, 8, 15),
+            # And it did not generalise. Re-run unchanged on eleven years
+            # of daily bars - an independent sample nothing had searched,
+            # covering COVID, the rate cycle and several currency crises
+            # the two-year hourly window does not contain - the same rule
+            # scored -0.0015 R against its control at t = -0.12. Not
+            # weakly positive: negative.
+            #
+            # The caveat, stated without leaning on it: 120 daily bars is
+            # a six-month hold, which is a different trade rather than the
+            # same trade at another scale. But a real effect usually
+            # leaves some trace in an adjacent scale, and there is none.
+            #
+            # Recorded beside the positive figure rather than replacing
+            # it. A claim whose supporting evidence is kept and whose
+            # contradicting evidence is not is not a claim, it is an
+            # advertisement.
             measured_z=3.69,
             measured_z_method=(
                 "paired t across 11,414 instants: each instant contributes "
