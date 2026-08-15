@@ -25,6 +25,7 @@ months there is something to point at, whichever way it comes out.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Any
 
@@ -61,7 +62,7 @@ def snapshot(
     from whatever each instrument last published would rank an instrument's
     Tuesday against another's Wednesday, and call the difference a signal.
     """
-    cutoff = (as_of or datetime.now(UTC)).astimezone(UTC)
+    ceiling = (as_of or datetime.now(UTC)).astimezone(UTC)
     # Active only. Two truncated duplicates of live symbols - left behind by an
     # old symbol-normalising bug - were still being ranked against the real
     # ones, and one was picked on the first live cycle. Deactivating them is
@@ -71,8 +72,23 @@ def snapshot(
         select(Instrument).where(Instrument.is_active.is_(True))
     ).all()
 
+    # Two passes, and the reason is point-in-time integrity rather than tidiness.
+    #
+    # The instant is Friday 21:00 whenever the weekend is on, because that is
+    # the last bar the FX book shares. Crypto keeps printing through Saturday.
+    # A single pass that read every instrument up to *now* would rank BTCUSD's
+    # Saturday price inside a Friday cross-section - the mean, the last close
+    # and therefore the stretch would all contain prices from after the moment
+    # being decided on.
+    #
+    # That is lookahead, it flatters the rule silently, and it would have gone
+    # into the forward series as evidence.
+    instant = _instant(session, instruments, timeframe=timeframe, ceiling=ceiling)
+    if instant is None:
+        return {}, None
+    cutoff = instant
+
     built: dict[str, dict[str, Any]] = {}
-    seen_at: dict[datetime, int] = {}
 
     for instrument in instruments:
         rows = session.scalars(
@@ -98,24 +114,45 @@ def snapshot(
             # than the market.
             "last_at": rows[-1].event_time,
         }
-        seen_at[rows[-1].event_time] = seen_at.get(rows[-1].event_time, 0) + 1
 
-    # The instant is the most recent one where enough instruments actually have
-    # a bar - not the newest bar anywhere.
-    #
-    # Those are different on any weekend. Crypto trades through it and FX does
-    # not, so the newest bar in the database belongs to BTCUSD while every
-    # currency pair last printed on Friday. Taking the maximum makes the whole
-    # FX book look two days stale against one instrument that never sleeps, and
-    # the staleness guard - correctly - throws all of it away. The first cycle
-    # after that guard shipped ranked two instruments out of forty-nine.
-    latest = None
-    for stamp in sorted(seen_at, reverse=True):
-        if seen_at[stamp] >= MIN_FOR_INSTANT:
-            latest = stamp
-            break
+    return built, instant
 
-    return built, latest
+
+def _instant(
+    session: Session,
+    instruments: Sequence[Instrument],
+    *,
+    timeframe: Timeframe,
+    ceiling: datetime,
+) -> datetime | None:
+    """The most recent moment where enough instruments actually have a bar.
+
+    Not the newest bar anywhere. Those differ on every weekend: crypto trades
+    through it and FX does not, so the newest bar belongs to BTCUSD while every
+    currency pair last printed on Friday. Taking the maximum made the whole FX
+    book look two days stale against one instrument that never sleeps, and the
+    staleness guard - correctly - threw all of it away. That cycle ranked two
+    instruments out of forty-nine.
+    """
+    counts: dict[datetime, int] = {}
+    for instrument in instruments:
+        stamps = session.scalars(
+            select(Bar.event_time)
+            .where(
+                Bar.instrument_id == instrument.id,
+                Bar.timeframe == timeframe.value,
+                Bar.event_time <= ceiling,
+            )
+            .order_by(Bar.event_time.desc())
+            .limit(1)
+        ).all()
+        for stamp in stamps:
+            counts[stamp] = counts.get(stamp, 0) + 1
+
+    for stamp in sorted(counts, reverse=True):
+        if counts[stamp] >= MIN_FOR_INSTANT:
+            return stamp
+    return None
 
 
 def record_cycle(

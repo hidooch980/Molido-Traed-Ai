@@ -224,3 +224,51 @@ class TestTheInstantIsWhereTheMarketWas:
 
         assert result["recorded"] > 0, result.get("reason")
         assert result["considered"] >= 30
+
+    def test_no_series_reaches_past_the_chosen_instant(self, market, session, provider):
+        """Point-in-time integrity, and the one that would have been invisible.
+
+        The instant is Friday whenever the weekend is on, because that is the
+        last bar the FX book shares - and crypto keeps printing through
+        Saturday. Reading every instrument up to *now* would put Saturday
+        prices inside a Friday cross-section: the mean, the last close and
+        therefore the stretch would all contain data from after the moment
+        being decided on.
+
+        That flatters the rule silently and would have gone into the forward
+        series as evidence."""
+        from app.core.enums import AssetClass
+
+        crypto = Instrument(
+            symbol="BTCUSD", name="Bitcoin", asset_class=AssetClass.CRYPTO
+        )
+        session.add(crypto)
+        session.flush()
+        # Bars either side of the instant the FX book will settle on.
+        for i in range(forward.LOOKBACK + 24):
+            session.add(
+                Bar(
+                    instrument_id=crypto.id,
+                    timeframe=Timeframe.H1.value,
+                    provider_id=provider.id,
+                    event_time=NOW - timedelta(hours=forward.LOOKBACK - i),
+                    revision=1,
+                    ingested_at=NOW,
+                    open=100,
+                    high=101,
+                    low=99,
+                    close=100 + i,
+                    volume=1,
+                    quality_score=1.0,
+                )
+            )
+        session.flush()
+
+        built, instant = forward.snapshot(session, as_of=NOW + timedelta(days=2))
+
+        assert instant is not None
+        assert instant <= NOW
+        # Every instrument's history stops at or before the instant - checked
+        # through the recorded last bar, which is what the ranking reads.
+        for symbol, payload in built.items():
+            assert payload["last_at"] <= instant, symbol
