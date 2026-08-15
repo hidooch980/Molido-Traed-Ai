@@ -40,7 +40,7 @@ bet on the market, which is the thing it was built not to be.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 #: Bars in the mean. Fixed at the value that was tested; changing it makes this
@@ -57,6 +57,19 @@ TAIL_FRACTION = 0.10
 #: always have a "most extended" one, and calling it a signal is calling the
 #: shape of a small sample a signal.
 MIN_CROSS_SECTION = 20
+
+#: How far behind the cross-section's own instant an instrument's last bar may
+#: be before it is excluded.
+#:
+#: This is not a general freshness check; it is specific to what a ranking does.
+#: A series that stopped updating keeps its last price while every other
+#: instrument moves on, so its distance from its own mean drifts further from
+#: the truth with every hour - and drifts in one direction, which means it
+#: reliably ranks extreme and is reliably picked. Two frozen duplicates of live
+#: symbols were doing exactly that on this deployment before this existed.
+#:
+#: Three bars: one late bar is a slow provider, three is a series that stopped.
+MAX_STALENESS_BARS = 3
 
 
 @dataclass(frozen=True)
@@ -141,6 +154,7 @@ def rank(
     at: datetime,
     min_cross_section: int = MIN_CROSS_SECTION,
     tail_fraction: float = TAIL_FRACTION,
+    bar_interval: timedelta | None = None,
 ) -> CrossSection:
     """Rank the instruments priced at this instant and take both tails.
 
@@ -152,9 +166,27 @@ def rank(
     ranked: list[Ranked] = []
     skipped: list[str] = []
 
+    cutoff = (
+        at - MAX_STALENESS_BARS * bar_interval if bar_interval is not None else None
+    )
+
     for symbol, data in snapshot.items():
         closes = list(data.get("closes") or [])
         bars = list(data.get("bars") or [])
+
+        last_at = data.get("last_at")
+        if cutoff is not None and last_at is not None and last_at < cutoff:
+            # Excluded by name. A frozen series keeps its last price while
+            # everything else moves, so its distance from its own mean drifts
+            # one way and it reliably ranks extreme - which means it is
+            # reliably picked, and the picks are about the outage rather than
+            # the market.
+            skipped.append(
+                f"{symbol}: last bar {last_at.isoformat()} is more than "
+                f"{MAX_STALENESS_BARS} bars behind the cross-section"
+            )
+            continue
+
         atr = average_true_range(bars)
         if atr is None or atr <= 0:
             skipped.append(f"{symbol}: no usable volatility estimate")

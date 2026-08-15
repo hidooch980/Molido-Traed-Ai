@@ -57,7 +57,14 @@ def snapshot(
     Tuesday against another's Wednesday, and call the difference a signal.
     """
     cutoff = (as_of or datetime.now(UTC)).astimezone(UTC)
-    instruments = session.scalars(select(Instrument)).all()
+    # Active only. Two truncated duplicates of live symbols - left behind by an
+    # old symbol-normalising bug - were still being ranked against the real
+    # ones, and one was picked on the first live cycle. Deactivating them is
+    # the data fix; this is the code fix, and the staleness guard in `rank` is
+    # the general one for any series that stops.
+    instruments = session.scalars(
+        select(Instrument).where(Instrument.is_active.is_(True))
+    ).all()
 
     built: dict[str, dict[str, Any]] = {}
     latest: datetime | None = None
@@ -80,6 +87,12 @@ def snapshot(
         built[instrument.symbol] = {
             "closes": [float(r.close) for r in rows],
             "bars": [(float(r.high), float(r.low), float(r.close)) for r in rows],
+            # Carried so the ranking can exclude a series that stopped moving.
+            # Two frozen duplicates of live symbols were being ranked against
+            # live ones on this deployment, and a frozen series drifts one way
+            # from its own mean - so it ranked extreme and got picked, and the
+            # pick was about the outage rather than the market.
+            "last_at": rows[-1].event_time,
         }
         last = rows[-1].event_time
         if latest is None or last > latest:
@@ -111,7 +124,7 @@ def record_cycle(
             ),
         }
 
-    ranked = crosssection.rank(built, at=latest)
+    ranked = crosssection.rank(built, at=latest, bar_interval=timeframe.delta)
     if not ranked.available:
         return {"recorded": 0, "reason": ranked.reason, "considered": ranked.considered}
 

@@ -140,3 +140,62 @@ class TestTheRuleIsDeterministic:
 
         assert [r.symbol for r in first.longs] == [r.symbol for r in second.longs]
         assert [r.symbol for r in first.shorts] == [r.symbol for r in second.shorts]
+
+
+class TestAFrozenSeriesIsExcluded:
+    """A series that stopped updating keeps its last price while everything
+    else moves on, so its distance from its own mean drifts one way with every
+    hour - it ranks extreme reliably, and gets picked reliably. The picks are
+    then about the outage rather than the market.
+
+    This was not hypothetical. Two truncated duplicates of live symbols -
+    USDIN beside USDINR, USDZA beside USDZAR, left behind by an old
+    symbol-normalising bug - were still active, two days stale, and one of them
+    was chosen as a short on the first live cycle."""
+
+    def fresh(self, values, at):
+        from datetime import timedelta
+
+        data = snapshot(values)
+        for payload in data.values():
+            payload["last_at"] = at - timedelta(minutes=5)
+        return data
+
+    def test_a_stale_instrument_is_left_out_and_named(self):
+        from datetime import timedelta
+
+        data = self.fresh({f"S{i}": 100 + i for i in range(30)}, NOW)
+        data["FROZEN"] = series(999.0)
+        data["FROZEN"]["last_at"] = NOW - timedelta(days=2)
+
+        result = cs.rank(data, at=NOW, bar_interval=timedelta(hours=1))
+
+        picked = [r.symbol for r in result.longs + result.shorts]
+        assert "FROZEN" not in picked
+        assert any("FROZEN" in note for note in result.skipped)
+
+    def test_one_late_bar_is_tolerated(self):
+        """A slow provider is not a stopped series, and excluding it would
+        thin the cross-section for no reason."""
+        from datetime import timedelta
+
+        data = self.fresh({f"S{i}": 100 + i for i in range(30)}, NOW)
+        data["SLOW"] = series(140.0)
+        data["SLOW"]["last_at"] = NOW - timedelta(hours=1)
+
+        result = cs.rank(data, at=NOW, bar_interval=timedelta(hours=1))
+
+        assert not any("SLOW" in note for note in result.skipped)
+
+    def test_without_an_interval_nothing_is_excluded_for_staleness(self):
+        """The caller has to say how long a bar is. Guessing would either
+        exclude everything on a daily series or nothing on a minute one."""
+        from datetime import timedelta
+
+        data = self.fresh({f"S{i}": 100 + i for i in range(30)}, NOW)
+        data["FROZEN"] = series(999.0)
+        data["FROZEN"]["last_at"] = NOW - timedelta(days=2)
+
+        result = cs.rank(data, at=NOW)
+
+        assert not any("FROZEN" in note for note in result.skipped)
