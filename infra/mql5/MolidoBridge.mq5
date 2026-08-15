@@ -38,6 +38,16 @@ input int RefreshSeconds = 20;
 //--- How many closed bars to publish per symbol and timeframe.
 input int BarCount = 500;
 
+//--- Symbols to add to Market Watch on start, comma separated.
+//---
+//--- The expert publishes what Market Watch shows, and Market Watch shows
+//--- whatever the terminal shipped with - ten majors on this deployment, no
+//--- metals and no energy. The broker offers far more; nothing was asking for
+//--- it. `SymbolSelect` asks, and a symbol the broker does not have is
+//--- reported by name rather than failing the start: a typo and an instrument
+//--- the broker genuinely lacks need different fixes.
+input string ExtraSymbols = "XAUUSD,XAGUSD,XAUEUR,XAGEUR,XTIUSD,XBRUSD";
+
 string TimeframeName(ENUM_TIMEFRAMES period)
   {
    switch(period)
@@ -263,9 +273,40 @@ int OnInit()
    //--- One timer rather than OnTick: this publishes on a clock, not on price
    //--- movement. Tying it to ticks would stop publishing exactly when the
    //--- market goes quiet, which is when a stale-feed check needs it most.
+   SelectExtraSymbols();
    EventSetTimer(RefreshSeconds);
    Publish();
    return INIT_SUCCEEDED;
+  }
+
+//+------------------------------------------------------------------+
+//| Ask the terminal to show the symbols this system wants.          |
+//|                                                                  |
+//| Every name is reported either way. A symbol that silently fails  |
+//| to appear looks exactly like one the broker does not offer, and  |
+//| those need different fixes - one is a typo, the other is a       |
+//| different broker.                                                |
+//+------------------------------------------------------------------+
+void SelectExtraSymbols()
+  {
+   if(StringLen(ExtraSymbols) == 0)
+      return;
+
+   string names[];
+   int count = StringSplit(ExtraSymbols, ',', names);
+   for(int i = 0; i < count; i++)
+     {
+      string name = names[i];
+      StringTrimLeft(name);
+      StringTrimRight(name);
+      if(StringLen(name) == 0)
+         continue;
+
+      if(SymbolSelect(name, true))
+         Print("MolidoBridge: added ", name, " to Market Watch");
+      else
+         Print("MolidoBridge: ", name, " not offered by this broker (", GetLastError(), ")");
+     }
   }
 
 void OnDeinit(const int reason)
