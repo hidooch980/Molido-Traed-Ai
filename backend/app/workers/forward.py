@@ -47,6 +47,9 @@ LOOKBACK = 80
 #: three instruments printed is not a cross-section, it is three instruments.
 MIN_FOR_INSTANT = crosssection.MIN_CROSS_SECTION
 
+#: The target, as a multiple of the risk. 1R, as tested.
+TARGET_MULTIPLE = 1.0
+
 #: The stop the measurement used. Recorded with the decision so a later reader
 #: can tell which geometry produced which series - a rule re-measured under a
 #: different stop is a different rule.
@@ -185,6 +188,7 @@ def record_cycle(
     written = 0
     duplicates = 0
     for picks, side in ((ranked.longs, "long"), (ranked.shorts, "short")):
+        side_sign = 1 if side == "long" else -1
         for pick in picks:
             result = journal_log.record_with_control(
                 session,
@@ -200,6 +204,16 @@ def record_cycle(
                     "atr": pick.atr,
                     "stop_multiple": STOP_MULTIPLE,
                     "cross_section_size": ranked.considered,
+                    # The levels, resolved and stored rather than recomputed
+                    # later. A resolver that rebuilds them from the ATR would
+                    # score the trade against a geometry the decision never
+                    # had if either constant ever moved - and the two would
+                    # look identical in the database.
+                    "entry": pick.price,
+                    "stop": pick.price - pick.atr * STOP_MULTIPLE * side_sign,
+                    "target": pick.price
+                    + pick.atr * STOP_MULTIPLE * TARGET_MULTIPLE * side_sign,
+                    "side": side,
                 },
             )
             if result["rule"]["new"]:

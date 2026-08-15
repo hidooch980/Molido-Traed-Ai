@@ -336,6 +336,14 @@ def record_forward() -> dict[str, Any]:
         return record_cycle(session)
 
 
+def resolve_forward() -> dict[str, Any]:
+    """Close the open entries the market has now answered."""
+    from app.workers.resolve import resolve_open
+
+    with session_scope() as session:
+        return resolve_open(session)
+
+
 async def collect(ctx: dict) -> dict[str, Any]:
     """ARQ task wrapper.
 
@@ -367,6 +375,18 @@ async def collect(ctx: dict) -> dict[str, Any]:
         payload["forward"] = {
             "recorded": 0,
             "reason": f"{type(problem).__name__} while recording the forward series",
+        }
+
+    # And close whatever the market has answered. Without this the journal
+    # fills up and never produces a number - every entry open, `resolved` at
+    # zero, and the comparison reporting nothing for months in a way that looks
+    # like patience rather than silence.
+    try:
+        payload["resolved"] = await asyncio.to_thread(resolve_forward)
+    except Exception as problem:  # noqa: BLE001 - reported, never fatal
+        payload["resolved"] = {
+            "resolved": 0,
+            "reason": f"{type(problem).__name__} while resolving open entries",
         }
     return payload
 
