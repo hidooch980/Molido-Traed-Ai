@@ -323,6 +323,19 @@ def sample_equity() -> dict[str, Any]:
     return {"recorded": stored, "account": login}
 
 
+def record_forward() -> dict[str, Any]:
+    """Write what the cross-sectional rule proposes on the bars just collected.
+
+    Its own session, and its own commit. Sharing the collection's transaction
+    would mean a failure here rolls back the bars, and the bars are the thing
+    this worker exists for.
+    """
+    from app.workers.forward import record_cycle
+
+    with session_scope() as session:
+        return record_cycle(session)
+
+
 async def collect(ctx: dict) -> dict[str, Any]:
     """ARQ task wrapper.
 
@@ -342,6 +355,18 @@ async def collect(ctx: dict) -> dict[str, Any]:
         payload["equity"] = {
             "recorded": False,
             "reason": f"{type(problem).__name__} while sampling equity",
+        }
+
+    # The forward record rides here too, and for the same reason: it needs the
+    # bars this cycle just wrote, and a separate schedule would drift out of
+    # step with them. Its failure is reported and never fatal - the forward
+    # measurement matters, and it matters less than not losing market data.
+    try:
+        payload["forward"] = await asyncio.to_thread(record_forward)
+    except Exception as problem:  # noqa: BLE001 - reported, never fatal
+        payload["forward"] = {
+            "recorded": 0,
+            "reason": f"{type(problem).__name__} while recording the forward series",
         }
     return payload
 
