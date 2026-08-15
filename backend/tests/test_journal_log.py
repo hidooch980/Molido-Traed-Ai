@@ -160,6 +160,13 @@ class TestClosing:
 
 
 class TestTheComparison:
+    """These are about the arithmetic, not the window, so they pass `since`
+    explicitly. `NOW` here predates `MEASUREMENT_STARTS_AT` - which is the
+    window doing its job, and would otherwise silently empty every count
+    below."""
+
+    SINCE = NOW - timedelta(days=365)
+
     def resolve(self, session, arm, wins, losses, start=0):
         n = start
         for _ in range(wins):
@@ -180,7 +187,7 @@ class TestTheComparison:
         n = self.resolve(session, ARM_RULE, wins=60, losses=40)
         self.resolve(session, ARM_CONTROL, wins=50, losses=50, start=n)
 
-        measured = journal_log.comparison(session)
+        measured = journal_log.comparison(session, since=self.SINCE)
 
         assert measured.rule_hit == 0.6
         assert measured.control_hit == 0.5
@@ -194,7 +201,7 @@ class TestTheComparison:
             session, symbol="STILLOPEN", decision="long", at=bar(n), arm=ARM_RULE
         )
 
-        measured = journal_log.comparison(session)
+        measured = journal_log.comparison(session, since=self.SINCE)
 
         assert measured.rule_trials == 10
 
@@ -218,3 +225,62 @@ class TestTheComparison:
         assert described["arms"][ARM_RULE]["recorded"] == 6
         assert described["arms"][ARM_RULE]["resolved"] == 5
         assert described["arms"][ARM_RULE]["still_open"] == 1
+
+
+class TestTheMeasurementWindowIsExplicit:
+    """Everything recorded before the window came from code with three bugs in
+    it - a weekend instant, two frozen symbols, and a series read past the
+    moment being decided on. Those entries are kept, because a table that
+    quietly loses its own history is worse evidence than one with a stated cut,
+    and excluded, because they are not measurements of anything."""
+
+    def test_the_comparison_ignores_entries_before_the_start(self, session):
+        before = journal_log.MEASUREMENT_STARTS_AT - timedelta(days=1)
+        after = journal_log.MEASUREMENT_STARTS_AT + timedelta(hours=1)
+
+        for arm in (ARM_RULE, ARM_CONTROL):
+            old = journal_log.record_decision(
+                session, symbol=f"OLD{arm}", decision="long", at=before, arm=arm
+            )
+            journal_log.close(session, old.entry_id, outcome="win", r_multiple=1.0)
+            new = journal_log.record_decision(
+                session, symbol=f"NEW{arm}", decision="long", at=after, arm=arm
+            )
+            journal_log.close(session, new.entry_id, outcome="loss", r_multiple=-1.0)
+
+        measured = journal_log.comparison(session)
+
+        # Only the entries inside the window, so one per arm rather than two.
+        assert measured.rule_trials == 1
+        assert measured.control_trials == 1
+
+    def test_an_explicit_since_still_wins(self, session):
+        """The default is a fact about the deployment; a caller asking a
+        different question may still ask it."""
+        before = journal_log.MEASUREMENT_STARTS_AT - timedelta(days=1)
+
+        for arm in (ARM_RULE, ARM_CONTROL):
+            row = journal_log.record_decision(
+                session, symbol=f"OLD{arm}", decision="long", at=before, arm=arm
+            )
+            journal_log.close(session, row.entry_id, outcome="win", r_multiple=1.0)
+
+        assert journal_log.comparison(session).rule_trials == 0
+        assert (
+            journal_log.comparison(
+                session, since=before - timedelta(days=1)
+            ).rule_trials
+            == 1
+        )
+
+    def test_the_summary_states_the_window_and_why(self, session):
+        """So nobody has to guess which entries the numbers cover."""
+        described = journal_log.summary(session)
+
+        assert described["measurement_starts_at"]
+        assert "three bugs" in described["why_it_starts_there"]
+
+    def test_the_start_is_a_monday(self):
+        """The markets reopen then. A window that starts mid-weekend begins
+        with two days of nothing and one crypto instant."""
+        assert journal_log.MEASUREMENT_STARTS_AT.strftime("%A") == "Monday"

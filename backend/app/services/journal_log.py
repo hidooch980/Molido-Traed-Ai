@@ -30,6 +30,25 @@ from sqlalchemy.orm import Session
 from app.learning import control as control_module
 from app.models.journal import ARM_CONTROL, ARM_RULE, JournalEntry
 
+#: When the forward measurement begins. Entries before it are excluded from the
+#: comparison and kept in the table.
+#:
+#: Everything recorded before this came from code with three bugs in it: the
+#: cross-section's instant was the newest bar anywhere, which on a weekend is a
+#: crypto bar; two frozen duplicates of live symbols were still being ranked;
+#: and every series was read up to *now* rather than up to the instant, so a
+#: Friday ranking carried Saturday prices.
+#:
+#: They are not deleted. They are the record of what the system did while it
+#: was being debugged, and a table that quietly loses its own history is worse
+#: evidence than one with a stated cut. But they are not measurements of
+#: anything, and a series that proves or kills an edge cannot contain them.
+#:
+#: The date is the Monday the markets reopen after those fixes shipped. Written
+#: here rather than passed in, so the window is a fact about the deployment
+#: that a reader can check, not an argument somebody chose at reporting time.
+MEASUREMENT_STARTS_AT = datetime(2026, 8, 17, 0, 0, tzinfo=UTC)
+
 
 @dataclass(frozen=True)
 class Recorded:
@@ -184,7 +203,14 @@ def comparison(
     Open entries are excluded from both arms. Counting an open position as a
     loss because it has not closed yet would make every measurement pessimistic
     in exactly the periods the system was most active.
+
+    `since` defaults to `MEASUREMENT_STARTS_AT` rather than to the beginning of
+    the table. Everything before that was recorded by code with three known
+    bugs in it, and a comparison that silently included them would be a
+    comparison of the debugging period.
     """
+    if since is None:
+        since = MEASUREMENT_STARTS_AT
 
     def tally(arm: str) -> tuple[int, int]:
         query = select(
@@ -241,6 +267,16 @@ def summary(session: Session) -> dict[str, Any]:
     return {
         "arms": by_arm,
         "comparison": measured.as_dict(),
+        # Stated, so nobody has to guess which entries the numbers above cover.
+        "measurement_starts_at": MEASUREMENT_STARTS_AT.isoformat(),
+        "why_it_starts_there": (
+            "everything recorded before that came from code with three bugs: "
+            "the cross-section's instant was the newest bar anywhere, which on "
+            "a weekend is a crypto bar; two frozen duplicates of live symbols "
+            "were still ranked; and every series was read up to now rather than "
+            "up to the instant, so a Friday ranking carried Saturday prices. "
+            "Those entries are kept and excluded"
+        ),
         "note": (
             "the comparison counts resolved entries only. An open position "
             "counted as a loss would make every measurement pessimistic in "
