@@ -143,3 +143,84 @@ class TestItFeedsTheComparison:
         # Nothing has resolved, so the comparison must report nothing rather
         # than zero - an empty measurement is not a measurement of zero.
         assert described["comparison"]["edge_over_control"] is None
+
+
+class TestTheInstantIsWhereTheMarketWas:
+    """Not the newest bar anywhere. Those differ on every weekend: crypto
+    trades through it and FX does not, so the newest bar in the database
+    belongs to BTCUSD while every currency pair last printed on Friday.
+
+    Taking the maximum made the whole FX book look two days stale against one
+    instrument that never sleeps, and the staleness guard - correctly - threw
+    all of it away. The first live cycle after that guard shipped ranked two
+    instruments out of forty-nine."""
+
+    def test_one_instrument_trading_late_does_not_move_the_instant(
+        self, market, session, provider
+    ):
+        from app.core.enums import AssetClass
+
+        # A crypto pair whose last bar is a day after everything else.
+        crypto = Instrument(
+            symbol="BTCUSD", name="Bitcoin", asset_class=AssetClass.CRYPTO
+        )
+        session.add(crypto)
+        session.flush()
+        for i in range(forward.LOOKBACK):
+            session.add(
+                Bar(
+                    instrument_id=crypto.id,
+                    timeframe=Timeframe.H1.value,
+                    provider_id=provider.id,
+                    event_time=NOW + timedelta(hours=i + 1),
+                    revision=1,
+                    ingested_at=NOW,
+                    open=100,
+                    high=101,
+                    low=99,
+                    close=100,
+                    volume=1,
+                    quality_score=1.0,
+                )
+            )
+        session.flush()
+
+        _, latest = forward.snapshot(session, as_of=NOW + timedelta(days=2))
+
+        # The instant is where thirty instruments printed, not where one did.
+        assert latest is not None
+        assert latest <= NOW
+
+    def test_the_whole_book_still_ranks_on_a_weekend(self, market, session, provider):
+        """The failure this exists to prevent: everything excluded as stale
+        because one instrument never sleeps."""
+        from app.core.enums import AssetClass
+
+        crypto = Instrument(
+            symbol="ETHUSD", name="Ether", asset_class=AssetClass.CRYPTO
+        )
+        session.add(crypto)
+        session.flush()
+        for i in range(forward.LOOKBACK):
+            session.add(
+                Bar(
+                    instrument_id=crypto.id,
+                    timeframe=Timeframe.H1.value,
+                    provider_id=provider.id,
+                    event_time=NOW + timedelta(hours=i + 1),
+                    revision=1,
+                    ingested_at=NOW,
+                    open=100,
+                    high=101,
+                    low=99,
+                    close=100,
+                    volume=1,
+                    quality_score=1.0,
+                )
+            )
+        session.flush()
+
+        result = forward.record_cycle(session, as_of=NOW + timedelta(days=2))
+
+        assert result["recorded"] > 0, result.get("reason")
+        assert result["considered"] >= 30

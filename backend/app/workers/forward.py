@@ -41,6 +41,11 @@ from app.services import journal_log
 #: fewer produces instruments that are silently skipped for want of history.
 LOOKBACK = 80
 
+#: How many instruments must share a timestamp for it to be the cross-section's
+#: instant. The same floor the ranking itself uses - a timestamp where only
+#: three instruments printed is not a cross-section, it is three instruments.
+MIN_FOR_INSTANT = crosssection.MIN_CROSS_SECTION
+
 #: The stop the measurement used. Recorded with the decision so a later reader
 #: can tell which geometry produced which series - a rule re-measured under a
 #: different stop is a different rule.
@@ -67,7 +72,7 @@ def snapshot(
     ).all()
 
     built: dict[str, dict[str, Any]] = {}
-    latest: datetime | None = None
+    seen_at: dict[datetime, int] = {}
 
     for instrument in instruments:
         rows = session.scalars(
@@ -88,15 +93,27 @@ def snapshot(
             "closes": [float(r.close) for r in rows],
             "bars": [(float(r.high), float(r.low), float(r.close)) for r in rows],
             # Carried so the ranking can exclude a series that stopped moving.
-            # Two frozen duplicates of live symbols were being ranked against
-            # live ones on this deployment, and a frozen series drifts one way
-            # from its own mean - so it ranked extreme and got picked, and the
-            # pick was about the outage rather than the market.
+            # A frozen series drifts one way from its own mean, so it ranks
+            # extreme and gets picked, and the pick is about the outage rather
+            # than the market.
             "last_at": rows[-1].event_time,
         }
-        last = rows[-1].event_time
-        if latest is None or last > latest:
-            latest = last
+        seen_at[rows[-1].event_time] = seen_at.get(rows[-1].event_time, 0) + 1
+
+    # The instant is the most recent one where enough instruments actually have
+    # a bar - not the newest bar anywhere.
+    #
+    # Those are different on any weekend. Crypto trades through it and FX does
+    # not, so the newest bar in the database belongs to BTCUSD while every
+    # currency pair last printed on Friday. Taking the maximum makes the whole
+    # FX book look two days stale against one instrument that never sleeps, and
+    # the staleness guard - correctly - throws all of it away. The first cycle
+    # after that guard shipped ranked two instruments out of forty-nine.
+    latest = None
+    for stamp in sorted(seen_at, reverse=True):
+        if seen_at[stamp] >= MIN_FOR_INSTANT:
+            latest = stamp
+            break
 
     return built, latest
 
