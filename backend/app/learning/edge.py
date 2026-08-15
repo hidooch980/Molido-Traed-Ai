@@ -67,6 +67,30 @@ class Evidence:
     registered_on: date
     data_ends: date
 
+    #: A significance figure measured directly, for when the proportion test
+    #: below is not the test that was actually run.
+    #:
+    #: Not a convenience. Deriving z from two hit rates assumes the statistic
+    #: was a difference of proportions on independent trials. The
+    #: cross-sectional claim was a paired mean-R test clustered by instant - a
+    #: different statistic on a different unit - and deriving one from the
+    #: other gave 1.30 where the measurement gave 3.69. Reporting either as
+    #: though it came from the other reports a test nobody ran.
+    measured_z: float | None = None
+    #: How `measured_z` was arrived at. Required whenever it is set, so a later
+    #: reader can disagree with the method rather than inherit a number.
+    measured_z_method: str | None = None
+
+    def __post_init__(self) -> None:
+        # A measured z with no stated method is a number nobody can check, and
+        # this file exists because an unchecked number was believed once.
+        if self.measured_z is not None and not (self.measured_z_method or "").strip():
+            raise ValueError(
+                "a measured z must say how it was measured - an unexplained "
+                "significance figure is exactly what this registry exists to "
+                "stop being believed"
+            )
+
     @property
     def edge_over_control(self) -> float:
         """The number that matters. Not the hit rate against 0.5."""
@@ -74,13 +98,17 @@ class Evidence:
 
     @property
     def z_score(self) -> float:
-        """Rule against control, two independent proportions on equal samples.
+        """The significance of rule against control.
 
-        Treated as independent, which is the conservative reading: the two arms
-        run on the same bars, so a paired test would have lower variance and a
-        larger z. Overstating the variance can only make a claim harder to
-        accept, and that is the direction to be wrong in.
+        The measured figure when one was supplied, because the test that was
+        run beats the test that can be reconstructed from summary statistics.
+        Otherwise a difference of proportions treated as independent - the
+        conservative reading, since the two arms run on the same bars and a
+        paired test would give a larger z. Overstating the variance can only
+        make a claim harder to accept, which is the direction to be wrong in.
         """
+        if self.measured_z is not None:
+            return self.measured_z
         if self.trials <= 0:
             return 0.0
         p1, p2 = self.hit_rate, self.control_hit_rate
@@ -113,6 +141,7 @@ class Evidence:
             "control_hit_rate": round(self.control_hit_rate, 4),
             "edge_over_control": round(self.edge_over_control, 4),
             "z_score": round(self.z_score, 2),
+            "z_method": self.measured_z_method or "difference of proportions",
             "required_z": round(self.required_z, 2),
             "comparisons": self.comparisons,
             "expectancy_r": round(self.expectancy_r, 4),
@@ -229,6 +258,58 @@ class ProvenEdge:
 PROVEN: tuple[ProvenEdge, ...] = ()
 
 
+#: Claims that cleared every bar except the forward one.
+#:
+#: Deliberately a third list rather than a flag on PROVEN. "Not yet proven" and
+#: "tested and failed" are different states with different next actions - one
+#: needs time, the other needs a new idea - and a boolean on one list would let
+#: a reader in a hurry treat them as the same thing.
+PENDING_FORWARD: tuple[ProvenEdge, ...] = (
+    ProvenEdge(
+        key="cross-sectional-stretch",
+        description=(
+            "at each instant, rank every instrument by (close - 50-bar mean) / "
+            "ATR(14) and take both tails - long the most extended downward, "
+            "short the most extended upward. Market-neutral by construction, "
+            "which is what separates it from the twenty-four time-series rules "
+            "that failed: those fire on everything at once when the market "
+            "moves, so much of what they call a signal is the market"
+        ),
+        pre_registered=True,
+        evidence=Evidence(
+            # Instants, not trades. 107,045 trades sat inside 11,414 instants
+            # and counting each as independent evidence would have been
+            # counting one market move nine times over.
+            trials=11414,
+            # Expressed as a hit rate for the shared Evidence shape; the
+            # measurement that matters is the R difference below, taken as a
+            # paired mean per instant.
+            hit_rate=0.5082,
+            control_hit_rate=0.4996,
+            expectancy_r=0.0201,
+            control_expectancy_r=-0.0010,
+            comparisons=1,
+            cost_r=0.01,
+            registered_on=date(2026, 8, 15),
+            # Both halves of this series had already been searched when this
+            # was tested. That is why it is here and not in PROVEN.
+            data_ends=date(2026, 8, 15),
+            measured_z=3.69,
+            measured_z_method=(
+                "paired t across 11,414 instants: each instant contributes "
+                "the mean R of everything entered then, rule minus control. "
+                "Clustered because 107,045 trades sat inside those instants "
+                "and counting each as independent evidence counts one market "
+                "move nine times over. The unclustered figure was 3.95, so "
+                "the overlap inflated significance by 1.1x - small because "
+                "pairing rule against control on the same instants already "
+                "removes the common market factor"
+            ),
+        ),
+    ),
+)
+
+
 #: Claims that were tested and did not survive. Kept, with their numbers.
 REJECTED: tuple[ProvenEdge, ...] = (
     ProvenEdge(
@@ -267,6 +348,21 @@ def live_trading_allowed() -> tuple[bool, str]:
     surviving = [edge for edge in PROVEN if edge.verdict.proven]
     if surviving:
         return True, f"{len(surviving)} registered edge(s) clear the bar"
+
+    if PENDING_FORWARD:
+        pending = PENDING_FORWARD[0]
+        failures = pending.verdict.failures
+        # Every failure listed rather than summarised. An earlier version of
+        # this message asserted "fails only on forward evidence" and quoted a
+        # different failure underneath it - the kind of sentence that gets
+        # believed instead of read.
+        return False, (
+            f"no registered edge clears the bar. '{pending.key}' beats its "
+            f"control by {pending.evidence.edge_over_control:+.4f} at z = "
+            f"{pending.evidence.z_score:.2f} and earns "
+            f"{pending.evidence.net_expectancy_r:+.4f} R net of costs, and "
+            f"still fails on: {'; '.join(failures)}"
+        )
 
     if REJECTED:
         worst = REJECTED[0]

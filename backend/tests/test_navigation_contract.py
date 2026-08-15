@@ -168,12 +168,14 @@ class TestThePagesThatClaimToBeBuiltActuallyRead:
     def test_a_page_either_calls_the_api_or_is_a_client_screen(self, page):
         """A page that renders only literals is a mock-up in production.
 
-        `settings` and `charts` are exempt because they read the API from the
-        browser rather than on the server, which is a different mechanism, not
-        an absence of data.
+        `settings`, `charts` and `verify` are exempt because they read the API
+        from the browser rather than on the server, which is a different
+        mechanism and not an absence of data. `verify` has to: it spends a
+        token that only exists in the URL the person clicked, and a server
+        render would spend it before the page was ever shown.
         """
         source = page.read_text(encoding="utf-8")
-        if page.parent.name in {"settings", "charts"}:
+        if page.parent.name in {"settings", "charts", "verify"}:
             return
 
         assert "api." in source, f"{page.parent.name} renders without reading anything"

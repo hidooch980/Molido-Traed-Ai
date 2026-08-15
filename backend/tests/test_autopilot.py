@@ -82,12 +82,21 @@ def execution_on(monkeypatch):
 
 class TestTheEdgeGate:
     def test_no_proven_edge_means_no_live_trading(self):
-        """The registry is empty because nothing has met the bar, not because
-        nobody filled it in."""
+        """PROVEN is empty because nothing has met the bar, not because nobody
+        filled it in.
+
+        The message changed once a claim started clearing four of the five
+        requirements, and this test changed with it deliberately rather than
+        being loosened: the assertion is now that the refusal names what is
+        still missing. A test that only checked `allowed is False` would keep
+        passing if the reason became "no".
+        """
         allowed, why = edge_registry.live_trading_allowed()
 
         assert allowed is False
-        assert "not distinguishable from noise" in why
+        assert "no registered edge clears the bar" in why
+        # And it names what is still missing rather than stopping at "no".
+        assert "held-out history" in why or "not distinguishable from noise" in why
 
     def test_the_rejected_claim_is_kept_with_its_numbers(self):
         """"We tried nothing" and "we tried this and it failed" are different
@@ -238,7 +247,9 @@ class TestTheModeIsDecidedOncePerPass:
         )
 
         assert result.mode == autopilot.PAPER
-        assert "not distinguishable from noise" in result.reason
+        # The reason travels with the mode. Which requirement is unmet changes
+        # as claims are registered; that one is named does not.
+        assert "no registered edge clears the bar" in result.reason
 
 
 class TestPaperModeNeverSends:
@@ -461,3 +472,60 @@ class TestTheAccountGate:
         from app.core.config import get_settings
 
         assert getattr(get_settings(), "allow_real_money_orders", False) is False
+
+
+class TestThePendingClaimIsNotTreatedAsProven:
+    """A claim clearing four of five is the most dangerous state in this
+    registry: the numbers look convincing and the one missing requirement is
+    the one that takes months. These tests keep the gate shut anyway."""
+
+    def test_it_is_registered_but_not_proven(self):
+        assert edge_registry.PENDING_FORWARD
+        claim = edge_registry.PENDING_FORWARD[0]
+
+        assert claim.verdict.proven is False
+        assert claim not in edge_registry.PROVEN
+
+    def test_it_fails_only_on_forward_evidence(self):
+        """Stated as a test so that if it ever starts failing on something
+        else, somebody has to look at why rather than assume it is the same
+        gap."""
+        failures = edge_registry.PENDING_FORWARD[0].verdict.failures
+
+        assert len(failures) == 1
+        assert "forward" in failures[0] or "held-out history" in failures[0]
+
+    def test_the_gate_stays_shut(self):
+        allowed, _ = edge_registry.live_trading_allowed()
+
+        assert allowed is False
+
+    def test_a_measured_z_must_say_how_it_was_measured(self):
+        """An unexplained significance figure is exactly what this registry
+        exists to stop being believed."""
+        from datetime import date
+
+        with pytest.raises(ValueError):
+            edge_registry.Evidence(
+                trials=100,
+                hit_rate=0.55,
+                control_hit_rate=0.50,
+                expectancy_r=0.05,
+                control_expectancy_r=0.0,
+                comparisons=1,
+                cost_r=0.001,
+                registered_on=date(2026, 1, 1),
+                data_ends=date(2026, 6, 1),
+                measured_z=9.9,
+            )
+
+    def test_the_measured_figure_is_used_over_the_derived_one(self):
+        """Deriving z from hit rates assumes a difference of proportions on
+        independent trials. This claim was a paired mean-R test clustered by
+        instant - a different statistic on a different unit, and the derivation
+        gave 1.30 where the measurement gave 3.69."""
+        evidence = edge_registry.PENDING_FORWARD[0].evidence
+
+        assert evidence.z_score == 3.69
+        assert evidence.measured_z_method
+        assert "clustered" in evidence.as_dict()["z_method"]
