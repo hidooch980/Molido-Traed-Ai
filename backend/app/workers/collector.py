@@ -344,6 +344,14 @@ def resolve_forward() -> dict[str, Any]:
         return resolve_open(session)
 
 
+def ingest_broker_bars() -> dict[str, Any]:
+    """Read the bars the terminal publishes into the metatrader provider."""
+    from app.workers.broker_bars import ingest
+
+    with session_scope() as session:
+        return ingest(session)
+
+
 async def collect(ctx: dict) -> dict[str, Any]:
     """ARQ task wrapper.
 
@@ -387,6 +395,18 @@ async def collect(ctx: dict) -> dict[str, Any]:
         payload["resolved"] = {
             "resolved": 0,
             "reason": f"{type(problem).__name__} while resolving open entries",
+        }
+
+    # The broker's own bars, under their own provider. They have been published
+    # every twenty seconds since the bridge was built and nothing read them, so
+    # every bar in this database came from a public feed while the account
+    # trades somewhere else.
+    try:
+        payload["broker_bars"] = await asyncio.to_thread(ingest_broker_bars)
+    except Exception as problem:  # noqa: BLE001 - reported, never fatal
+        payload["broker_bars"] = {
+            "ingested": 0,
+            "reason": f"{type(problem).__name__} while reading the bridge",
         }
     return payload
 
