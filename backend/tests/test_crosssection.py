@@ -28,8 +28,28 @@ def series(last: float, *, mean: float = 100.0, spread: float = 1.0, n: int = 60
     return {"closes": closes, "bars": bars}
 
 
+#: Real universe symbols, in a fixed order, so a test asking for "thirty
+#: instruments" gets thirty the ranking will actually consider. Invented names
+#: would exercise nothing but the universe filter.
+UNIVERSE = sorted(cs.RANKED_UNIVERSE)
+
+
 def snapshot(values: dict[str, float], **kwargs):
-    return {symbol: series(last, **kwargs) for symbol, last in values.items()}
+    """Map positional test names onto real universe symbols.
+
+    A caller passing S0..S29 means "thirty instruments"; what the ranking needs
+    is thirty instruments it recognises.
+    """
+    built = {}
+    for index, (name, last) in enumerate(values.items()):
+        symbol = UNIVERSE[index] if name.startswith("S") and index < len(UNIVERSE) else name
+        built[symbol] = series(last, **kwargs)
+    return built
+
+
+def nth(index: int) -> str:
+    """The symbol a positional test name maps to."""
+    return UNIVERSE[index]
 
 
 class TestTheScaleIsShared:
@@ -80,13 +100,13 @@ class TestBothLegsAlways:
         result = cs.rank(snapshot(values), at=NOW)
 
         # S29 is furthest below its mean, so it is the strongest long.
-        assert result.longs[0].symbol == "S29"
+        assert result.longs[0].symbol == nth(29)
 
     def test_the_most_extended_upward_are_shorts(self):
         values = {f"S{i}": 100 + i for i in range(30)}
         result = cs.rank(snapshot(values), at=NOW)
 
-        assert result.shorts[0].symbol == "S29"
+        assert result.shorts[0].symbol == nth(29)
 
     def test_the_two_legs_are_the_same_size(self):
         """The long and short legs are what make the rule market-neutral.
@@ -164,38 +184,89 @@ class TestAFrozenSeriesIsExcluded:
     def test_a_stale_instrument_is_left_out_and_named(self):
         from datetime import timedelta
 
+        frozen = nth(37)
         data = self.fresh({f"S{i}": 100 + i for i in range(30)}, NOW)
-        data["FROZEN"] = series(999.0)
-        data["FROZEN"]["last_at"] = NOW - timedelta(days=2)
+        data[frozen] = series(999.0)
+        data[frozen]["last_at"] = NOW - timedelta(days=2)
 
         result = cs.rank(data, at=NOW, bar_interval=timedelta(hours=1))
 
         picked = [r.symbol for r in result.longs + result.shorts]
-        assert "FROZEN" not in picked
-        assert any("FROZEN" in note for note in result.skipped)
+        assert frozen not in picked
+        assert any(frozen in note and "behind" in note for note in result.skipped)
 
     def test_one_late_bar_is_tolerated(self):
         """A slow provider is not a stopped series, and excluding it would
         thin the cross-section for no reason."""
         from datetime import timedelta
 
+        slow = nth(35)
         data = self.fresh({f"S{i}": 100 + i for i in range(30)}, NOW)
-        data["SLOW"] = series(140.0)
-        data["SLOW"]["last_at"] = NOW - timedelta(hours=1)
+        data[slow] = series(140.0)
+        data[slow]["last_at"] = NOW - timedelta(hours=1)
 
         result = cs.rank(data, at=NOW, bar_interval=timedelta(hours=1))
 
-        assert not any("SLOW" in note for note in result.skipped)
+        assert not any(slow in note for note in result.skipped)
 
     def test_without_an_interval_nothing_is_excluded_for_staleness(self):
         """The caller has to say how long a bar is. Guessing would either
         exclude everything on a daily series or nothing on a minute one."""
         from datetime import timedelta
 
+        frozen = nth(36)
         data = self.fresh({f"S{i}": 100 + i for i in range(30)}, NOW)
-        data["FROZEN"] = series(999.0)
-        data["FROZEN"]["last_at"] = NOW - timedelta(days=2)
+        data[frozen] = series(999.0)
+        data[frozen]["last_at"] = NOW - timedelta(days=2)
 
         result = cs.rank(data, at=NOW)
 
-        assert not any("FROZEN" in note for note in result.skipped)
+        assert not any(frozen in note for note in result.skipped)
+
+
+class TestTheRankedUniverseIsADecision:
+    """Not "whatever is active in the database". A universe that changes
+    whenever somebody adds an instrument is a universe nobody chose, and a
+    forward measurement taken across a changing one measures the changes.
+
+    Gold, silver, oil and five index CFDs became available on the broker the
+    day after this measurement started. They are collected and deliberately not
+    ranked."""
+
+    def test_it_is_fixed_and_versioned(self):
+        assert cs.UNIVERSE_VERSION
+        assert len(cs.RANKED_UNIVERSE) == 49
+
+    def test_an_instrument_outside_it_is_not_ranked(self):
+        data = snapshot({s: 100.0 for s in list(cs.RANKED_UNIVERSE)[:30]})
+        data["XAUUSD"] = series(999.0)
+
+        result = cs.rank(data, at=NOW)
+
+        picked = [r.symbol for r in result.longs + result.shorts]
+        assert "XAUUSD" not in picked
+
+    def test_the_exclusion_is_named_not_silent(self):
+        """An instrument absent from every ranking looks the same whether it
+        was excluded on purpose or lost by accident."""
+        data = snapshot({s: 100.0 for s in list(cs.RANKED_UNIVERSE)[:30]})
+        data["XAUUSD"] = series(999.0)
+
+        result = cs.rank(data, at=NOW)
+
+        assert any("XAUUSD" in note and "universe" in note for note in result.skipped)
+
+    def test_the_universe_travels_with_the_result(self):
+        """So a series can be read years later and its universe identified,
+        rather than inferred from which symbols happen to appear."""
+        data = snapshot({s: 100.0 + i for i, s in enumerate(list(cs.RANKED_UNIVERSE)[:30])})
+
+        assert cs.rank(data, at=NOW).as_dict()["universe"] == cs.UNIVERSE_VERSION
+
+    def test_passing_none_ranks_everything(self):
+        """A caller running an explicit experiment across a different universe
+        may say so; the default is the measured one."""
+        data = snapshot({f"NOTREAL{i}": 100 + i for i in range(30)})
+
+        assert cs.rank(data, at=NOW, universe=None).available is True
+        assert cs.rank(data, at=NOW).available is False

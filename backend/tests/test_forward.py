@@ -29,11 +29,16 @@ NOW = datetime(2026, 8, 15, 12, 0, tzinfo=UTC)
 @pytest.fixture()
 def market(session, provider):
     """Thirty instruments with enough history to rank, spread apart in price."""
+    # Real universe symbols, not invented ones. The ranking only considers
+    # instruments in `RANKED_UNIVERSE`, so a fixture built from SYM00..SYM29
+    # would exercise nothing but the exclusion.
+    from app.brain.crosssection import RANKED_UNIVERSE
     from app.core.enums import AssetClass
 
-    for n in range(30):
+    universe = sorted(RANKED_UNIVERSE)[:30]
+    for n, symbol in enumerate(universe):
         instrument = Instrument(
-            symbol=f"SYM{n:02d}",
+            symbol=symbol,
             name=f"Test {n:02d}",
             asset_class=AssetClass.FOREX,
         )
@@ -122,8 +127,11 @@ class TestRecording:
         """SYM00 is furthest below its mean and SYM29 furthest above."""
         result = forward.record_cycle(market, as_of=NOW)
 
-        assert "SYM00" in result["longs"]
-        assert "SYM29" in result["shorts"]
+        from app.brain.crosssection import RANKED_UNIVERSE
+
+        universe = sorted(RANKED_UNIVERSE)[:30]
+        assert universe[0] in result["longs"]
+        assert universe[29] in result["shorts"]
 
     def test_a_thin_market_records_nothing_and_says_why(self, session):
         result = forward.record_cycle(session, as_of=NOW)
@@ -158,11 +166,14 @@ class TestTheInstantIsWhereTheMarketWas:
     def test_one_instrument_trading_late_does_not_move_the_instant(
         self, market, session, provider
     ):
+        # A crypto pair whose last bar is a day after everything else.
+        from app.brain.crosssection import RANKED_UNIVERSE
         from app.core.enums import AssetClass
 
-        # A crypto pair whose last bar is a day after everything else.
+        # In the universe, and outside the thirty the fixture already created.
+        late_symbol = sorted(RANKED_UNIVERSE)[35]
         crypto = Instrument(
-            symbol="BTCUSD", name="Bitcoin", asset_class=AssetClass.CRYPTO
+            symbol=late_symbol, name="Trades late", asset_class=AssetClass.FOREX
         )
         session.add(crypto)
         session.flush()
@@ -194,10 +205,12 @@ class TestTheInstantIsWhereTheMarketWas:
     def test_the_whole_book_still_ranks_on_a_weekend(self, market, session, provider):
         """The failure this exists to prevent: everything excluded as stale
         because one instrument never sleeps."""
+        from app.brain.crosssection import RANKED_UNIVERSE
         from app.core.enums import AssetClass
 
+        late_symbol = sorted(RANKED_UNIVERSE)[36]
         crypto = Instrument(
-            symbol="ETHUSD", name="Ether", asset_class=AssetClass.CRYPTO
+            symbol=late_symbol, name="Trades late", asset_class=AssetClass.FOREX
         )
         session.add(crypto)
         session.flush()
@@ -237,10 +250,13 @@ class TestTheInstantIsWhereTheMarketWas:
 
         That flatters the rule silently and would have gone into the forward
         series as evidence."""
+        from app.brain.crosssection import RANKED_UNIVERSE
         from app.core.enums import AssetClass
 
+        # In the universe, and outside the thirty the fixture already created.
+        late_symbol = sorted(RANKED_UNIVERSE)[35]
         crypto = Instrument(
-            symbol="BTCUSD", name="Bitcoin", asset_class=AssetClass.CRYPTO
+            symbol=late_symbol, name="Trades late", asset_class=AssetClass.FOREX
         )
         session.add(crypto)
         session.flush()

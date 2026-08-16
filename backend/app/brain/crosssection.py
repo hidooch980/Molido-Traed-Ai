@@ -53,6 +53,40 @@ ATR_WINDOW = 14
 #: How much of each tail to take. A tenth at each end, as tested.
 TAIL_FRACTION = 0.10
 
+#: The instruments this rule ranks, fixed and versioned.
+#:
+#: Not "whatever is active in the database". A universe that changes whenever
+#: somebody adds an instrument is a universe nobody chose, and a forward
+#: measurement taken across a changing universe measures the changes.
+#:
+#: Gold, silver, oil and five index CFDs became available on the broker the day
+#: after this measurement started. They are collected and deliberately not
+#: ranked: adding twenty instruments mid-measurement would mean the series
+#: covers two different universes and the join is invisible afterwards. Equities
+#: and indices also behave differently from currencies - they trend where FX
+#: mean-reverts - so including them changes the rule rather than widening it.
+#:
+#: Adding them is a decision for the next measurement, taken deliberately, with
+#: its own start date.
+UNIVERSE_VERSION = "fx-metals-crypto-2026-08"
+
+RANKED_UNIVERSE: frozenset[str] = frozenset({
+    # Majors and crosses
+    "AUDCAD", "AUDCHF", "AUDJPY", "AUDNZD", "AUDUSD",
+    "CADCHF", "CADJPY", "CHFJPY",
+    "EURAUD", "EURCAD", "EURCHF", "EURGBP", "EURJPY", "EURNZD", "EURUSD",
+    "GBPAUD", "GBPCAD", "GBPCHF", "GBPJPY", "GBPNZD", "GBPUSD",
+    "NZDCAD", "NZDCHF", "NZDJPY", "NZDUSD",
+    "USDCAD", "USDCHF", "USDJPY",
+    # Emerging and minor
+    "USDCNH", "USDCZK", "USDDKK", "USDHKD", "USDHUF", "USDILS", "USDINR",
+    "USDMXN", "USDNOK", "USDPLN", "USDSEK", "USDSGD", "USDTHB", "USDTRY",
+    "USDZAR",
+    # Metals and crypto, as futures - the series the measurement was taken on
+    "GCFUT", "SIFUT", "HGFUT", "PLFUT",
+    "BTCUSD", "ETHUSD",
+})
+
 #: Below this many instruments the ranking is not a ranking. Eight instruments
 #: always have a "most extended" one, and calling it a signal is calling the
 #: shape of a small sample a signal.
@@ -108,6 +142,7 @@ class CrossSection:
             "available": self.available,
             "reason": self.reason,
             "considered": self.considered,
+            "universe": UNIVERSE_VERSION,
             "longs": [r.as_dict() for r in self.longs],
             "shorts": [r.as_dict() for r in self.shorts],
             # Published, because an instrument that silently drops out of the
@@ -155,6 +190,7 @@ def rank(
     min_cross_section: int = MIN_CROSS_SECTION,
     tail_fraction: float = TAIL_FRACTION,
     bar_interval: timedelta | None = None,
+    universe: frozenset[str] | None = RANKED_UNIVERSE,
 ) -> CrossSection:
     """Rank the instruments priced at this instant and take both tails.
 
@@ -171,6 +207,13 @@ def rank(
     )
 
     for symbol, data in snapshot.items():
+        if universe is not None and symbol not in universe:
+            # Collected but not ranked. Naming it rather than dropping it
+            # silently: an instrument absent from every ranking looks the same
+            # whether it was excluded on purpose or lost by accident.
+            skipped.append(f"{symbol}: outside the ranked universe {UNIVERSE_VERSION}")
+            continue
+
         closes = list(data.get("closes") or [])
         bars = list(data.get("bars") or [])
 
