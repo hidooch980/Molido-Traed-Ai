@@ -118,7 +118,10 @@ def backfill(
     skipped: list[str] = []
     holes: list[str] = []
 
-    for symbol in symbols:
+    for position, symbol in enumerate(symbols, start=1):
+        # Progress on a run this long is not decoration. Forty minutes of
+        # silence and forty minutes of a wedged socket look identical.
+        print(f"  [{position}/{len(symbols)}] {symbol}", flush=True)
         instrument = session.scalar(
             select(Instrument).where(Instrument.symbol == symbol)
         )
@@ -194,10 +197,16 @@ def backfill(
             },
         )
         session.execute(statement)
+        # Committed per symbol, not once at the end. The hourly run is roughly
+        # 3,700 requests over forty minutes, and a single transaction means one
+        # failure at the twenty-seventh symbol discards the other twenty-six.
+        # The upsert makes a re-run cheap either way, but re-running forty
+        # minutes of network requests to recover work already done is a cost
+        # nobody has to pay.
+        session.commit()
         imported[symbol] = len(payload)
         written += len(payload)
 
-    session.commit()
 
     # Stated, not left to be inferred from the length of a dict. A dry run of
     # twenty-eight symbols got fifteen answers and then thirteen consecutive

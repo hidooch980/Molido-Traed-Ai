@@ -424,3 +424,62 @@ class TestAPartialImportDoesNotLookLikeSuccess:
         )
 
         assert "throttled" in report
+
+
+class TestALongRunSurvivesOneFailure:
+    """The hourly run is roughly 3,700 requests over forty minutes. A single
+    transaction means one failure at the twenty-seventh symbol discards the
+    other twenty-six."""
+
+    def test_work_done_before_a_failure_is_kept(self, session, provider):
+        from app.brain.crosssection import RANKED_UNIVERSE
+
+        symbols = sorted(RANKED_UNIVERSE)[:3]
+        for symbol in symbols:
+            row = Instrument(
+                symbol=symbol, name=symbol, asset_class=AssetClass.FOREX
+            )
+            session.add(row)
+            session.flush()
+            session.add(
+                Bar(
+                    instrument_id=row.id,
+                    timeframe=Timeframe.H1.value,
+                    provider_id=provider.id,
+                    event_time=NOW,
+                    revision=1,
+                    ingested_at=NOW,
+                    open=1.10,
+                    high=1.11,
+                    low=1.09,
+                    close=1.10,
+                    volume=1.0,
+                    quality_score=1.0,
+                )
+            )
+        session.flush()
+
+        class FailsOnTheThird(FakeFeed):
+            def __init__(self):
+                super().__init__(year_of_bars(110366))
+                self.seen = 0
+
+            def verify_scale(self, symbol, reference, *, at):  # type: ignore[override]
+                self.seen += 1
+                if self.seen >= 3:
+                    raise ProviderError("the feed stopped answering")
+                return super().verify_scale(symbol, reference, at=at)
+
+        report = deep_history.backfill(
+            session,
+            symbols=symbols,
+            provider=FailsOnTheThird(),
+            start_year=2024,
+            end=NOW,
+        )
+
+        # The first two are on disk, not rolled back with the third.
+        assert len(report["by_symbol"]) == 2
+        assert (
+            session.query(Bar).filter(Bar.timeframe == Timeframe.D1.value).count() > 0
+        )
