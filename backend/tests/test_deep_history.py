@@ -674,3 +674,36 @@ class TestItGivesUpInsteadOfGrinding:
         assert report["gave_up"]
         assert len(report["by_symbol"]) == 2
         assert report["written"] > 0
+
+
+class TestTheProviderRowSurvivesAConcurrentRun:
+    """Two backfills overlapped, both found no provider row, both inserted,
+    and the second died on UniqueViolation after doing real work."""
+
+    def test_a_second_run_does_not_collide(self, session, eurusd):
+        from app.models.instruments import Provider
+
+        session.add(
+            Provider(
+                code=deep_history.PROVIDER_CODE,
+                name="Dukascopy Bank",
+                capabilities={"ohlcv": True},
+            )
+        )
+        session.commit()
+
+        report = deep_history.backfill(
+            session,
+            symbols=["EURUSD"],
+            provider=FakeFeed(year_of_bars(110366), serves=2),
+            start_year=2024,
+            end=NOW,
+        )
+
+        assert report["written"] > 0
+        assert (
+            session.query(Provider)
+            .filter(Provider.code == deep_history.PROVIDER_CODE)
+            .count()
+            == 1
+        )

@@ -88,15 +88,32 @@ CONSECUTIVE_FAILURES_BEFORE_STOPPING = 4
 
 
 def _provider(session: Session) -> Provider:
-    row = session.scalar(select(Provider).where(Provider.code == PROVIDER_CODE))
-    if row is None:
-        row = Provider(
+    """Get or create the provider row, safely under concurrency.
+
+    Read-then-insert loses a race: two backfills started minutes apart both
+    find no row, both insert, and the second dies on
+    `UniqueViolation: Key (code)=(dukascopy) already exists` after doing real
+    work. That happened - two runs overlapped and the second lost everything it
+    had fetched.
+
+    The insert is a no-op on conflict and the row is read back afterwards, so
+    whoever wins the race, both callers end up with the same provider.
+    """
+    statement = (
+        pg_insert(Provider)
+        .values(
             code=PROVIDER_CODE,
             name="Dukascopy Bank",
             capabilities={"ohlcv": True, "ticks": True},
         )
-        session.add(row)
-        session.flush()
+        .on_conflict_do_nothing(index_elements=[Provider.code])
+    )
+    session.execute(statement)
+    row = session.scalar(select(Provider).where(Provider.code == PROVIDER_CODE))
+    if row is None:  # pragma: no cover - the insert above guarantees it exists
+        raise RuntimeError(
+            f"the {PROVIDER_CODE} provider row could neither be created nor read"
+        )
     return row
 
 
