@@ -40,13 +40,20 @@ input int BarCount = 500;
 
 //--- Symbols to add to Market Watch on start, comma separated.
 //---
+//--- Taken from `molido_available.json`, which the expert writes on start -
+//--- not guessed. Three of the first six names guessed from outside did not
+//--- exist here: this broker has no XAGEUR at all, and its oil is BRENT and
+//--- WTI rather than the XTIUSD/XBRUSD other brokers use. Each wrong guess
+//--- fails silently, and silence looks exactly like a broker that lacks the
+//--- instrument.
+//---
 //--- The expert publishes what Market Watch shows, and Market Watch shows
 //--- whatever the terminal shipped with - ten majors on this deployment, no
 //--- metals and no energy. The broker offers far more; nothing was asking for
 //--- it. `SymbolSelect` asks, and a symbol the broker does not have is
 //--- reported by name rather than failing the start: a typo and an instrument
 //--- the broker genuinely lacks need different fixes.
-input string ExtraSymbols = "XAUUSD,XAGUSD,XAUEUR,XAGEUR,XTIUSD,XBRUSD";
+input string ExtraSymbols = "XAUUSD,XAGUSD,XAUEUR,BRENT,WTI,.US30Cash,.US500Cash,.USTECHCash,.DE40Cash,.JP225Cash";
 
 string TimeframeName(ENUM_TIMEFRAMES period)
   {
@@ -273,6 +280,7 @@ int OnInit()
    //--- One timer rather than OnTick: this publishes on a clock, not on price
    //--- movement. Tying it to ticks would stop publishing exactly when the
    //--- market goes quiet, which is when a stale-feed check needs it most.
+   PublishAvailableSymbols();
    SelectExtraSymbols();
    EventSetTimer(RefreshSeconds);
    Publish();
@@ -307,8 +315,6 @@ void SelectExtraSymbols()
       else
          Print("MolidoBridge: ", name, " not offered by this broker (", GetLastError(), ")");
      }
-
-   PublishAvailableSymbols();
   }
 
 //+------------------------------------------------------------------+
