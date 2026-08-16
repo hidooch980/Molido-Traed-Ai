@@ -40,6 +40,7 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
+from app.brain import crosssection
 from app.core.enums import Timeframe
 from app.core.errors import ProviderError
 from app.models.instruments import Instrument, Provider
@@ -197,9 +198,32 @@ def backfill(
         written += len(payload)
 
     session.commit()
+
+    # Stated, not left to be inferred from the length of a dict. A dry run of
+    # twenty-eight symbols got fifteen answers and then thirteen consecutive
+    # 503s, and a backfill that reports "imported 15" reads as success. Fifteen
+    # is below the minimum cross-section, so nothing could have been measured
+    # on it - but had the throttle cut in at twenty-two instead, the
+    # measurement would have run happily across a universe chosen by which
+    # requests the feed felt like answering.
+    enough = len(imported) >= crosssection.MIN_CROSS_SECTION
+
     return {
         "written": written,
         "by_symbol": imported,
+        "usable_for_ranking": enough,
+        "universe_warning": (
+            None
+            if enough
+            else (
+                f"only {len(imported)} of {len(symbols)} symbols imported, and "
+                f"the rule needs {crosssection.MIN_CROSS_SECTION} to rank. "
+                "Measuring on this would measure a universe chosen by which "
+                "requests succeeded, not the one the rule was tested on - "
+                "re-run rather than measure"
+            )
+        ),
+        "throttled": feed.throttled,
         "timeframe": timeframe.value,
         "from": start.isoformat(),
         "provider": PROVIDER_CODE,
@@ -307,12 +331,20 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     print(f"written {report['written']} bars across {len(report['by_symbol'])} symbols")
+    if report["throttled"]:
+        print(f"  the feed asked us to slow down {report['throttled']} times")
     for symbol, count in sorted(report["by_symbol"].items()):
         print(f"  {symbol:8} {count:>8}")
     for note in report["skipped"]:
         print(f"  SKIPPED {note}")
     if report["periods_with_no_file"]:
         print(f"  {len(report['periods_with_no_file'])} periods had no file")
+    if report["universe_warning"]:
+        # Non-zero exit. A partial import that returns success is how a
+        # measurement ends up running on whatever arrived.
+        print()
+        print(f"INCOMPLETE: {report['universe_warning']}")
+        return 2
     return 0
 
 

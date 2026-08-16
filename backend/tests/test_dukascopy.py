@@ -333,23 +333,32 @@ class TestAHoleIsNamedRatherThanLeftInTheSeries:
         """The distinction that matters. A 404 is a period the feed does not
         hold; a dropped connection is a period nobody read, and treating the
         second as the first writes a hole into ten years of history and calls
-        it a closed market."""
+        it a closed market.
+
+        It is retried first - a reset connection is usually one bad moment -
+        but a persistent one raises rather than resolving into silence."""
         import urllib.error
 
-        provider = dk.DukascopyProvider(scales={"EURUSD": 1e5})
+        attempts: list[int] = []
+        provider = dk.DukascopyProvider(
+            scales={"EURUSD": 1e5}, min_interval=0, sleep=lambda _: None
+        )
 
         def drop(request, timeout=None):
+            attempts.append(1)
             raise urllib.error.URLError("connection reset")
 
         provider._opener = drop
 
-        with pytest.raises(ProviderError, match="could not be read"):
+        with pytest.raises(ProviderError, match="still failing after"):
             provider.fetch_ohlcv(
                 "EURUSD",
                 Timeframe.D1,
                 datetime(2024, 1, 1, tzinfo=UTC),
                 datetime(2024, 2, 1, tzinfo=UTC),
             )
+
+        assert len(attempts) == dk.MAX_ATTEMPTS
 
     def test_a_404_reads_as_empty(self):
         """Which is what an uncompleted period returns: the 2026 daily file is
@@ -376,3 +385,133 @@ class TestAHoleIsNamedRatherThanLeftInTheSeries:
             == []
         )
         assert provider.missing_periods == ["EURUSD/2024/BID_candles_day_1.bi5"]
+
+
+class TestThrottlingSelectsAUniverseIfYouLetIt:
+    """A dry run of twenty-eight symbols got fifteen answers and then thirteen
+    consecutive 503s - not scattered, every request after the fifteenth. A 503
+    raises, the symbol is skipped, and the backfill reports fifteen imported
+    instruments. Fifteen is below the minimum cross-section, so that run would
+    have refused to measure; had the cut landed at twenty-two it would have
+    measured happily on a universe chosen by arrival order."""
+
+    def opener(self, codes):
+        """An opener that returns each code in turn, then succeeds."""
+        import io
+        import urllib.error
+
+        sequence = list(codes)
+
+        def answer(request, timeout=None):
+            if sequence:
+                code = sequence.pop(0)
+                raise urllib.error.HTTPError(
+                    request.full_url, code, "no", {}, io.BytesIO(b"")
+                )
+
+            class Response:
+                def read(self):
+                    import lzma
+
+                    return lzma.compress(REAL_DAY_1, format=lzma.FORMAT_ALONE)
+
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *a):
+                    return False
+
+            return Response()
+
+        return answer
+
+    def test_a_throttled_request_is_retried_and_succeeds(self):
+        slept: list[float] = []
+        provider = dk.DukascopyProvider(
+            min_interval=0, sleep=slept.append, scales={"EURUSD": 1e5}
+        )
+        provider._opener = self.opener([503, 503])
+
+        body = provider._fetch(f"{dk.FEED}/EURUSD/2024/BID_candles_day_1.bi5")
+
+        assert body == REAL_DAY_1
+        assert provider.throttled == 2
+
+    def test_the_backoff_doubles(self):
+        """A feed that refused thirteen in a row wants a pause, not the same
+        rate with more attempts."""
+        slept: list[float] = []
+        provider = dk.DukascopyProvider(min_interval=0.5, sleep=slept.append)
+        provider._opener = self.opener([503, 503, 503])
+
+        provider._fetch(f"{dk.FEED}/EURUSD/2024/BID_candles_day_1.bi5")
+
+        backoffs = [s for s in slept if s >= 0.5]
+        assert backoffs[:3] == [0.5, 1.0, 2.0]
+
+    def test_giving_up_raises_rather_than_returning_empty(self):
+        """The failure that matters. Empty means "the feed has no file", and a
+        throttle read as empty is a hole in the history that later looks like
+        a closed market."""
+        provider = dk.DukascopyProvider(min_interval=0, sleep=lambda _: None)
+        provider._opener = self.opener([503] * 10)
+
+        with pytest.raises(ProviderError, match="still failing after"):
+            provider._fetch(f"{dk.FEED}/EURUSD/2024/BID_candles_day_1.bi5")
+
+    def test_a_404_is_never_retried(self):
+        """It is an answer. Retrying it four times would quadruple every
+        weekend across twenty years."""
+        attempts: list[str] = []
+        import io
+        import urllib.error
+
+        def gone(request, timeout=None):
+            attempts.append(request.full_url)
+            raise urllib.error.HTTPError(
+                request.full_url, 404, "Not Found", {}, io.BytesIO(b"")
+            )
+
+        provider = dk.DukascopyProvider(min_interval=0, sleep=lambda _: None)
+        provider._opener = gone
+
+        assert provider._fetch(f"{dk.FEED}/EURUSD/2024/BID_candles_day_1.bi5") == b""
+        assert len(attempts) == 1
+
+    def test_a_400_is_not_retried_either(self):
+        """Retrying a request the server called malformed just makes four
+        malformed requests."""
+        import io
+        import urllib.error
+
+        def bad(request, timeout=None):
+            raise urllib.error.HTTPError(
+                request.full_url, 400, "Bad Request", {}, io.BytesIO(b"")
+            )
+
+        provider = dk.DukascopyProvider(min_interval=0, sleep=lambda _: None)
+        provider._opener = bad
+
+        with pytest.raises(ProviderError, match="answered 400"):
+            provider._fetch(f"{dk.FEED}/EURUSD/2024/BID_candles_day_1.bi5")
+
+    def test_requests_are_paced_apart(self):
+        slept: list[float] = []
+        provider = dk.DukascopyProvider(min_interval=0.6, sleep=slept.append)
+        provider._opener = self.opener([])
+
+        for _ in range(3):
+            provider._fetch(f"{dk.FEED}/EURUSD/2024/BID_candles_day_1.bi5")
+
+        # The first request pays nothing; the next two wait out the interval.
+        assert len([s for s in slept if 0 < s <= 0.6]) >= 2
+
+    def test_the_throttle_count_is_published(self):
+        """A run that retried four hundred times succeeded, and that is worth
+        knowing before the next one is scheduled."""
+        provider = dk.DukascopyProvider(min_interval=0, sleep=lambda _: None)
+        provider._opener = self.opener([503])
+
+        provider._fetch(f"{dk.FEED}/EURUSD/2024/BID_candles_day_1.bi5")
+
+        assert provider.throttled == 1

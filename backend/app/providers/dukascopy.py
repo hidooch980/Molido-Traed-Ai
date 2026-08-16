@@ -39,6 +39,17 @@ silent wrong-price bug:
   744 records. So this is a history source, not a live feed - asking it for
   today returns nothing, which is not the same as today having no bars.
 
+**The feed throttles, and it throttles into a shape that looks like data.** A
+dry run of twenty-eight symbols got fifteen answers and then thirteen
+consecutive 503s - not scattered, but every request after the fifteenth. A 503
+raises, the symbol is skipped, and the backfill finishes reporting fifteen
+imported instruments. Fifteen is below the minimum cross-section of twenty, so
+the measurement built on it would refuse to run at all; had the cut landed at
+twenty-two instead, it would have run happily on a universe chosen by whichever
+symbols the feed answered first. So requests are paced and throttled responses
+are retried with backoff, and a 404 is never retried because a 404 is an
+answer.
+
 A period that comes back empty is *recorded by name*, not skipped in silence.
 Weekends are empty legitimately, but so is a year the feed has a gap in, and a
 backfill that returns fewer bars without saying which periods it could not read
@@ -57,9 +68,11 @@ from __future__ import annotations
 import calendar
 import lzma
 import struct
+import time
 import urllib.error
 import urllib.request
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from app.core.enums import AssetClass, Timeframe
 from app.core.errors import ProviderError
@@ -92,6 +105,19 @@ SCALES: tuple[float, ...] = (1e5, 1e3, 1e2, 1e4, 1e6)
 #: different venue, and the failure being caught is a factor of a hundred, not
 #: a few pips.
 SCALE_TOLERANCE = 0.25
+
+#: Seconds between requests. Not politeness for its own sake: the feed answered
+#: fifteen rapid requests and then 503'd thirteen in a row, and the failure
+#: silently selects a universe by arrival order.
+MIN_INTERVAL = 0.6
+
+#: Attempts before giving up on a throttled or transient response.
+MAX_ATTEMPTS = 4
+
+#: Worth retrying. 404 is deliberately absent - it means the feed does not hold
+#: that period, which is an answer rather than a failure, and retrying it four
+#: times over twenty years would quadruple every weekend.
+RETRY_STATUS = frozenset({429, 500, 502, 503, 504})
 
 #: The earliest history the feed serves. Instruments start at different dates;
 #: this is the floor for the oldest of them.
@@ -248,9 +274,20 @@ class DukascopyProvider:
         timeout: float = 30.0,
         opener: object | None = None,
         scales: dict[str, float] | None = None,
+        min_interval: float = MIN_INTERVAL,
+        max_attempts: int = MAX_ATTEMPTS,
+        sleep: Any = None,
     ) -> None:
         self._timeout = timeout
         self._opener = opener
+        self._min_interval = min_interval
+        self._max_attempts = max_attempts
+        self._sleep = sleep or time.sleep
+        self._last_request = 0.0
+        #: How often the feed asked us to slow down. Published rather than
+        #: absorbed: a run that retried four hundred times succeeded, and that
+        #: is worth knowing before the next one is scheduled.
+        self.throttled = 0
         # Verified scales, per symbol. Populated by `verify_scale` and empty
         # until then - an unverified symbol is refused rather than imported on
         # a guess.
@@ -382,29 +419,23 @@ class DukascopyProvider:
                 cursor += timedelta(days=days)
         return moments
 
+    def _pace(self) -> None:
+        """Wait out the minimum interval since the last request."""
+        if self._min_interval <= 0:
+            return
+        waited = time.monotonic() - self._last_request
+        if waited < self._min_interval:
+            self._sleep(self._min_interval - waited)
+        self._last_request = time.monotonic()
+
     def _fetch(self, url: str) -> bytes:
         if not url.startswith(FEED + "/"):
             # Belt and braces with `_safe`. Everything reaching here is built
             # by `_url`, and this is what makes that a checked fact rather
             # than a convention.
             raise ProviderError(f"refusing to fetch {url!r}: not this feed")
-        request = urllib.request.Request(  # noqa: S310 - scheme fixed by FEED
-            url, headers={"User-Agent": "molido/1.0 (research backfill)"}
-        )
-        try:
-            opener = self._opener or urllib.request.urlopen
-            with opener(request, timeout=self._timeout) as response:  # type: ignore[operator]
-                raw = response.read()
-        except urllib.error.HTTPError as problem:
-            if problem.code == 404:
-                # A period the feed does not hold. Same meaning as empty.
-                return b""
-            raise ProviderError(
-                f"{url} answered {problem.code}", url=url, status=problem.code
-            ) from problem
-        except OSError as problem:
-            raise ProviderError(f"{url} could not be read: {problem}", url=url) from problem
 
+        raw = self._read(url)
         if not raw:
             return b""
         try:
@@ -415,6 +446,54 @@ class DukascopyProvider:
                 "is usually an error page served with a 200",
                 url=url,
             ) from problem
+
+    def _read(self, url: str) -> bytes:
+        """One request, paced, retried on a throttle, never retried on a 404.
+
+        The backoff doubles. A feed that answered fifteen requests and then
+        refused thirteen wants a pause, not the same rate with more attempts.
+        """
+        request = urllib.request.Request(  # noqa: S310 - scheme fixed by FEED
+            url, headers={"User-Agent": "molido/1.0 (research backfill)"}
+        )
+        opener = self._opener or urllib.request.urlopen
+        delay = self._min_interval or 0.5
+        last: Exception | None = None
+
+        for attempt in range(self._max_attempts):
+            self._pace()
+            try:
+                with opener(request, timeout=self._timeout) as response:  # type: ignore[operator]
+                    return bytes(response.read())
+            except urllib.error.HTTPError as problem:
+                if problem.code == 404:
+                    # A period the feed does not hold. An answer, not a
+                    # failure - and retrying it would quadruple every weekend
+                    # across twenty years.
+                    return b""
+                if problem.code not in RETRY_STATUS:
+                    raise ProviderError(
+                        f"{url} answered {problem.code}", url=url, status=problem.code
+                    ) from problem
+                last = problem
+            except OSError as problem:
+                # Timeouts and reset connections. Retried for the same reason
+                # a 503 is: the alternative is a series whose holes were
+                # decided by the network.
+                last = problem
+
+            self.throttled += 1
+            if attempt < self._max_attempts - 1:
+                self._sleep(delay)
+                delay *= 2
+
+        raise ProviderError(
+            f"{url} still failing after {self._max_attempts} attempts: {last}. "
+            "Reported rather than skipped: a symbol dropped here is a symbol "
+            "missing from the cross-section, and a cross-section chosen by "
+            "which requests happened to succeed is not the tested universe",
+            url=url,
+        )
 
 
 def default_asset_class(symbol: str) -> AssetClass:

@@ -352,3 +352,75 @@ class TestTheEntryPoint:
         """Rather than reaching the feed and 404ing 3,700 times."""
         with pytest.raises(SystemExit):
             deep_history.main(["--timeframe", "M5"])
+
+
+class TestAPartialImportDoesNotLookLikeSuccess:
+    """The real dry run got fifteen answers then thirteen consecutive 503s. A
+    report of "imported 15" reads as success. Fifteen is below the minimum
+    cross-section so nothing could be measured on it - but had the throttle cut
+    in at twenty-two, the measurement would have run happily across a universe
+    chosen by which requests the feed felt like answering."""
+
+    def test_too_few_symbols_is_flagged(self, session, eurusd):
+        report = deep_history.backfill(
+            session,
+            symbols=["EURUSD"],
+            provider=FakeFeed(year_of_bars(110366)),
+            start_year=2024,
+            end=NOW,
+        )
+
+        assert report["usable_for_ranking"] is False
+        assert "chosen by which requests succeeded" in report["universe_warning"]
+
+    def test_a_full_import_carries_no_warning(self, session, provider):
+        from app.brain.crosssection import MIN_CROSS_SECTION, RANKED_UNIVERSE
+
+        symbols = sorted(RANKED_UNIVERSE)[:MIN_CROSS_SECTION]
+        for symbol in symbols:
+            row = Instrument(
+                symbol=symbol, name=symbol, asset_class=AssetClass.FOREX
+            )
+            session.add(row)
+            session.flush()
+            session.add(
+                Bar(
+                    instrument_id=row.id,
+                    timeframe=Timeframe.H1.value,
+                    provider_id=provider.id,
+                    event_time=NOW,
+                    revision=1,
+                    ingested_at=NOW,
+                    open=1.10,
+                    high=1.11,
+                    low=1.09,
+                    close=1.10,
+                    volume=1.0,
+                    quality_score=1.0,
+                )
+            )
+        session.flush()
+
+        report = deep_history.backfill(
+            session,
+            symbols=symbols,
+            provider=FakeFeed(year_of_bars(110366)),
+            start_year=2024,
+            end=NOW,
+        )
+
+        assert report["usable_for_ranking"] is True
+        assert report["universe_warning"] is None
+
+    def test_the_throttle_count_reaches_the_report(self, session, eurusd):
+        """A run that retried four hundred times succeeded, and that is worth
+        knowing before the next one is scheduled."""
+        report = deep_history.backfill(
+            session,
+            symbols=["EURUSD"],
+            provider=FakeFeed(year_of_bars(110366)),
+            start_year=2024,
+            end=NOW,
+        )
+
+        assert "throttled" in report
