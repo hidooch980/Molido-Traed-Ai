@@ -24,6 +24,14 @@ dropping them here keeps the two comparable.
 running is not a trade that broke even, and counting it as one makes every
 measurement pessimistic exactly when the market was trending.
 
+**An entry that can never resolve is retired, not reported forever.** A
+decision recorded without its levels cannot be scored at any future time, so
+leaving it open puts it in the `unresolvable` list on every cycle for the life
+of the deployment. A warning that is permanently on is a warning nobody reads,
+and this project has already had one of those. It is closed and kept, never
+deleted: the decision was really made, and what is being retired is only the
+claim that the market might still answer it.
+
 **Nothing is resolved from a bar at or before the entry.** The entry bar's own
 high and low are not evidence about what happened next - using them is
 lookahead wearing the costume of a fill.
@@ -145,6 +153,7 @@ def resolve_open(
     resolved = 0
     still_open = 0
     abandoned = 0
+    excluded = 0
     missing: list[str] = []
     by_source: dict[str, int] = {}
 
@@ -181,7 +190,28 @@ def resolve_open(
             geometry.get("target"),
         )
         if price is None or stop is None or target is None:
-            missing.append(f"{entry.symbol}: no levels recorded with the decision")
+            # Closed once, not reported forever. These are entries from before
+            # the recorder stored its geometry: they cannot resolve at any
+            # future time, so leaving them open means `unresolvable` is
+            # non-empty on every cycle for the life of the deployment - and a
+            # warning that is always on is a warning nobody reads. That is the
+            # same failure as the healthcheck that was red for months.
+            #
+            # Closed rather than deleted. The decision was really made and the
+            # record of it is worth keeping; what is being retired is the claim
+            # that the market might still answer it.
+            entry.closed_at = moment
+            entry.outcome = "excluded"
+            entry.r_multiple = None
+            entry.after = {
+                "reason": (
+                    "no entry, stop or target was recorded with this decision, "
+                    "so there is no geometry to score it against. Written "
+                    "before the recorder stored its levels. Kept as a record "
+                    "and excluded from every measurement"
+                )
+            }
+            excluded += 1
             continue
 
         price, stop, target = float(price), float(stop), float(target)
@@ -243,6 +273,9 @@ def resolve_open(
     session.commit()
     return {
         "resolved": resolved,
+        # Reported once, on the cycle that retires them, and then zero. A
+        # count that never returns to zero stops being read.
+        "excluded_unscoreable": excluded,
         # Per series, because a pass that resolved forty on the public feed and
         # none on the broker's is not the same fact as one that resolved twenty
         # on each, and the total hides the difference.

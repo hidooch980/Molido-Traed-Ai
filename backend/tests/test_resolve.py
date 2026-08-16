@@ -184,9 +184,17 @@ class TestTheRefusals:
 
 
 class TestNothingDisappearsQuietly:
-    def test_an_entry_with_no_levels_is_named(self, session, provider, symbol):
+    def test_an_entry_with_no_levels_is_named_when_it_is_retired(
+        self, session, provider, symbol
+    ):
         """One that can never resolve shrinks the sample every measurement
-        rests on, and does it silently."""
+        rests on, and it must not do that silently.
+
+        It is counted and given a written reason on the row, once, rather than
+        listed as unresolvable on every cycle forever - see
+        `TestAnEntryThatCanNeverResolveIsRetiredOnce`. Naming it once is what
+        keeps it from disappearing quietly; naming it forever is what stops
+        anybody reading the list."""
         row = JournalEntry(
             symbol="TESTFX", decision="long", opened_at=NOW, arm=ARM_RULE, before={}
         )
@@ -195,8 +203,10 @@ class TestNothingDisappearsQuietly:
 
         report = resolve.resolve_open(session, now=NOW + timedelta(hours=5))
 
-        assert report["unresolvable"]
-        assert "TESTFX" in report["unresolvable"][0]
+        assert report["excluded_unscoreable"] == 1
+        assert "no geometry to score it against" in (
+            session.get(JournalEntry, row.id).after["reason"]
+        )
 
     def test_an_entry_for_a_missing_instrument_is_named(self, session):
         row = JournalEntry(
@@ -292,3 +302,75 @@ class TestAnEntryIsScoredOnTheSeriesItWasDecidedOn:
 
         assert report["resolved"] == 0
         assert any(SOURCE_BROKER in note for note in report["unresolvable"])
+
+
+class TestAnEntryThatCanNeverResolveIsRetiredOnce:
+    """Nineteen entries on the live deployment were recorded before the
+    recorder stored its levels. They cannot be scored at any future time, so
+    leaving them open put them in `unresolvable` on every cycle for the life of
+    the deployment - and a warning that is permanently on is a warning nobody
+    reads. This project has already had one of those."""
+
+    def bare(self, session, symbol="TESTFX"):
+        row = JournalEntry(
+            symbol=symbol,
+            decision="long",
+            opened_at=NOW,
+            arm=ARM_RULE,
+            price_source=SOURCE_PUBLIC,
+            before={"rule": "cross-sectional-stretch"},
+        )
+        session.add(row)
+        session.flush()
+        return row
+
+    def test_it_is_closed_rather_than_reported_forever(
+        self, session, symbol, provider
+    ):
+        row = self.bare(session)
+
+        first = resolve.resolve_open(session, now=NOW + timedelta(hours=2))
+        second = resolve.resolve_open(session, now=NOW + timedelta(hours=3))
+
+        assert first["excluded_unscoreable"] == 1
+        assert second["excluded_unscoreable"] == 0
+        assert second["unresolvable"] == []
+        assert session.get(JournalEntry, row.id).closed_at is not None
+
+    def test_it_is_kept_not_deleted(self, session, symbol, provider):
+        """The decision was really made. What is retired is only the claim
+        that the market might still answer it."""
+        row = self.bare(session)
+
+        resolve.resolve_open(session, now=NOW + timedelta(hours=2))
+
+        stored = session.get(JournalEntry, row.id)
+        assert stored is not None
+        assert stored.outcome == "excluded"
+        assert "no geometry to score it against" in stored.after["reason"]
+
+    def test_it_never_counts_toward_the_comparison(self, session, symbol, provider):
+        """An r_multiple of None keeps it out of both arms. Scoring it as zero
+        would put a breakeven into a measurement it was never part of."""
+        from app.services import journal_log
+
+        self.bare(session)
+        resolve.resolve_open(session, now=NOW + timedelta(hours=2))
+
+        stored = session.query(JournalEntry).one()
+        assert stored.r_multiple is None
+        assert journal_log.comparison(session).rule_trials == 0
+
+    def test_an_entry_with_levels_is_untouched_by_this(
+        self, session, symbol, provider
+    ):
+        """The guard must retire only what cannot be scored, never a live
+        entry the market has simply not answered yet."""
+        row = entry(session)
+        bars(session, provider, symbol, [(99.5, 100.5)])
+
+        report = resolve.resolve_open(session, now=NOW + timedelta(hours=2))
+
+        assert report["excluded_unscoreable"] == 0
+        assert report["still_open"] == 1
+        assert session.get(JournalEntry, row.id).closed_at is None
