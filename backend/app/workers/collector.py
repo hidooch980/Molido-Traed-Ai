@@ -30,14 +30,14 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.core.config import get_settings
 from app.core.enums import AuditEventType, Severity, Timeframe
 from app.core.errors import InsufficientDataError, MolidoError
 from app.core.logging import bind_trace, configure_logging, get_logger
 from app.db.session import session_scope
-from app.models.instruments import Instrument
+from app.models.instruments import Instrument, Provider
 from app.models.market_data import Bar
 from app.providers.base import MarketDataProvider
 from app.providers.registry import get_provider, install_defaults, register
@@ -699,6 +699,63 @@ async def refresh_dna_job(ctx: dict) -> dict[str, Any]:
     return await asyncio.to_thread(refresh_dna)
 
 
+#: Hours at which to retry the deep-history backfill.
+#:
+#: The feed refused every request today - three runs, twenty-eight symbols,
+#: zero bars - and single probes still answer about one time in three. That is
+#: a cooldown counted from cumulative load on this address, and it lifts at an
+#: hour nobody can predict, which makes it exactly the wrong thing to poke by
+#: hand. So it retries itself.
+#:
+#: Six times a day rather than hourly: each attempt that fails still costs the
+#: feed twenty-eight symbols' worth of requests, and hammering a cooldown is
+#: how it got here.
+DEEP_HISTORY_HOURS = {1, 5, 9, 13, 17, 21}
+
+
+async def deep_history_job(ctx: dict) -> dict[str, Any]:
+    """Try the deep-history backfill, and stop trying once it has landed.
+
+    Self-cancelling by checking what is already stored. A job that re-fetches
+    twenty years every four hours forever would be a permanent load on a feed
+    that has already objected once, and the upsert would make it invisible.
+    """
+    return await asyncio.to_thread(run_deep_history)
+
+
+def run_deep_history() -> dict[str, Any]:
+    from app.brain.crosssection import MIN_CROSS_SECTION
+    from app.core.enums import Timeframe
+    from app.workers.deep_history import OFFERED, PROVIDER_CODE, backfill
+
+    with session_scope() as session:
+        stored = session.execute(
+            select(func.count(func.distinct(Bar.instrument_id))).where(
+                Bar.timeframe == Timeframe.D1.value,
+                Bar.provider_id.in_(
+                    select(Provider.id).where(Provider.code == PROVIDER_CODE)
+                ),
+            )
+        ).scalar_one()
+
+    if stored >= MIN_CROSS_SECTION:
+        # Enough to rank. Anything further is load on a feed that has already
+        # objected, in exchange for bars nothing is waiting for.
+        return {
+            "skipped": True,
+            "reason": (
+                f"{stored} instruments already have deep daily history, which "
+                f"clears the {MIN_CROSS_SECTION} the rule needs to rank"
+            ),
+        }
+
+    with session_scope() as session:
+        report = backfill(
+            session, symbols=list(OFFERED), timeframe=Timeframe.D1
+        )
+    return {k: v for k, v in report.items() if k != "periods_with_no_file"}
+
+
 def _cron_jobs() -> list:
     from arq import cron
 
@@ -717,6 +774,15 @@ def _cron_jobs() -> list:
         # collection cycle that has to land on the minute.
         cron(build_episodes_job, hour={EPISODE_BUILD_HOUR}, minute={0}, max_tries=1),
         cron(compare_providers_job, hour={CONFLICT_CHECK_HOUR}, minute={0}, max_tries=1),
+        # Retries itself until the history is in, then reports that it skipped.
+        # max_tries=1 on purpose: a failed attempt means the feed is closed,
+        # and arq retrying it immediately is the opposite of waiting.
+        cron(
+            deep_history_job,
+            hour=DEEP_HISTORY_HOURS,
+            minute={40},
+            max_tries=1,
+        ),
         # Weekly, on the shut market, after the two daily sweeps.
         cron(
             prune_old_rows_job,
@@ -749,6 +815,7 @@ class WorkerSettings:
         build_episodes_job,
         prune_old_rows_job,
         compare_providers_job,
+        deep_history_job,
     ]
     on_startup = startup
     max_jobs = 2

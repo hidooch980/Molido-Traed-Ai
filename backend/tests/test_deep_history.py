@@ -707,3 +707,101 @@ class TestTheProviderRowSurvivesAConcurrentRun:
             .count()
             == 1
         )
+
+
+class TestItRetriesItselfAndThenStops:
+    """The feed refused every request for a whole evening - three runs,
+    twenty-eight symbols, zero bars - and single probes still answered about
+    one time in three. That cooldown lifts at an hour nobody can predict, which
+    makes it exactly the wrong thing to poke by hand."""
+
+    def test_it_skips_once_there_is_enough_history(self, session, provider, monkeypatch):
+        """A job that re-fetches twenty years every four hours forever is a
+        permanent load on a feed that has already objected, in exchange for
+        bars nothing is waiting for - and the upsert would hide it."""
+        from contextlib import contextmanager
+
+        from app.brain.crosssection import MIN_CROSS_SECTION, RANKED_UNIVERSE
+        from app.models.instruments import Provider
+        from app.workers.collector import run_deep_history
+
+        row = Provider(
+            code=deep_history.PROVIDER_CODE, name="Dukascopy", capabilities={}
+        )
+        session.add(row)
+        session.flush()
+
+        for symbol in sorted(RANKED_UNIVERSE)[:MIN_CROSS_SECTION]:
+            instrument = Instrument(
+                symbol=symbol, name=symbol, asset_class=AssetClass.FOREX
+            )
+            session.add(instrument)
+            session.flush()
+            session.add(
+                Bar(
+                    instrument_id=instrument.id,
+                    timeframe=Timeframe.D1.value,
+                    provider_id=row.id,
+                    event_time=NOW,
+                    revision=1,
+                    ingested_at=NOW,
+                    open=1.1,
+                    high=1.2,
+                    low=1.0,
+                    close=1.1,
+                    volume=1.0,
+                    quality_score=1.0,
+                )
+            )
+        session.commit()
+
+        @contextmanager
+        def fixed_session():
+            yield session
+
+        monkeypatch.setattr(
+            "app.workers.collector.session_scope", fixed_session
+        )
+
+        report = run_deep_history()
+
+        assert report["skipped"] is True
+        assert "clears the" in report["reason"]
+
+    def test_it_runs_while_the_history_is_missing(self, session, eurusd, monkeypatch):
+        from contextlib import contextmanager
+
+        from app.workers.collector import run_deep_history
+
+        @contextmanager
+        def fixed_session():
+            yield session
+
+        monkeypatch.setattr("app.workers.collector.session_scope", fixed_session)
+        monkeypatch.setattr(
+            deep_history, "DukascopyProvider", lambda: FakeFeed(b"")
+        )
+
+        report = run_deep_history()
+
+        assert report.get("skipped") is not True
+        assert "written" in report
+
+    def test_it_is_scheduled_sparsely_rather_than_hourly(self):
+        """Each failed attempt still costs the feed twenty-eight symbols'
+        worth of requests, and hammering a cooldown is how it got here."""
+        from app.workers.collector import DEEP_HISTORY_HOURS
+
+        assert len(DEEP_HISTORY_HOURS) <= 6
+
+    def test_it_is_registered_with_the_worker(self):
+        """A cron job missing from `functions` is accepted at import and never
+        runs, which looks exactly like a job that keeps deciding to skip."""
+        from app.workers.collector import WorkerSettings, deep_history_job
+
+        assert deep_history_job in WorkerSettings.functions
+        # By coroutine, not by name: arq prefixes cron names with "cron:",
+        # so matching the bare name passes for nothing and fails for this.
+        assert any(
+            j.coroutine is deep_history_job for j in WorkerSettings.cron_jobs
+        )
