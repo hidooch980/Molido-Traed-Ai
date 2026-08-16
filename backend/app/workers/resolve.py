@@ -40,7 +40,7 @@ them.
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Protocol
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -59,8 +59,29 @@ HORIZON = 120
 TARGET_MULTIPLE = 1.0
 
 
+class HasRange(Protocol):
+    """Anything with a high and a low.
+
+    Stated structurally so the historical measurement can score its bars with
+    this exact function rather than a copy. Two resolvers that agree today and
+    are edited separately do not stay agreeing, and a forward series scored
+    under different rules than the backtest is not a confirmation of the
+    backtest - it is a second unrelated measurement wearing the same name.
+    """
+
+    # Read-only. `_outcome` never writes, and declaring them as plain
+    # attributes would demand mutability that a frozen bar cannot offer -
+    # which would push the historical measurement back into copying this
+    # function instead of sharing it.
+    @property
+    def high(self) -> Any: ...
+
+    @property
+    def low(self) -> Any: ...
+
+
 def _outcome(
-    bars: list[Bar], *, side: int, entry: float, stop: float, target: float
+    bars: list[HasRange], *, side: int, entry: float, stop: float, target: float
 ) -> tuple[str, float] | None:
     """What the bars after the entry did to it, or None if still undecided.
 

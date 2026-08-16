@@ -1,0 +1,232 @@
+"""Reproducing the number the whole project turns on.
+
++0.0212 R at t = 3.69 came from a script that no longer exists. That is the
+gap this module closes: a result nobody can re-run is a result nobody can
+check, including whoever produced it.
+
+So these tests are not about the rule being right. They are about the harness
+being the same harness - same geometry, same resolution, same clustering as
+the live loop - because a historical measurement scored under its own copy of
+those is not a comparison with the forward series, it is a second unrelated
+measurement wearing the same name.
+"""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime, timedelta
+
+import pytest
+
+from app.brain import crosssection
+from app.learning import measure
+from app.learning.measure import Bar
+
+START = datetime(2020, 1, 1, tzinfo=UTC)
+UNIVERSE = sorted(crosssection.RANKED_UNIVERSE)
+
+
+def walk(prices: list[float], *, spread: float = 0.5) -> list[Bar]:
+    """Bars from a list of closes, one hour apart."""
+    return [
+        Bar(
+            at=START + timedelta(hours=i),
+            open=p,
+            high=p + spread,
+            low=p - spread,
+            close=p,
+        )
+        for i, p in enumerate(prices)
+    ]
+
+
+def flat_market(n: int = 30, bars: int = 300) -> dict[str, list[Bar]]:
+    """Thirty instruments that go nowhere. No edge exists to be found."""
+    return {UNIVERSE[i]: walk([100.0] * bars) for i in range(n)}
+
+
+class TestItSharesTheLiveGeometry:
+    """Copying any constant here to keep the module self-contained would break
+    the only property that makes the historical and forward numbers
+    comparable."""
+
+    def test_the_stop_and_target_come_from_the_live_recorder(self):
+        from app.workers import forward
+
+        assert measure.STOP_MULTIPLE is forward.STOP_MULTIPLE
+        assert measure.TARGET_MULTIPLE is forward.TARGET_MULTIPLE
+
+    def test_the_horizon_comes_from_the_live_resolver(self):
+        from app.workers import resolve
+
+        assert measure.HORIZON is resolve.HORIZON
+
+    def test_the_geometry_travels_with_the_result(self):
+        """So a number read back later can be identified rather than assumed
+        to have used whatever the constants say today."""
+        described = measure.measure(
+            flat_market(), bar_interval=timedelta(hours=1)
+        ).as_dict()
+
+        assert described["geometry"]["stop_multiple"] == measure.STOP_MULTIPLE
+        assert described["geometry"]["horizon_bars"] == measure.HORIZON
+
+    def test_it_resolves_with_the_live_resolver_itself(self):
+        """Not a copy of it. Two resolvers that agree today and are edited
+        separately do not stay agreeing."""
+        from app.workers import resolve
+
+        assert measure._outcome is resolve._outcome
+
+
+class TestClusteringIsTheWholeResult:
+    """Counting trades instead of instants inflated the original daily figure
+    from -0.12 to 3.95 - a factor of thirty-two, in the direction that
+    manufactures a discovery."""
+
+    def test_both_figures_are_published(self):
+        result = measure.measure(trending_market(), bar_interval=timedelta(hours=1))
+        described = result.as_dict()
+
+        assert "t" in described
+        assert "unclustered_t" in described
+        assert "clustering_inflation" in described
+
+    def test_an_instant_contributes_one_observation_not_eight(self):
+        """The rule opens both tails at every instant, so trades outnumber
+        instants several times over. If they were equal, nothing is being
+        clustered."""
+        result = measure.measure(trending_market(), bar_interval=timedelta(hours=1))
+
+        assert result.instants > 0
+        assert result.trades > result.instants
+
+    def test_the_reason_is_carried_with_the_numbers(self):
+        described = measure.measure(
+            flat_market(), bar_interval=timedelta(hours=1)
+        ).as_dict()
+
+        assert "one instant is one observation" in described["note"]
+
+
+def trending_market(n: int = 30, bars: int = 300) -> dict[str, list[Bar]]:
+    """Instruments drifting at different rates, so the ranking has work to do
+    and trades actually resolve."""
+    built = {}
+    for i in range(n):
+        drift = (i - n / 2) * 0.02
+        closes = [100.0 + drift * step + (step % 7) * 0.3 for step in range(bars)]
+        built[UNIVERSE[i]] = walk(closes)
+    return built
+
+
+class TestPointInTimeIntegrity:
+    def test_a_short_series_produces_nothing_rather_than_a_guess(self):
+        """Fewer bars than the lookback means no instrument can be ranked."""
+        short = {UNIVERSE[i]: walk([100.0] * 40) for i in range(30)}
+
+        assert measure.measure(short, bar_interval=timedelta(hours=1)).instants == 0
+
+    def test_a_thin_cross_section_produces_nothing(self):
+        """Eight instruments always have a most-extended member."""
+        thin = {UNIVERSE[i]: walk([100.0 + i] * 300) for i in range(8)}
+
+        assert measure.measure(thin, bar_interval=timedelta(hours=1)).instants == 0
+
+    def test_the_window_is_reported(self):
+        result = measure.measure(trending_market(), bar_interval=timedelta(hours=1))
+
+        assert result.window is not None
+        assert result.window[0] == START
+
+
+class TestBothArmsOrNeither:
+    def test_an_undecided_pair_is_dropped_whole(self):
+        """Keeping one side of a pair whose partner never resolved is a bias,
+        and it favours the arm whose geometry the ranking chose - the rule."""
+        result = measure.measure(flat_market(), bar_interval=timedelta(hours=1))
+
+        # A flat market never reaches a stop or a target, so every pair is
+        # undecided and none is scored.
+        assert result.trades == 0
+        assert result.dropped_undecided > 0
+
+    def test_a_market_that_resolves_scores_both_arms(self):
+        result = measure.measure(trending_market(), bar_interval=timedelta(hours=1))
+
+        assert result.trades > 0
+        # Both arms saw the same instants, so neither can be empty while the
+        # other is populated.
+        assert result.rule_r != 0.0 or result.control_r != 0.0
+
+
+class TestTheArithmetic:
+    def test_no_edge_is_reported_as_no_edge(self):
+        """An empty measurement is not a measurement of zero, but a market
+        with nothing in it must not produce a significant result either."""
+        result = measure.measure(flat_market(), bar_interval=timedelta(hours=1))
+
+        assert result.significant is False
+        assert result.t_statistic == 0.0
+
+    def test_the_cost_is_charged_to_the_edge_not_to_one_arm(self):
+        """Charging the rule and not the control invents an edge worth exactly
+        the cost."""
+        result = measure.measure(trending_market(), bar_interval=timedelta(hours=1))
+
+        assert result.net_r == pytest.approx(result.edge_r - measure.COST_R)
+
+    def test_significance_needs_1_96(self):
+        from dataclasses import replace
+
+        result = measure.measure(trending_market(), bar_interval=timedelta(hours=1))
+
+        assert replace(result, t_statistic=1.95).significant is False
+        assert replace(result, t_statistic=1.97).significant is True
+        # Both directions: a strongly negative result is a finding too.
+        assert replace(result, t_statistic=-3.0).significant is True
+
+    def test_a_paired_t_of_one_sample_is_zero_not_infinite(self):
+        assert measure._paired_t([0.5]) == (0.0, 0.0)
+
+    def test_a_zero_spread_is_zero_not_a_division(self):
+        """Identical differences have no spread, and dividing by it would
+        report infinite significance on a sample that shows nothing."""
+        assert measure._paired_t([0.5, 0.5, 0.5]) == (0.0, 0.0)
+
+
+class TestTheUniverseIsRespected:
+    def test_an_instrument_outside_it_is_not_traded(self):
+        market = trending_market()
+        market["NOTINUNIVERSE"] = walk([100.0 + i * 0.5 for i in range(300)])
+
+        with_extra = measure.measure(market, bar_interval=timedelta(hours=1))
+        without = measure.measure(
+            trending_market(), bar_interval=timedelta(hours=1)
+        )
+
+        assert with_extra.trades == without.trades
+
+    def test_passing_none_ranks_everything(self):
+        """A caller running an explicit experiment across a different universe
+        may say so; the default is the measured one.
+
+        Checked on the dropped count rather than on instants: these symbols
+        oscillate inside their own stop distance, so the rule ranks them and
+        nothing ever resolves. That is the honest signal that the ranking ran
+        - `instants` counts only instants that produced a scored pair.
+        """
+        market = {
+            f"MADEUP{i}": walk(
+                [100.0 + i * 0.4 + (step % 7) * 0.3 for step in range(300)]
+            )
+            for i in range(30)
+        }
+
+        ranked_all = measure.measure(
+            market, bar_interval=timedelta(hours=1), universe=None
+        )
+        ranked_none = measure.measure(market, bar_interval=timedelta(hours=1))
+
+        assert ranked_all.dropped_undecided > 0
+        assert ranked_none.dropped_undecided == 0
+        assert ranked_none.instants == 0
