@@ -112,7 +112,20 @@ SCALE_TOLERANCE = 0.25
 MIN_INTERVAL = 0.6
 
 #: Attempts before giving up on a throttled or transient response.
-MAX_ATTEMPTS = 4
+#:
+#: Six, not four, and the difference was measured rather than chosen. At four,
+#: a dry run of twenty-eight symbols lost three - AUDNZD, CADCHF, CADJPY - to
+#: 503s. Re-running just those three succeeded immediately, so the failures
+#: were scattered rather than a block, and four attempts simply ran out.
+#:
+#: Three lost symbols is not a small loss here. The rule ranks a cross-section
+#: and refuses below twenty, so every dropped instrument narrows the universe
+#: the measurement runs on - and it narrows it by network luck rather than by
+#: any decision anybody made.
+#:
+#: At 0.6s doubling, six attempts is 18.6s of waiting in the worst case, paid
+#: only on a URL that is actually failing.
+MAX_ATTEMPTS = 6
 
 #: Worth retrying. 404 is deliberately absent - it means the feed does not hold
 #: that period, which is an answer rather than a failure, and retrying it four
