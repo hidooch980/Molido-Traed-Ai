@@ -214,3 +214,107 @@ def backfill(
             "means the last writer wins and the disagreement is never seen"
         ),
     }
+
+
+#: The ranked-universe instruments this broker actually offers, read from the
+#: `molido_available.json` the bridge publishes rather than guessed. Twenty-eight
+#: of the forty-nine; the rest the broker does not quote.
+OFFERED = (
+    "AUDCAD", "AUDCHF", "AUDJPY", "AUDNZD", "AUDUSD",
+    "CADCHF", "CADJPY", "CHFJPY",
+    "EURAUD", "EURCAD", "EURCHF", "EURGBP", "EURJPY", "EURNZD", "EURUSD",
+    "GBPAUD", "GBPCAD", "GBPCHF", "GBPJPY", "GBPNZD", "GBPUSD",
+    "NZDCAD", "NZDCHF", "NZDJPY", "NZDUSD",
+    "USDCAD", "USDCHF", "USDJPY",
+)
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Run a backfill from the command line.
+
+    A real entry point rather than a shell one-liner, because this writes
+    hundreds of thousands of rows and the arguments that decide how many
+    should be visible in the command rather than buried in a quoted script.
+
+    Defaults to daily from 2005, which is the cheap run: about 600 files and a
+    few minutes. Hourly from 2015 is roughly 3,700 files and an hour, and is
+    the one that matters - it is the timeframe the rule was measured on.
+
+        python -m app.workers.deep_history
+        python -m app.workers.deep_history --timeframe H1 --from 2015
+        python -m app.workers.deep_history --symbols EURUSD,GBPUSD --dry-run
+    """
+    import argparse
+
+    from app.db.session import session_scope
+
+    parser = argparse.ArgumentParser(description="Backfill Dukascopy history.")
+    parser.add_argument("--timeframe", default="D1", choices=["D1", "H1", "M1"])
+    parser.add_argument("--from", dest="start_year", type=int, default=DEFAULT_START_YEAR)
+    parser.add_argument(
+        "--symbols",
+        default=",".join(OFFERED),
+        help="comma separated; defaults to the ranked universe this broker offers",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="verify each symbol's price scale and report, writing nothing",
+    )
+    args = parser.parse_args(argv)
+
+    symbols = [s.strip().upper() for s in args.symbols.split(",") if s.strip()]
+    timeframe = Timeframe(args.timeframe)
+
+    if args.dry_run:
+        # The scale check on its own. Worth having separately: it is the step
+        # that decides whether the import is trustworthy, it costs one request
+        # per symbol, and finding out that six instruments cannot be verified
+        # is much cheaper before the other 3,700 requests than after.
+        feed = DukascopyProvider()
+        moment = datetime.now(UTC).replace(year=datetime.now(UTC).year - 1)
+        with session_scope() as session:
+            for symbol in symbols:
+                instrument = session.scalar(
+                    select(Instrument).where(Instrument.symbol == symbol)
+                )
+                known = (
+                    None
+                    if instrument is None
+                    else reference_price(session, instrument.id)
+                )
+                if known is None:
+                    print(f"{symbol:8} SKIP  no reference price to verify against")
+                    continue
+                try:
+                    scale = feed.verify_scale(symbol, known, at=moment)
+                except ProviderError as problem:
+                    print(f"{symbol:8} FAIL  {problem}")
+                else:
+                    print(f"{symbol:8} ok    scale {scale:.0e} against {known:g}")
+        return 0
+
+    print(
+        f"backfilling {len(symbols)} symbols, {timeframe.value}, "
+        f"from {args.start_year}. Re-running is safe - it upserts."
+    )
+    with session_scope() as session:
+        report = backfill(
+            session,
+            symbols=symbols,
+            timeframe=timeframe,
+            start_year=args.start_year,
+        )
+
+    print(f"written {report['written']} bars across {len(report['by_symbol'])} symbols")
+    for symbol, count in sorted(report["by_symbol"].items()):
+        print(f"  {symbol:8} {count:>8}")
+    for note in report["skipped"]:
+        print(f"  SKIPPED {note}")
+    if report["periods_with_no_file"]:
+        print(f"  {len(report['periods_with_no_file'])} periods had no file")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

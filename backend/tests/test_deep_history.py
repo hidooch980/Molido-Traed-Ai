@@ -304,3 +304,51 @@ class TestTheReferenceLookup:
         )
 
         assert any(note.startswith("EURUSD:") for note in report["skipped"])
+
+
+class TestTheEntryPoint:
+    """A real command rather than a shell one-liner: this writes hundreds of
+    thousands of rows, and the arguments that decide how many should be visible
+    in the command rather than buried inside a quoted script."""
+
+    def test_the_default_symbols_are_all_in_the_ranked_universe(self):
+        """Importing an instrument the rule never ranks costs an hour of
+        requests and answers nothing."""
+        from app.brain.crosssection import RANKED_UNIVERSE
+
+        assert set(deep_history.OFFERED) <= RANKED_UNIVERSE
+
+    def test_there_are_enough_of_them_to_rank(self):
+        """Below twenty the rule refuses, so a backfill of nineteen would be
+        an hour spent producing a series that can never be measured."""
+        from app.brain.crosssection import MIN_CROSS_SECTION
+
+        assert len(deep_history.OFFERED) >= MIN_CROSS_SECTION
+
+    def test_a_dry_run_writes_nothing(self, session, eurusd, monkeypatch):
+        """The step that decides whether the import is trustworthy costs one
+        request per symbol. Finding out six cannot be verified is much cheaper
+        before the other 3,700 requests than after."""
+        from contextlib import contextmanager
+
+        @contextmanager
+        def fixed_session():
+            yield session
+
+        monkeypatch.setattr(
+            "app.db.session.session_scope", fixed_session, raising=False
+        )
+        monkeypatch.setattr(
+            deep_history, "DukascopyProvider", lambda: FakeFeed(year_of_bars(110366))
+        )
+        before = session.query(Bar).count()
+
+        code = deep_history.main(["--dry-run", "--symbols", "EURUSD"])
+
+        assert code == 0
+        assert session.query(Bar).count() == before
+
+    def test_an_unknown_timeframe_is_rejected_by_the_parser(self):
+        """Rather than reaching the feed and 404ing 3,700 times."""
+        with pytest.raises(SystemExit):
+            deep_history.main(["--timeframe", "M5"])
