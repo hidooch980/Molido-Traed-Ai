@@ -53,7 +53,20 @@ input int BarCount = 500;
 //--- it. `SymbolSelect` asks, and a symbol the broker does not have is
 //--- reported by name rather than failing the start: a typo and an instrument
 //--- the broker genuinely lacks need different fixes.
-input string ExtraSymbols = "XAUUSD,XAGUSD,XAUEUR,BRENT,WTI,.US30Cash,.US500Cash,.USTECHCash,.DE40Cash,.JP225Cash";
+//---
+//--- The crosses below are not decoration. The rule ranks an instrument
+//--- against its peers at one instant and refuses to rank fewer than twenty -
+//--- below that the "most extended" member is just the shape of a small
+//--- sample. The bridge was publishing nine of the ranked universe, so the
+//--- broker-price arm of the forward measurement could never rank anything
+//--- and would have reported "recorded: 0" every cycle for months, which
+//--- reads as a quiet system rather than a measurement that cannot run.
+//---
+//--- These twenty-eight are the intersection of the ranked universe with what
+//--- `molido_available.json` says this broker actually offers. Read from the
+//--- file, not guessed - the last round of guessing cost three silent
+//--- failures.
+input string ExtraSymbols = "XAUUSD,XAGUSD,XAUEUR,BRENT,WTI,.US30Cash,.US500Cash,.USTECHCash,.DE40Cash,.JP225Cash,AUDCAD,AUDCHF,AUDJPY,AUDNZD,CADCHF,CADJPY,CHFJPY,EURAUD,EURCAD,EURCHF,EURGBP,EURJPY,EURNZD,GBPAUD,GBPCAD,GBPCHF,GBPJPY,GBPNZD,NZDCAD,NZDCHF,NZDJPY";
 
 string TimeframeName(ENUM_TIMEFRAMES period)
   {
