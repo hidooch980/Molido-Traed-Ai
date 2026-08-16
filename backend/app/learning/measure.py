@@ -334,3 +334,61 @@ def _summarise(
         dropped_undecided=dropped,
         window=window,
     )
+
+
+def load_series(
+    session: Any,
+    *,
+    provider_code: str,
+    timeframe: Any,
+    start: datetime | None = None,
+    end: datetime | None = None,
+    symbols: Sequence[str] | None = None,
+) -> dict[str, list[Bar]]:
+    """Read one provider's stored series into the shape `measure` wants.
+
+    One provider, never a merge. Three sources now price the same instrument
+    and they disagree - the broker and the public feed differ by 33-39% of a
+    stop distance on every major pair - so a measurement assembled from
+    whichever source happened to have each bar would be a measurement of the
+    assembly.
+    """
+    from sqlalchemy import select
+
+    from app.models.instruments import Instrument, Provider
+    from app.models.market_data import Bar as StoredBar
+
+    provider_id = session.scalar(
+        select(Provider.id).where(Provider.code == provider_code)
+    )
+    if provider_id is None:
+        return {}
+
+    query = (
+        select(Instrument.symbol, StoredBar)
+        .join(Instrument, Instrument.id == StoredBar.instrument_id)
+        .where(
+            StoredBar.provider_id == provider_id,
+            StoredBar.timeframe == timeframe.value,
+        )
+        .order_by(Instrument.symbol, StoredBar.event_time)
+    )
+    if start is not None:
+        query = query.where(StoredBar.event_time >= start)
+    if end is not None:
+        query = query.where(StoredBar.event_time < end)
+    if symbols:
+        query = query.where(Instrument.symbol.in_(list(symbols)))
+
+    built: dict[str, list[Bar]] = {}
+    for symbol, row in session.execute(query):
+        built.setdefault(symbol, []).append(
+            Bar(
+                at=row.event_time,
+                open=float(row.open),
+                high=float(row.high),
+                low=float(row.low),
+                close=float(row.close),
+            )
+        )
+    return built

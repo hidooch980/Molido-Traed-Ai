@@ -230,3 +230,114 @@ class TestTheUniverseIsRespected:
         assert ranked_all.dropped_undecided > 0
         assert ranked_none.dropped_undecided == 0
         assert ranked_none.instants == 0
+
+
+class TestLoadingAStoredSeries:
+    """One provider, never a merge. The broker and the public feed differ by
+    33-39% of a stop distance on every major pair, so a series assembled from
+    whichever source happened to hold each bar measures the assembly."""
+
+    def stored(self, session, provider, symbol, prices, timeframe=None):
+        from app.core.enums import AssetClass, Timeframe
+        from app.models.instruments import Instrument
+        from app.models.market_data import Bar as StoredBar
+
+        timeframe = timeframe or Timeframe.H1
+        row = session.scalar(
+            __import__("sqlalchemy").select(Instrument).where(
+                Instrument.symbol == symbol
+            )
+        )
+        if row is None:
+            row = Instrument(symbol=symbol, name=symbol, asset_class=AssetClass.FOREX)
+            session.add(row)
+            session.flush()
+        for i, price in enumerate(prices):
+            session.add(
+                StoredBar(
+                    instrument_id=row.id,
+                    timeframe=timeframe.value,
+                    provider_id=provider.id,
+                    event_time=START + timedelta(hours=i),
+                    revision=1,
+                    ingested_at=START,
+                    open=price,
+                    high=price + 0.5,
+                    low=price - 0.5,
+                    close=price,
+                    volume=1.0,
+                    quality_score=1.0,
+                )
+            )
+        session.flush()
+        return row
+
+    def test_it_reads_one_provider_only(self, session, provider):
+        from app.core.enums import Timeframe
+        from app.models.instruments import Provider
+
+        other = Provider(code="somewhere-else", name="Other", capabilities={})
+        session.add(other)
+        session.flush()
+
+        self.stored(session, provider, "EURUSD", [1.10, 1.11, 1.12])
+        self.stored(session, other, "GBPUSD", [1.27, 1.28, 1.29])
+
+        loaded = measure.load_series(
+            session, provider_code=provider.code, timeframe=Timeframe.H1
+        )
+
+        assert set(loaded) == {"EURUSD"}
+
+    def test_an_unknown_provider_returns_nothing_rather_than_everything(
+        self, session, provider
+    ):
+        """The failure mode worth naming: a typo in the provider code that
+        silently measured the whole database would look like a successful run
+        across a series nobody chose."""
+        from app.core.enums import Timeframe
+
+        self.stored(session, provider, "EURUSD", [1.10, 1.11])
+
+        assert measure.load_series(
+            session, provider_code="not-a-provider", timeframe=Timeframe.H1
+        ) == {}
+
+    def test_the_bars_come_back_ascending(self, session, provider):
+        from app.core.enums import Timeframe
+
+        self.stored(session, provider, "EURUSD", [1.10, 1.11, 1.12, 1.13])
+
+        bars = measure.load_series(
+            session, provider_code=provider.code, timeframe=Timeframe.H1
+        )["EURUSD"]
+
+        assert [b.at for b in bars] == sorted(b.at for b in bars)
+        assert [b.close for b in bars] == [1.10, 1.11, 1.12, 1.13]
+
+    def test_the_window_is_honoured(self, session, provider):
+        from app.core.enums import Timeframe
+
+        self.stored(session, provider, "EURUSD", [1.10, 1.11, 1.12, 1.13])
+
+        bars = measure.load_series(
+            session,
+            provider_code=provider.code,
+            timeframe=Timeframe.H1,
+            start=START + timedelta(hours=1),
+            end=START + timedelta(hours=3),
+        )["EURUSD"]
+
+        assert len(bars) == 2
+
+    def test_a_different_timeframe_is_not_mixed_in(self, session, provider):
+        from app.core.enums import Timeframe
+
+        self.stored(session, provider, "EURUSD", [1.10, 1.11])
+        self.stored(session, provider, "EURUSD", [9.0, 9.1], timeframe=Timeframe.D1)
+
+        bars = measure.load_series(
+            session, provider_code=provider.code, timeframe=Timeframe.H1
+        )["EURUSD"]
+
+        assert [b.close for b in bars] == [1.10, 1.11]
