@@ -53,9 +53,17 @@ class FakeFeed(DukascopyProvider):
     them.
     """
 
-    def __init__(self, body: bytes, *, hourly: bytes | None = None):
+    def __init__(
+        self, body: bytes, *, hourly: bytes | None = None, serves: int | None = None
+    ):
         super().__init__()
         self.body = body
+        # Answer a fixed number of files and then nothing. Without this a
+        # multi-year window gets the same body back for every year, at a
+        # different period start each time, and the row count becomes a
+        # function of the window rather than of the fixture.
+        self.serves = serves
+        self.served = 0
         # Answered separately so a feed that can be verified but has no file
         # for the window is expressible - which is the case the hole reporting
         # exists for, and the one a single body cannot reach.
@@ -64,6 +72,9 @@ class FakeFeed(DukascopyProvider):
     def _fetch(self, url: str) -> bytes:  # type: ignore[override]
         if "hour" in url and self.hourly is not None:
             return self.hourly
+        if self.serves is not None and self.served >= self.serves:
+            return b""
+        self.served += 1
         return self.body
 
 
@@ -482,4 +493,62 @@ class TestALongRunSurvivesOneFailure:
         assert len(report["by_symbol"]) == 2
         assert (
             session.query(Bar).filter(Bar.timeframe == Timeframe.D1.value).count() > 0
+        )
+
+
+class TestTheInsertStaysUnderTheProtocolLimit:
+    """PostgreSQL caps a statement at 65535 bound parameters. A bar carries
+    thirteen columns, so the ceiling is 5,041 rows - and twenty years of daily
+    bars is about 5,200 per symbol. The first real backfill died on the first
+    symbol for exactly this reason."""
+
+    def test_the_chunk_leaves_room_for_columns_nobody_has_added_yet(self):
+        columns = len(Bar.__table__.columns)
+
+        assert deep_history.INSERT_CHUNK * columns < 65535
+
+    def test_more_bars_than_one_statement_allows_are_written(
+        self, session, eurusd
+    ):
+        """The regression. Six thousand daily bars is past the limit, and
+        before chunking this raised OperationalError rather than writing."""
+        # Past the 5,041-row ceiling a single statement allows.
+        big = year_of_bars(110366, days=6000)
+
+        report = deep_history.backfill(
+            session,
+            symbols=["EURUSD"],
+            # Two serves: the scale check consumes one, the window the other.
+            provider=FakeFeed(big, serves=2),
+            start_year=2005,
+            end=datetime(2045, 1, 1, tzinfo=UTC),
+        )
+
+        assert report["by_symbol"]["EURUSD"] == 6000
+        assert 6000 * len(Bar.__table__.columns) > 65535
+        assert (
+            session.query(Bar).filter(Bar.timeframe == Timeframe.D1.value).count()
+            == 6000
+        )
+
+    def test_a_chunked_write_still_upserts_rather_than_duplicating(
+        self, session, eurusd
+    ):
+        big = year_of_bars(110366, days=6000)
+
+        def run():
+            return deep_history.backfill(
+                session,
+                symbols=["EURUSD"],
+                provider=FakeFeed(big, serves=2),
+                start_year=2005,
+                end=datetime(2045, 1, 1, tzinfo=UTC),
+            )
+
+        run()
+        run()
+
+        assert (
+            session.query(Bar).filter(Bar.timeframe == Timeframe.D1.value).count()
+            == 6000
         )

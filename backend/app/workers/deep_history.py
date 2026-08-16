@@ -55,6 +55,21 @@ PROVIDER_CODE = "dukascopy"
 #: be asked about.
 DEFAULT_START_YEAR = 2005
 
+#: Rows per INSERT statement.
+#:
+#: PostgreSQL's wire protocol caps a single statement at 65535 bound
+#: parameters. A bar carries thirteen columns, so the ceiling is 5,041 rows -
+#: and twenty years of daily bars is about 5,200 per symbol, which lands just
+#: past it. The whole first backfill failed on the first symbol with "number of
+#: parameters must be between 0 and 65535", and the hourly run would be
+#: twenty-five times further over.
+#:
+#: Two thousand leaves room for columns nobody has added yet. The limit is a
+#: property of the protocol rather than of this table, so sizing to exactly
+#: 65535/13 would mean the next migration breaks the backfill and the failure
+#: appears somewhere else entirely.
+INSERT_CHUNK = 2000
+
 
 def _provider(session: Session) -> Provider:
     row = session.scalar(select(Provider).where(Provider.code == PROVIDER_CODE))
@@ -178,25 +193,27 @@ def backfill(
             for bar in bars
         ]
 
-        statement = pg_insert(Bar).values(payload)
-        statement = statement.on_conflict_do_update(
-            index_elements=[
-                Bar.instrument_id,
-                Bar.timeframe,
-                Bar.provider_id,
-                Bar.event_time,
-                Bar.revision,
-            ],
-            set_={
-                "open": statement.excluded.open,
-                "high": statement.excluded.high,
-                "low": statement.excluded.low,
-                "close": statement.excluded.close,
-                "volume": statement.excluded.volume,
-                "ingested_at": statement.excluded.ingested_at,
-            },
-        )
-        session.execute(statement)
+        for start_at in range(0, len(payload), INSERT_CHUNK):
+            chunk = payload[start_at : start_at + INSERT_CHUNK]
+            statement = pg_insert(Bar).values(chunk)
+            statement = statement.on_conflict_do_update(
+                index_elements=[
+                    Bar.instrument_id,
+                    Bar.timeframe,
+                    Bar.provider_id,
+                    Bar.event_time,
+                    Bar.revision,
+                ],
+                set_={
+                    "open": statement.excluded.open,
+                    "high": statement.excluded.high,
+                    "low": statement.excluded.low,
+                    "close": statement.excluded.close,
+                    "volume": statement.excluded.volume,
+                    "ingested_at": statement.excluded.ingested_at,
+                },
+            )
+            session.execute(statement)
         # Committed per symbol, not once at the end. The hourly run is roughly
         # 3,700 requests over forty minutes, and a single transaction means one
         # failure at the twenty-seventh symbol discards the other twenty-six.
