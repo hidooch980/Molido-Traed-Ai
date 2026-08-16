@@ -54,6 +54,48 @@ def read_sessions(_: Principal = READ) -> dict[str, Any]:
     return calculators.sessions_at()
 
 
+@router.get("/tools/calendar")
+def read_calendar(
+    _: Principal = READ,
+    currencies: str = Query(default="", description="comma separated, e.g. USD,EUR"),
+    min_impact: str = Query(default="", description="High, Medium, Low or Holiday"),
+) -> dict[str, Any]:
+    """This week's economic releases, in UTC.
+
+    The feed publishes no timezone, and the common assumption that it is US
+    Eastern is wrong by four hours - see `app/services/calendar.py` for how the
+    real one was derived. Every time here is UTC and says so.
+
+    It decides nothing. A calendar that suppressed trades around a release
+    would be a rule, and rules here clear the edge registry first.
+    """
+    from app.services import calendar as calendar_service
+
+    return calendar_service.week(
+        currencies={c.strip() for c in currencies.split(",") if c.strip()} or None,
+        min_impact=min_impact or None,
+    )
+
+
+@router.get("/tools/timezones")
+def read_timezones(_: Principal = READ) -> dict[str, Any]:
+    """One instant, shown at each session that matters.
+
+    The broker's server offset appears only when the terminal reported one. It
+    decides which day a trade books to and which bar it lands in, so it is the
+    one value here that must never be guessed.
+    """
+    from app.providers.metatrader import MetaTraderBridge
+    from app.services import calendar as calendar_service
+
+    published = MetaTraderBridge().account()
+    offset = published.get("server_offset_hours") if published.get("available") else None
+
+    return calendar_service.convert(
+        broker_offset=float(offset) if isinstance(offset, int | float) else None
+    )
+
+
 @router.get("/tools/calculate")
 def calculate(
     symbol: str,

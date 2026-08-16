@@ -40,6 +40,7 @@ export const NAV: NavItem[] = [
   { key: "episodes", labelKey: "nav.episodes", href: "/episodes", group: "intelligence" },
   { key: "journal", labelKey: "nav.journal", href: "/journal", group: "intelligence" },
   { key: "readiness", labelKey: "nav.readiness", href: "/readiness", group: "intelligence" },
+  { key: "calendar", labelKey: "nav.calendar", href: "/calendar", group: "intelligence" },
   { key: "lab", labelKey: "nav.lab", href: "/lab", group: "intelligence" },
   { key: "backtest", labelKey: "nav.backtest", href: "/lab", group: "intelligence" },
   { key: "research", labelKey: "nav.research", href: "/research", group: "intelligence" },

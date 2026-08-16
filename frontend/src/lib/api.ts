@@ -736,7 +736,39 @@ export interface EvidenceView {
   and_then_what: string;
 }
 
+export interface CalendarRelease {
+  at: string | null;
+  title: string;
+  currency: string;
+  impact: string;
+  forecast: string | null;
+  previous: string | null;
+  url: string | null;
+  all_day: boolean;
+}
+
+export interface CalendarView {
+  as_of: string;
+  timezone: string;
+  count: number;
+  releases: CalendarRelease[];
+  next: CalendarRelease | null;
+  hours_to_next: number | null;
+  /** Non-null when the feed's clock appears to have moved under the parser. */
+  clock_warning: string | null;
+  note: string;
+}
+
+export interface TimezoneView {
+  utc: string;
+  places: { name: string; offset: number; local: string }[];
+  broker_offset_known: boolean;
+  note: string;
+}
+
 export const api = {
+  calendar: () => request<CalendarView>("/api/v1/instruments/tools/calendar"),
+  timezones: () => request<TimezoneView>("/api/v1/instruments/tools/timezones"),
   journal: () => request<JournalView>("/api/v1/learning/journal"),
   evidence: () => request<EvidenceView>("/api/v1/learning/readiness"),
   orderStates: () => request<OrderStatesView>("/api/v1/execution/order-states"),
