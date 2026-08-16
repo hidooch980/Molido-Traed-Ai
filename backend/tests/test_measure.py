@@ -384,3 +384,49 @@ class TestTheCommand:
         assert "lost to" in source
         assert "beat" in source
         assert "whichever" in source
+
+
+class TestResearchYieldsToTheServingPath:
+    """Running a measurement over 604,000 bars on the production box took the
+    one core the serving stack had left, and sshd and caddy stopped being
+    scheduled long enough that the machine looked dead from outside for half an
+    hour. Nothing ran out of memory: the kernel logged zero OOM kills and the
+    box has no swap. Nothing else simply got a timeslice."""
+
+    def test_the_command_drops_priority_before_doing_anything(self):
+        calls: list[int] = []
+        import os
+
+        if not hasattr(os, "nice"):
+            pytest.skip("no nice() on this platform")
+
+        original = os.nice
+        try:
+            os.nice = lambda value: calls.append(value)  # type: ignore[assignment]
+            measure._yield_to_the_serving_path()
+        finally:
+            os.nice = original  # type: ignore[assignment]
+
+        assert calls == [19]
+
+    def test_a_platform_without_nice_is_not_an_error(self, monkeypatch):
+        """It is a courtesy to co-tenants, not a correctness requirement, and
+        a research command that refuses to start on Windows helps nobody."""
+        import os
+
+        monkeypatch.delattr(os, "nice", raising=False)
+
+        measure._yield_to_the_serving_path()
+
+    def test_a_container_that_forbids_it_is_not_an_error(self, monkeypatch):
+        import os
+
+        if not hasattr(os, "nice"):
+            pytest.skip("no nice() on this platform")
+
+        def refuse(_value):
+            raise PermissionError("not permitted")
+
+        monkeypatch.setattr(os, "nice", refuse)
+
+        measure._yield_to_the_serving_path()

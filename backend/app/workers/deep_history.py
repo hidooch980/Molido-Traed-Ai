@@ -338,6 +338,40 @@ OFFERED = (
 )
 
 
+def _yield_to_the_serving_path() -> None:
+    """Drop to the lowest scheduling priority before doing research work.
+
+    This box has two cores and the MetaTrader terminal under Wine holds about
+    three quarters of one permanently - measured at 47.8% for the terminal and
+    25.7% for wineserver. That leaves roughly one core for postgres, the
+    collector, the API and sshd together.
+
+    A measurement over 604,000 bars takes that remaining core for minutes. It
+    did, and sshd and caddy stopped being scheduled long enough that the box
+    looked dead from outside for half an hour. Nothing ran out of memory - the
+    kernel logged zero OOM kills and the machine has no swap at all. Nothing
+    else simply got a timeslice.
+
+    nice(19) costs this job nothing that matters and buys the only property
+    required: research must never be able to take the serving path down with
+    it.
+    """
+    import os
+
+    # Fetched rather than called directly: os.nice does not exist on Windows,
+    # which is where this is type-checked, and a bare call fails the build on
+    # a platform the code will never run the heavy path on.
+    lower_priority = getattr(os, "nice", None)
+    if lower_priority is None:
+        return
+    try:
+        lower_priority(19)
+    except OSError:
+        # A container may forbid raising niceness. A courtesy to co-tenants,
+        # not a correctness requirement.
+        pass
+
+
 def main(argv: list[str] | None = None) -> int:
     """Run a backfill from the command line.
 
@@ -353,6 +387,8 @@ def main(argv: list[str] | None = None) -> int:
         python -m app.workers.deep_history --timeframe H1 --from 2015
         python -m app.workers.deep_history --symbols EURUSD,GBPUSD --dry-run
     """
+    _yield_to_the_serving_path()
+
     import argparse
 
     from app.db.session import session_scope
