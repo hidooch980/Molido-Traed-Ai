@@ -36,6 +36,14 @@ USER molido
 EXPOSE 3000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-    CMD wget -q --spider http://localhost:3000/ || exit 1
+    # A route that renders nothing and reads nothing, rather than `/`.
+    #
+    # `/` is the heaviest page here - server-rendered, several API calls deep -
+    # and on two cores under load it outran the probe timeout. The probe was
+    # killed, the container was marked unhealthy, and every page it served was
+    # returning 200 the whole time. A liveness probe that fails when the
+    # database is slow restarts a healthy web server because something else is
+    # busy, which makes the busy thing worse.
+    CMD wget -q --spider http://localhost:3000/api/health || exit 1
 
 CMD ["npm", "run", "start"]
