@@ -38,7 +38,7 @@ from __future__ import annotations
 import math
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from app.brain import crosssection
@@ -392,3 +392,104 @@ def load_series(
             )
         )
     return built
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Run the rule over a stored series and print what it did.
+
+    A command rather than a notebook, for the reason this module exists: the
+    original result came from a script nobody can find, so the way to get this
+    number must be something anybody can type and re-type.
+
+        python -m app.learning.measure --provider dukascopy --timeframe D1
+        python -m app.learning.measure --provider yfinance --timeframe H1 --from 2024
+
+    The provider is required and has no default. A measurement whose source
+    was implicit is a measurement whose source will be misremembered, and the
+    three sources here disagree by more than the effect being looked for.
+    """
+    import argparse
+    import json
+
+    from app.core.enums import Timeframe
+    from app.db.session import session_scope
+
+    parser = argparse.ArgumentParser(
+        description="Measure the cross-sectional rule over a stored series."
+    )
+    parser.add_argument("--provider", required=True)
+    parser.add_argument("--timeframe", default="H1", choices=["M1", "M15", "H1", "D1"])
+    parser.add_argument("--from", dest="start_year", type=int, default=None)
+    parser.add_argument("--to", dest="end_year", type=int, default=None)
+    parser.add_argument(
+        "--universe",
+        default="ranked",
+        choices=["ranked", "all"],
+        help="'ranked' is the measured universe; 'all' is an explicit experiment",
+    )
+    args = parser.parse_args(argv)
+
+    timeframe = Timeframe(args.timeframe)
+    start = datetime(args.start_year, 1, 1, tzinfo=UTC) if args.start_year else None
+    end = datetime(args.end_year, 1, 1, tzinfo=UTC) if args.end_year else None
+
+    with session_scope() as session:
+        series = load_series(
+            session,
+            provider_code=args.provider,
+            timeframe=timeframe,
+            start=start,
+            end=end,
+        )
+
+    if not series:
+        # Named rather than reported as a result of zero. "No bars for that
+        # provider" and "the rule found nothing" are different facts, and a
+        # table of zeros for the first would be read as the second.
+        print(
+            f"no {timeframe.value} bars stored under provider {args.provider!r}. "
+            "Nothing measured - this is not a result of zero"
+        )
+        return 1
+
+    bars = sum(len(v) for v in series.values())
+    print(
+        f"measuring {len(series)} instruments, {bars} {timeframe.value} bars, "
+        f"provider {args.provider}"
+    )
+
+    result = measure(
+        series,
+        bar_interval=timeframe.delta,
+        universe=(
+            crosssection.RANKED_UNIVERSE if args.universe == "ranked" else None
+        ),
+    )
+    print(json.dumps(result.as_dict(), indent=2))
+
+    # Stated in words as well as numbers, and stated the same way whichever
+    # direction it came out. A negative result reported quietly and a positive
+    # one reported loudly is how a registry fills up with edges.
+    if result.instants == 0:
+        print()
+        print("No instant produced a scored pair. Nothing was measured.")
+    elif result.significant:
+        print()
+        direction = "beat" if result.edge_r > 0 else "lost to"
+        print(
+            f"Over {result.instants} instants the rule {direction} its control "
+            f"by {result.edge_r:+.4f} R at t = {result.t_statistic:.2f}. "
+            f"Net of costs: {result.net_r:+.4f} R."
+        )
+    else:
+        print()
+        print(
+            f"Over {result.instants} instants the rule differed from its "
+            f"control by {result.edge_r:+.4f} R at t = {result.t_statistic:.2f}, "
+            "which does not clear 1.96. Not distinguishable from a coin flip."
+        )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

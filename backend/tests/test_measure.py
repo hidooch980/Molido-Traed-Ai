@@ -13,6 +13,7 @@ measurement wearing the same name.
 
 from __future__ import annotations
 
+import pathlib
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -341,3 +342,45 @@ class TestLoadingAStoredSeries:
         )["EURUSD"]
 
         assert [b.close for b in bars] == [1.10, 1.11]
+
+
+class TestTheCommand:
+    """The original result came from a script nobody can find, so the way to
+    get this number has to be something anybody can type and re-type."""
+
+    def test_the_provider_is_required_and_has_no_default(self):
+        """A measurement whose source was implicit is one whose source will be
+        misremembered, and the three sources here disagree by more than the
+        effect being looked for."""
+        with pytest.raises(SystemExit):
+            measure.main(["--timeframe", "H1"])
+
+    def test_an_empty_source_is_named_not_reported_as_zero(
+        self, session, monkeypatch, capsys
+    ):
+        """"No bars for that provider" and "the rule found nothing" are
+        different facts, and a table of zeros for the first reads as the
+        second."""
+        from contextlib import contextmanager
+
+        @contextmanager
+        def fixed_session():
+            yield session
+
+        monkeypatch.setattr(
+            "app.db.session.session_scope", fixed_session, raising=False
+        )
+
+        code = measure.main(["--provider", "not-a-provider"])
+
+        assert code == 1
+        assert "not a result of zero" in capsys.readouterr().out
+
+    def test_a_negative_result_is_stated_as_plainly_as_a_positive_one(self):
+        """A negative reported quietly and a positive reported loudly is how a
+        registry fills up with edges that are not there."""
+        source = pathlib.Path(measure.__file__).read_text(encoding="utf-8")
+
+        assert "lost to" in source
+        assert "beat" in source
+        assert "whichever" in source
