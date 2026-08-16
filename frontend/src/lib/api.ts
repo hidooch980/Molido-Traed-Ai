@@ -716,8 +716,29 @@ export interface JournalView {
   note: string;
 }
 
+export interface EvidenceSeries {
+  instants_resolved: number;
+  instants_needed: number | null;
+  fraction: number | null;
+  /** The flattering count. Shown labelled, never as the progress figure. */
+  decisions_resolved: number;
+  instants_per_week: number | null;
+  answerable_on: string | null;
+  open_requirements: string[];
+  met_requirements: string[];
+  what_the_date_means: string;
+  why_instants: string;
+  the_assumption: string;
+}
+
+export interface EvidenceView {
+  by_source: Record<string, EvidenceSeries>;
+  and_then_what: string;
+}
+
 export const api = {
   journal: () => request<JournalView>("/api/v1/learning/journal"),
+  evidence: () => request<EvidenceView>("/api/v1/learning/readiness"),
   orderStates: () => request<OrderStatesView>("/api/v1/execution/order-states"),
   research: () => request<ResearchView>("/api/v1/learning/research"),
   positions: () => request<PositionsView>("/api/v1/execution/positions"),

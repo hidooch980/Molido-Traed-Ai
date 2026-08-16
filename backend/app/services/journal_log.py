@@ -21,13 +21,14 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.learning import control as control_module
+from app.learning import readiness as readiness_module
 from app.models.journal import (
     ARM_CONTROL,
     ARM_RULE,
@@ -331,3 +332,84 @@ def summary(session: Session) -> dict[str, Any]:
             "exactly the periods the system was most active"
         ),
     }
+
+
+#: How long the measurement must have been running before a rate is published.
+#:
+#: Three instants in the first two hours is 180 a week, and a projected date
+#: built on it would be confident and meaningless. A week is the shortest
+#: window that contains a weekend - the thing that most changes the rate.
+MIN_OBSERVATION = timedelta(days=7)
+
+
+def readiness_of(
+    session: Session,
+    *,
+    price_source: str = SOURCE_PUBLIC,
+    now: datetime | None = None,
+) -> readiness_module.Readiness:
+    """How far this series is from being able to answer the question.
+
+    Counts instants, not decisions. The rule takes both tails of one
+    cross-section at one moment, so the eight rows written at one instant are
+    one piece of evidence about one market move. Counting rows would report
+    eight times the progress that exists, and the historical measurement has
+    already shown what that does to a significance figure.
+    """
+    moment = (now or datetime.now(UTC)).astimezone(UTC)
+
+    instants, decisions = session.execute(
+        select(
+            func.count(func.distinct(JournalEntry.opened_at)),
+            func.count(JournalEntry.id),
+        ).where(
+            JournalEntry.arm == ARM_RULE,
+            JournalEntry.price_source == price_source,
+            JournalEntry.closed_at.is_not(None),
+            JournalEntry.r_multiple.is_not(None),
+            JournalEntry.opened_at >= MEASUREMENT_STARTS_AT,
+        )
+    ).one()
+
+    elapsed = moment - MEASUREMENT_STARTS_AT
+    rate: float | None = None
+    if elapsed >= MIN_OBSERVATION and instants:
+        rate = int(instants) / (elapsed.total_seconds() / 604800.0)
+
+    return readiness_module.assess(
+        instants_resolved=int(instants or 0),
+        decisions_resolved=int(decisions or 0),
+        instants_per_week=rate,
+        today=moment.date(),
+        open_requirements=_open_requirements(),
+        met_requirements=_met_requirements(),
+    )
+
+
+def _open_requirements() -> tuple[str, ...]:
+    """What still stands between the current state and a connected account.
+
+    Read from the edge registry rather than restated here. A second copy of
+    these conditions is a second thing to update, and the one nobody updates
+    becomes a claim the system makes about itself that is no longer true.
+    """
+    from app.learning import edge as edge_module
+
+    if edge_module.PROVEN:
+        return ()
+
+    open_now: list[str] = []
+    for claim in edge_module.PENDING_FORWARD:
+        verdict = edge_module.assess(claim.evidence, pre_registered=claim.pre_registered)
+        open_now.extend(verdict.failures)
+    return tuple(open_now)
+
+
+def _met_requirements() -> tuple[str, ...]:
+    from app.learning import edge as edge_module
+
+    met: list[str] = []
+    for claim in edge_module.PENDING_FORWARD:
+        verdict = edge_module.assess(claim.evidence, pre_registered=claim.pre_registered)
+        met.extend(verdict.passes)
+    return tuple(met)

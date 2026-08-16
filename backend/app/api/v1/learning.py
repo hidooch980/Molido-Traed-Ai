@@ -279,6 +279,40 @@ def read_research(_: Principal = READ) -> dict[str, Any]:
     }
 
 
+@router.get("/readiness")
+def read_readiness(
+    _: Principal = READ,
+    session: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """When the forward measurement will be able to answer the question.
+
+    The question people actually ask is "when can I connect a real account",
+    and the honest form is not a countdown to yes - it is when there will be
+    enough evidence to answer at all. The rule may fail, and on the evidence so
+    far that is the likelier outcome: re-run unchanged on eleven years of daily
+    bars it scored -0.0015 R against its control at t = -0.12.
+
+    Both series, because they accumulate at different rates: the public feed
+    ranks forty-nine instruments and the broker twenty-eight, so their tails
+    differ in size and one will reach a usable sample before the other.
+    """
+    from app.models.journal import SOURCE_BROKER, SOURCE_PUBLIC
+    from app.services import journal_log
+
+    return {
+        "by_source": {
+            source: journal_log.readiness_of(session, price_source=source).as_dict()
+            for source in (SOURCE_PUBLIC, SOURCE_BROKER)
+        },
+        "and_then_what": (
+            "a sample that clears the bar is necessary and not sufficient. A "
+            "funded account is refused separately by "
+            "MOLIDO_ALLOW_REAL_MONEY_ORDERS, which is off deliberately, so "
+            "reaching the date opens the question rather than the account"
+        ),
+    }
+
+
 @router.get("/journal")
 def read_journal(
     _: Principal = READ,
