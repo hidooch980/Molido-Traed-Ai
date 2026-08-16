@@ -307,6 +307,42 @@ void SelectExtraSymbols()
       else
          Print("MolidoBridge: ", name, " not offered by this broker (", GetLastError(), ")");
      }
+
+   PublishAvailableSymbols();
+  }
+
+//+------------------------------------------------------------------+
+//| Write every symbol the broker offers, not just the visible ones. |
+//|                                                                  |
+//| The terminal reported 94 symbols while Market Watch showed ten,   |
+//| and asking for XAUUSD did nothing - almost certainly because this |
+//| broker calls it something else. Guessing the name from the        |
+//| outside is how an hour goes into a typo. This writes the real     |
+//| list once so the guessing stops.                                  |
+//+------------------------------------------------------------------+
+void PublishAvailableSymbols()
+  {
+   int handle = FileOpen("molido_available.json", FILE_WRITE | FILE_TXT | FILE_ANSI | FILE_COMMON);
+   if(handle == INVALID_HANDLE)
+     {
+      Print("MolidoBridge: could not write the available-symbol list (", GetLastError(), ")");
+      return;
+     }
+
+   int total = SymbolsTotal(false);
+   string json = "{\"published_at\":\"" + TimeToString(TimeCurrent(), TIME_DATE|TIME_SECONDS) + "\",";
+   json += "\"count\":" + IntegerToString(total) + ",\"symbols\":[";
+   for(int i = 0; i < total; i++)
+     {
+      if(i > 0)
+         json += ",";
+      json += "\"" + SymbolName(i, false) + "\"";
+     }
+   json += "]}";
+
+   FileWriteString(handle, json);
+   FileClose(handle);
+   Print("MolidoBridge: published ", total, " available symbols");
   }
 
 void OnDeinit(const int reason)
