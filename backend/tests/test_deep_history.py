@@ -552,3 +552,125 @@ class TestTheInsertStaysUnderTheProtocolLimit:
             session.query(Bar).filter(Bar.timeframe == Timeframe.D1.value).count()
             == 6000
         )
+
+
+class TestItGivesUpInsteadOfGrinding:
+    """Measured on the live feed: ten requests 0.6s apart got five answers,
+    2s apart got two, 5s apart got one - in that order. Slowing down made it
+    worse, which is not how a rate limit behaves. Against an endpoint that has
+    simply stopped answering, retrying twenty-eight symbols at six attempts
+    each spends three hours proving the same refusal and writes nothing."""
+
+    def all_symbols(self, session, provider, count):
+        from app.brain.crosssection import RANKED_UNIVERSE
+
+        symbols = sorted(RANKED_UNIVERSE)[:count]
+        for symbol in symbols:
+            row = Instrument(
+                symbol=symbol, name=symbol, asset_class=AssetClass.FOREX
+            )
+            session.add(row)
+            session.flush()
+            session.add(
+                Bar(
+                    instrument_id=row.id,
+                    timeframe=Timeframe.H1.value,
+                    provider_id=provider.id,
+                    event_time=NOW,
+                    revision=1,
+                    ingested_at=NOW,
+                    open=1.10,
+                    high=1.11,
+                    low=1.09,
+                    close=1.10,
+                    volume=1.0,
+                    quality_score=1.0,
+                )
+            )
+        session.flush()
+        return symbols
+
+    def test_it_stops_after_consecutive_failures(self, session, provider):
+        symbols = self.all_symbols(session, provider, 20)
+
+        class Refuses(FakeFeed):
+            def __init__(self):
+                super().__init__(b"")
+                self.asked = 0
+
+            def verify_scale(self, symbol, reference, *, at):  # type: ignore[override]
+                self.asked += 1
+                raise ProviderError("503 all the way down")
+
+        feed = Refuses()
+        report = deep_history.backfill(
+            session, symbols=symbols, provider=feed, end=NOW
+        )
+
+        assert report["gave_up"]
+        assert feed.asked == deep_history.CONSECUTIVE_FAILURES_BEFORE_STOPPING
+        assert len(symbols) > feed.asked
+
+    def test_a_success_resets_the_counter(self, session, provider):
+        """Scattered failures are not the same as a dead feed, and a run that
+        gave up on three bad symbols spread across twenty-eight would be
+        throwing away a working import."""
+        symbols = self.all_symbols(session, provider, 12)
+
+        class EveryOther(FakeFeed):
+            def __init__(self):
+                super().__init__(year_of_bars(110366))
+                self.asked = 0
+
+            def verify_scale(self, symbol, reference, *, at):  # type: ignore[override]
+                self.asked += 1
+                if self.asked % 2:
+                    raise ProviderError("intermittent")
+                return super().verify_scale(symbol, reference, at=at)
+
+        feed = EveryOther()
+        report = deep_history.backfill(
+            session, symbols=symbols, provider=feed, start_year=2024, end=NOW
+        )
+
+        assert report["gave_up"] is None
+        assert feed.asked == len(symbols)
+        assert len(report["by_symbol"]) == 6
+
+    def test_a_missing_reference_does_not_count_toward_giving_up(
+        self, session, provider
+    ):
+        """That is a fact about our own database, not about the feed, and it
+        would still be true on a day the feed answered perfectly."""
+        report = deep_history.backfill(
+            session,
+            symbols=["NOREF1", "NOREF2", "NOREF3", "NOREF4", "NOREF5"],
+            provider=FakeFeed(year_of_bars(110366)),
+            end=NOW,
+        )
+
+        assert report["gave_up"] is None
+        assert len(report["skipped"]) == 5
+
+    def test_work_done_before_giving_up_is_kept(self, session, provider):
+        symbols = self.all_symbols(session, provider, 10)
+
+        class DiesAfterTwo(FakeFeed):
+            def __init__(self):
+                super().__init__(year_of_bars(110366))
+                self.asked = 0
+
+            def verify_scale(self, symbol, reference, *, at):  # type: ignore[override]
+                self.asked += 1
+                if self.asked > 2:
+                    raise ProviderError("the feed stopped answering")
+                return super().verify_scale(symbol, reference, at=at)
+
+        report = deep_history.backfill(
+            session, symbols=symbols, provider=DiesAfterTwo(),
+            start_year=2024, end=NOW,
+        )
+
+        assert report["gave_up"]
+        assert len(report["by_symbol"]) == 2
+        assert report["written"] > 0

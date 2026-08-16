@@ -70,6 +70,22 @@ DEFAULT_START_YEAR = 2005
 #: appears somewhere else entirely.
 INSERT_CHUNK = 2000
 
+#: Consecutive whole-symbol failures before the run gives up.
+#:
+#: Measured, not chosen. Pacing requests further apart made the feed *worse*,
+#: not better: ten requests at 0.6s apart got five answers, at 2s got two, at
+#: 5s got one - in that order, over about five minutes. A rate limit does not
+#: behave like that. What does is an endpoint that has soured on this address
+#: from the session's cumulative volume, and no pacing recovers it; it needs
+#: hours, not seconds.
+#:
+#: Against that, retrying is not resilience. A run of twenty-eight symbols at
+#: six attempts each would spend three hours discovering the same refusal
+#: twenty-eight times and write nothing. Four symbols failing back to back is
+#: enough to say the feed is not answering today, and saying so in three
+#: minutes is worth more than proving it in three hours.
+CONSECUTIVE_FAILURES_BEFORE_STOPPING = 4
+
 
 def _provider(session: Session) -> Provider:
     row = session.scalar(select(Provider).where(Provider.code == PROVIDER_CODE))
@@ -132,6 +148,8 @@ def backfill(
     imported: dict[str, int] = {}
     skipped: list[str] = []
     holes: list[str] = []
+    in_a_row = 0
+    gave_up: str | None = None
 
     for position, symbol in enumerate(symbols, start=1):
         # Progress on a run this long is not decoration. Forty minutes of
@@ -159,6 +177,9 @@ def backfill(
                 f"{symbol}: no price from another source to verify the scale "
                 "against, so its history is not imported"
             )
+            # Not counted toward the give-up threshold: this is a fact about
+            # our own database, not about the feed, and it would still be true
+            # on a day the feed was answering perfectly.
             continue
 
         try:
@@ -166,12 +187,29 @@ def backfill(
             bars = feed.fetch_ohlcv(symbol, timeframe, start, ceiling)
         except ProviderError as problem:
             skipped.append(f"{symbol}: {problem}")
+            in_a_row += 1
+            if in_a_row >= CONSECUTIVE_FAILURES_BEFORE_STOPPING:
+                gave_up = (
+                    f"stopped after {in_a_row} symbols failed back to back. "
+                    "The feed is not answering this address today - measured: "
+                    "pacing requests further apart made it worse, not better, "
+                    "which is degradation over time rather than a rate limit. "
+                    "Re-run in a few hours; everything already written is kept"
+                )
+                break
             continue
 
         holes.extend(feed.missing_periods)
 
         if not bars:
             skipped.append(f"{symbol}: the feed returned no bars in that window")
+            in_a_row += 1
+            if in_a_row >= CONSECUTIVE_FAILURES_BEFORE_STOPPING:
+                gave_up = (
+                    f"stopped after {in_a_row} symbols produced nothing in a "
+                    "row. Re-run later; everything already written is kept"
+                )
+                break
             continue
 
         payload = [
@@ -223,6 +261,7 @@ def backfill(
         session.commit()
         imported[symbol] = len(payload)
         written += len(payload)
+        in_a_row = 0
 
 
     # Stated, not left to be inferred from the length of a dict. A dry run of
@@ -238,6 +277,9 @@ def backfill(
         "written": written,
         "by_symbol": imported,
         "usable_for_ranking": enough,
+        # Distinct from `usable_for_ranking`. One says the result is too thin
+        # to measure; this says the run did not finish, which is why.
+        "gave_up": gave_up,
         "universe_warning": (
             None
             if enough
@@ -365,6 +407,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  SKIPPED {note}")
     if report["periods_with_no_file"]:
         print(f"  {len(report['periods_with_no_file'])} periods had no file")
+    if report["gave_up"]:
+        print()
+        print(f"STOPPED EARLY: {report['gave_up']}")
+        return 3
     if report["universe_warning"]:
         # Non-zero exit. A partial import that returns success is how a
         # measurement ends up running on whatever arrived.
