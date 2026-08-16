@@ -689,17 +689,30 @@ export interface JournalArm {
   last_at: string | null;
 }
 
+export interface JournalComparison {
+  rule: { trials: number; wins: number; hit_rate: number | null };
+  control: { trials: number; wins: number; hit_rate: number | null };
+  edge_over_control: number | null;
+  z_score: number | null;
+  significant: boolean;
+  trials_needed_for_2pp: number;
+  note: string;
+}
+
 export interface JournalView {
-  arms: Record<string, JournalArm>;
-  comparison: {
-    rule: { trials: number; wins: number; hit_rate: number | null };
-    control: { trials: number; wins: number; hit_rate: number | null };
-    edge_over_control: number | null;
-    z_score: number | null;
-    significant: boolean;
-    trials_needed_for_2pp: number;
-    note: string;
-  };
+  /**
+   * Nested by price series, then by arm. The rule runs on the public feed and
+   * on the broker's own prices at once, and the two quote the same instrument
+   * 33-39% of a stop distance apart — so one count covering both would be one
+   * number reporting two different measurements.
+   */
+  arms: Record<string, Record<string, JournalArm>>;
+  /** The public series, kept at the top level so older readers still work. */
+  comparison: JournalComparison;
+  by_source: Record<string, JournalComparison>;
+  /** Broker result minus public result. Null until both have resolved. */
+  edge_lost_to_real_prices: number | null;
+  why_two_series: string;
   note: string;
 }
 

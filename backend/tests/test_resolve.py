@@ -18,12 +18,26 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from app.core.enums import AssetClass, Timeframe
-from app.models.instruments import Instrument
-from app.models.journal import ARM_RULE, JournalEntry
+from app.models.instruments import Instrument, Provider
+from app.models.journal import ARM_RULE, SOURCE_BROKER, SOURCE_PUBLIC, JournalEntry
 from app.models.market_data import Bar
 from app.workers import resolve
 
 NOW = datetime(2026, 8, 15, 12, 0, tzinfo=UTC)
+
+
+@pytest.fixture()
+def provider(session):
+    """The public feed, under its own name.
+
+    Shadows the shared fixture. An entry is now scored on the series it was
+    decided on, so bars written under a provider called "test" are bars no
+    decision will ever be resolved against.
+    """
+    row = Provider(code=SOURCE_PUBLIC, name="Public feed", capabilities={"ohlcv": True})
+    session.add(row)
+    session.flush()
+    return row
 
 
 @pytest.fixture()
@@ -56,12 +70,22 @@ def bars(session, provider, instrument, prices, *, start=NOW):
     session.flush()
 
 
-def entry(session, *, side="long", price=100.0, stop=97.5, target=102.5, at=NOW):
+def entry(
+    session,
+    *,
+    side="long",
+    price=100.0,
+    stop=97.5,
+    target=102.5,
+    at=NOW,
+    price_source=SOURCE_PUBLIC,
+):
     row = JournalEntry(
         symbol="TESTFX",
         decision=side,
         opened_at=at,
         arm=ARM_RULE,
+        price_source=price_source,
         before={
             "entry": price,
             "stop": stop,
@@ -211,4 +235,60 @@ class TestItFeedsTheComparison:
 
         described = journal_log.summary(session)
 
-        assert described["arms"][ARM_RULE]["resolved"] == 1
+        assert described["arms"][SOURCE_PUBLIC][ARM_RULE]["resolved"] == 1
+
+
+class TestAnEntryIsScoredOnTheSeriesItWasDecidedOn:
+    """Both series run in parallel and they price the same instrument 33-39%
+    of a stop distance apart. An entry whose levels came from one and whose
+    fills are read off the other is not slightly noisy - it starts a third of
+    the way to its stop in a random direction, which is fifteen times the edge
+    being measured, and it would corrupt both series at once."""
+
+    @pytest.fixture()
+    def broker(self, session):
+        row = Provider(
+            code=SOURCE_BROKER, name="MetaTrader bridge", capabilities={"ohlcv": True}
+        )
+        session.add(row)
+        session.flush()
+        return row
+
+    def test_the_other_series_cannot_close_it(self, session, symbol, provider, broker):
+        """The broker's bars run straight through the target. The entry was
+        decided on the public feed, which never moves, so it must stay open."""
+        bars(session, provider, symbol, [(99.5, 100.5)] * 5)
+        bars(session, broker, symbol, [(102.0, 103.0)] * 5)
+        entry(session, price_source=SOURCE_PUBLIC)
+
+        report = resolve.resolve_open(session, now=NOW + timedelta(hours=10))
+
+        assert report["resolved"] == 0
+        assert report["still_open"] == 1
+
+    def test_its_own_series_closes_it(self, session, symbol, provider, broker):
+        """The mirror of the test above, and the reason it is not just a test
+        that nothing resolves."""
+        bars(session, provider, symbol, [(99.5, 100.5)] * 5)
+        bars(session, broker, symbol, [(102.0, 103.0)] * 5)
+        entry(session, price_source=SOURCE_BROKER)
+
+        report = resolve.resolve_open(session, now=NOW + timedelta(hours=10))
+
+        assert report["resolved"] == 1
+        assert report["resolved_by_source"] == {SOURCE_BROKER: 1}
+        assert session.query(JournalEntry).one().outcome == "win"
+
+    def test_an_unreadable_series_is_named_not_left_open_forever(
+        self, session, symbol, provider
+    ):
+        """An entry recorded against a series this deployment cannot read will
+        otherwise sit open for the life of the deployment, shrinking the sample
+        every measurement rests on without ever saying why."""
+        bars(session, provider, symbol, [(102.0, 103.0)] * 5)
+        entry(session, price_source=SOURCE_BROKER)
+
+        report = resolve.resolve_open(session, now=NOW + timedelta(hours=10))
+
+        assert report["resolved"] == 0
+        assert any(SOURCE_BROKER in note for note in report["unresolvable"])

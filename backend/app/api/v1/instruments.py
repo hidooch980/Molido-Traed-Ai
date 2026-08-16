@@ -91,7 +91,6 @@ def calculate(
 
     tick_value = spec.get("tick_value")
     tick_size = spec.get("tick_size")
-    price = spec.get("bid") or spec.get("ask")
 
     return {
         "symbol": symbol,

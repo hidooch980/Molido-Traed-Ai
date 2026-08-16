@@ -25,6 +25,7 @@ months there is something to point at, whichever way it comes out.
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Any
@@ -34,7 +35,8 @@ from sqlalchemy.orm import Session
 
 from app.brain import crosssection
 from app.core.enums import Timeframe
-from app.models.instruments import Instrument
+from app.models.instruments import Instrument, Provider
+from app.models.journal import SOURCE_PUBLIC
 from app.models.market_data import Bar
 from app.services import journal_log
 
@@ -57,7 +59,11 @@ STOP_MULTIPLE = 2.5
 
 
 def snapshot(
-    session: Session, *, timeframe: Timeframe = Timeframe.H1, as_of: datetime | None = None
+    session: Session,
+    *,
+    timeframe: Timeframe = Timeframe.H1,
+    as_of: datetime | None = None,
+    provider_code: str = SOURCE_PUBLIC,
 ) -> tuple[dict[str, dict[str, Any]], datetime | None]:
     """The last `LOOKBACK` closed bars for every instrument, and their instant.
 
@@ -86,7 +92,13 @@ def snapshot(
     #
     # That is lookahead, it flatters the rule silently, and it would have gone
     # into the forward series as evidence.
-    instant = _instant(session, instruments, timeframe=timeframe, ceiling=ceiling)
+    provider_id = _provider_id(session, provider_code)
+    if provider_id is None:
+        return {}, None
+
+    instant = _instant(
+        session, instruments, timeframe=timeframe, ceiling=ceiling, provider_id=provider_id
+    )
     if instant is None:
         return {}, None
     cutoff = instant
@@ -99,6 +111,7 @@ def snapshot(
             .where(
                 Bar.instrument_id == instrument.id,
                 Bar.timeframe == timeframe.value,
+                Bar.provider_id == provider_id,
                 Bar.event_time <= cutoff,
             )
             .order_by(Bar.event_time.desc())
@@ -127,6 +140,7 @@ def _instant(
     *,
     timeframe: Timeframe,
     ceiling: datetime,
+    provider_id: uuid.UUID,
 ) -> datetime | None:
     """The most recent moment where enough instruments actually have a bar.
 
@@ -144,6 +158,7 @@ def _instant(
             .where(
                 Bar.instrument_id == instrument.id,
                 Bar.timeframe == timeframe.value,
+                Bar.provider_id == provider_id,
                 Bar.event_time <= ceiling,
             )
             .order_by(Bar.event_time.desc())
@@ -158,12 +173,17 @@ def _instant(
     return None
 
 
+def _provider_id(session: Session, code: str) -> uuid.UUID | None:
+    return session.scalar(select(Provider.id).where(Provider.code == code))
+
+
 def record_cycle(
     session: Session,
     *,
     timeframe: Timeframe = Timeframe.H1,
     as_of: datetime | None = None,
     account_key: str | None = None,
+    price_source: str = SOURCE_PUBLIC,
 ) -> dict[str, Any]:
     """One pass: rank, record both arms, report what happened.
 
@@ -171,7 +191,9 @@ def record_cycle(
     so running twice over an overlapping window does not inflate the sample the
     entire measurement rests on.
     """
-    built, latest = snapshot(session, timeframe=timeframe, as_of=as_of)
+    built, latest = snapshot(
+        session, timeframe=timeframe, as_of=as_of, provider_code=price_source
+    )
     if latest is None:
         return {
             "recorded": 0,
@@ -197,6 +219,7 @@ def record_cycle(
                 at=latest,
                 price=pick.price,
                 stop_distance=pick.atr * STOP_MULTIPLE,
+                price_source=price_source,
                 account_key=account_key,
                 before={
                     "rule": "cross-sectional-stretch",
@@ -204,6 +227,7 @@ def record_cycle(
                     "atr": pick.atr,
                     "stop_multiple": STOP_MULTIPLE,
                     "cross_section_size": ranked.considered,
+                    "price_source": price_source,
                     # The levels, resolved and stored rather than recomputed
                     # later. A resolver that rebuilds them from the ATR would
                     # score the trade against a geometry the decision never
@@ -223,6 +247,7 @@ def record_cycle(
 
     session.commit()
     return {
+        "price_source": price_source,
         "recorded": written,
         # Published rather than swallowed. A cycle that writes nothing because
         # everything was already recorded and one that writes nothing because

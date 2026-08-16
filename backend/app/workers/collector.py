@@ -324,16 +324,45 @@ def sample_equity() -> dict[str, Any]:
 
 
 def record_forward() -> dict[str, Any]:
-    """Write what the cross-sectional rule proposes on the bars just collected.
+    """Write what the rule proposes - on both price series, every cycle.
 
     Its own session, and its own commit. Sharing the collection's transaction
     would mean a failure here rolls back the bars, and the bars are the thing
     this worker exists for.
+
+    Both series in the same call, for the same reason the control is written in
+    the same call as the rule: a public-feed series built over months beside a
+    broker series that was skipped whenever something else broke is a comparison
+    with a hole in it, and the hole is invisible afterwards.
+
+    Each is recorded independently. A failure on one is reported under its own
+    name and the other still runs - the broker series is three weeks old and
+    barely clears the minimum cross-section, so it will fail to rank far more
+    often than the public one, and that must not stop the public one.
     """
+    from app.models.journal import SOURCE_BROKER, SOURCE_PUBLIC
     from app.workers.forward import record_cycle
 
-    with session_scope() as session:
-        return record_cycle(session)
+    reports: dict[str, Any] = {}
+    for source in (SOURCE_PUBLIC, SOURCE_BROKER):
+        try:
+            with session_scope() as session:
+                reports[source] = record_cycle(session, price_source=source)
+        except Exception as problem:  # noqa: BLE001 - reported, never fatal
+            reports[source] = {
+                "recorded": 0,
+                "reason": f"{type(problem).__name__} while recording on {source}",
+            }
+
+    return {
+        "recorded": sum(int(r.get("recorded") or 0) for r in reports.values()),
+        "by_source": reports,
+        "why": (
+            "the two series price the same instrument 33-39% of a stop apart and "
+            "the edge being measured is 0.021 R, so one of them alone answers "
+            "half the question"
+        ),
+    }
 
 
 def resolve_forward() -> dict[str, Any]:
@@ -373,6 +402,22 @@ async def collect(ctx: dict) -> dict[str, Any]:
             "reason": f"{type(problem).__name__} while sampling equity",
         }
 
+    # The broker's own bars, under their own provider. They have been published
+    # every twenty seconds since the bridge was built and nothing read them, so
+    # every bar in this database came from a public feed while the account
+    # trades somewhere else.
+    #
+    # Before the forward record, not after: the rule now decides on this series
+    # too, and ingesting afterwards would mean every broker-side decision was
+    # taken on bars one collection cycle stale.
+    try:
+        payload["broker_bars"] = await asyncio.to_thread(ingest_broker_bars)
+    except Exception as problem:  # noqa: BLE001 - reported, never fatal
+        payload["broker_bars"] = {
+            "ingested": 0,
+            "reason": f"{type(problem).__name__} while reading the bridge",
+        }
+
     # The forward record rides here too, and for the same reason: it needs the
     # bars this cycle just wrote, and a separate schedule would drift out of
     # step with them. Its failure is reported and never fatal - the forward
@@ -397,17 +442,6 @@ async def collect(ctx: dict) -> dict[str, Any]:
             "reason": f"{type(problem).__name__} while resolving open entries",
         }
 
-    # The broker's own bars, under their own provider. They have been published
-    # every twenty seconds since the bridge was built and nothing read them, so
-    # every bar in this database came from a public feed while the account
-    # trades somewhere else.
-    try:
-        payload["broker_bars"] = await asyncio.to_thread(ingest_broker_bars)
-    except Exception as problem:  # noqa: BLE001 - reported, never fatal
-        payload["broker_bars"] = {
-            "ingested": 0,
-            "reason": f"{type(problem).__name__} while reading the bridge",
-        }
     return payload
 
 

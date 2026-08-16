@@ -5,7 +5,8 @@ import { getT } from "@/lib/locale";
 export const dynamic = "force-dynamic";
 
 /**
- * Every decision the system recorded, and the only comparison that matters.
+ * Every decision the system recorded, on both price series, and the only
+ * comparison that matters.
  *
  * The headline is the rule against the random control on the same bars, never
  * the rule's hit rate on its own. A rule that beats breakeven while matching a
@@ -14,17 +15,45 @@ export const dynamic = "force-dynamic";
  * 50.32%.
  *
  * Both arms are shown side by side for the same reason they are written in one
- * call: it must be impossible to read one without the other.
+ * call: it must be impossible to read one without the other. Both *series* are
+ * shown for a second reason — the public feed and the broker quote the same
+ * instrument 33-39% of a stop distance apart, and the edge being looked for is
+ * 0.021 R. A page showing one number would be showing a result from a market
+ * nobody can trade in, and nothing on it would say so.
  */
+const SOURCES = ["yfinance", "metatrader"] as const;
+
 export default async function JournalPage() {
   const { t } = await getT();
   const view = await api.journal();
   if (!view.ok) return <Offline error={view.error} />;
 
-  const { arms, comparison, note } = view.data;
-  const rule = arms.rule;
-  const control = arms.control;
-  const measured = comparison.rule?.trials > 0;
+  const { arms, comparison, by_source, edge_lost_to_real_prices, why_two_series, note } =
+    view.data;
+
+  const label = (source: string) =>
+    source === "metatrader" ? t("journal.broker") : t("journal.public");
+
+  const rows = SOURCES.map((source) => ({
+    source,
+    name: label(source),
+    counts: arms?.[source] ?? {},
+    result: by_source?.[source],
+  })).filter((r) => (r.result?.rule?.trials ?? 0) > 0);
+
+  const measured = rows.length > 0;
+  const recorded = SOURCES.reduce(
+    (sum, s) => sum + (arms?.[s]?.rule?.recorded ?? 0),
+    0,
+  );
+  const open = SOURCES.reduce(
+    (sum, s) => sum + (arms?.[s]?.rule?.still_open ?? 0),
+    0,
+  );
+  const control = SOURCES.reduce(
+    (sum, s) => sum + (arms?.[s]?.control?.recorded ?? 0),
+    0,
+  );
 
   return (
     <div className="space-y-4">
@@ -36,12 +65,12 @@ export default async function JournalPage() {
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <Stat
           label={t("journal.ruleRecorded")}
-          value={String(rule?.recorded ?? 0)}
-          hint={`${rule?.still_open ?? 0} ${t("journal.stillOpen")}`}
+          value={String(recorded)}
+          hint={`${open} ${t("journal.stillOpen")} · ${t("journal.seriesHint")}`}
         />
         <Stat
           label={t("journal.controlRecorded")}
-          value={String(control?.recorded ?? 0)}
+          value={String(control)}
           hint={t("journal.controlHint")}
         />
         <Stat
@@ -52,12 +81,26 @@ export default async function JournalPage() {
               : "—"
           }
           tone={comparison.significant ? "good" : "warning"}
-          hint={t("journal.edgeHint")}
+          hint={`${t("journal.public")} · ${t("journal.edgeHint")}`}
         />
+        {/* Not folded into the edge figure. What the broker's prices cost is a
+            separate measurement, and averaging it into the headline would hide
+            the one number neither series gives on its own. */}
         <Stat
-          label={t("journal.needed")}
-          value={String(comparison.trials_needed_for_2pp)}
-          hint={t("journal.neededHint")}
+          label={t("journal.slippage")}
+          value={
+            edge_lost_to_real_prices != null
+              ? `${(edge_lost_to_real_prices * 100).toFixed(2)}%`
+              : t("journal.notYet")
+          }
+          tone={
+            edge_lost_to_real_prices == null
+              ? undefined
+              : edge_lost_to_real_prices < 0
+                ? "warning"
+                : "good"
+          }
+          hint={t("journal.slippageHint")}
         />
       </div>
 
@@ -74,6 +117,7 @@ export default async function JournalPage() {
             <table className="data">
               <thead>
                 <tr>
+                  <th>{t("journal.series")}</th>
                   <th>{t("journal.arm")}</th>
                   <th>{t("journal.trials")}</th>
                   <th>{t("journal.wins")}</th>
@@ -81,26 +125,25 @@ export default async function JournalPage() {
                 </tr>
               </thead>
               <tbody>
-                <tr>
-                  <td className="font-medium">{t("journal.rule")}</td>
-                  <td className="num">{comparison.rule.trials}</td>
-                  <td className="num">{comparison.rule.wins}</td>
-                  <td className="num">
-                    {comparison.rule.hit_rate != null
-                      ? `${(comparison.rule.hit_rate * 100).toFixed(2)}%`
-                      : "—"}
-                  </td>
-                </tr>
-                <tr>
-                  <td className="font-medium">{t("journal.control")}</td>
-                  <td className="num">{comparison.control.trials}</td>
-                  <td className="num">{comparison.control.wins}</td>
-                  <td className="num">
-                    {comparison.control.hit_rate != null
-                      ? `${(comparison.control.hit_rate * 100).toFixed(2)}%`
-                      : "—"}
-                  </td>
-                </tr>
+                {rows.flatMap((row) =>
+                  (["rule", "control"] as const).map((arm) => (
+                    <tr key={`${row.source}-${arm}`}>
+                      <td className="ink-3">
+                        {arm === "rule" ? row.name : ""}
+                      </td>
+                      <td className="font-medium">
+                        {arm === "rule" ? t("journal.rule") : t("journal.control")}
+                      </td>
+                      <td className="num">{row.result[arm].trials}</td>
+                      <td className="num">{row.result[arm].wins}</td>
+                      <td className="num">
+                        {row.result[arm].hit_rate != null
+                          ? `${(row.result[arm].hit_rate * 100).toFixed(2)}%`
+                          : "—"}
+                      </td>
+                    </tr>
+                  )),
+                )}
               </tbody>
             </table>
           </div>
@@ -109,21 +152,29 @@ export default async function JournalPage() {
 
       {measured && (
         <Panel title={t("journal.verdict")}>
-          <div className="p-4 space-y-2">
-            <StatusBadge
-              status={comparison.significant ? "good" : "warning"}
-              label={
-                comparison.significant
-                  ? t("journal.distinguishable")
-                  : t("journal.notDistinguishable")
-              }
-            />
-            <p className="text-xs ink-3 leading-relaxed">
-              z = {comparison.z_score ?? "—"} · {t("journal.needs")} 1.96
-            </p>
+          <div className="p-4 space-y-3">
+            {rows.map((row) => (
+              <div key={row.source} className="space-y-1">
+                <StatusBadge
+                  status={row.result.significant ? "good" : "warning"}
+                  label={`${row.name} — ${
+                    row.result.significant
+                      ? t("journal.distinguishable")
+                      : t("journal.notDistinguishable")
+                  }`}
+                />
+                <p className="text-xs ink-3 leading-relaxed">
+                  z = {row.result.z_score ?? "—"} · {t("journal.needs")} 1.96
+                </p>
+              </div>
+            ))}
           </div>
         </Panel>
       )}
+
+      <Panel title={t("journal.whyTwo")}>
+        <p className="p-4 text-xs ink-3 leading-relaxed">{why_two_series}</p>
+      </Panel>
 
       <p className="text-xs ink-3 leading-relaxed">{note}</p>
       <p className="text-xs ink-3 leading-relaxed">{comparison.note}</p>

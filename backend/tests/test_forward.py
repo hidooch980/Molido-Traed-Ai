@@ -17,13 +17,34 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from app.core.enums import Timeframe
-from app.models.instruments import Instrument
-from app.models.journal import ARM_CONTROL, ARM_RULE, JournalEntry
+from app.models.instruments import Instrument, Provider
+from app.models.journal import (
+    ARM_CONTROL,
+    ARM_RULE,
+    SOURCE_BROKER,
+    SOURCE_PUBLIC,
+    JournalEntry,
+)
 from app.models.market_data import Bar
 from app.services import journal_log
 from app.workers import forward
 
 NOW = datetime(2026, 8, 15, 12, 0, tzinfo=UTC)
+
+
+@pytest.fixture()
+def provider(session):
+    """The public feed, under its own name.
+
+    Shadows the shared fixture on purpose. The rule now runs on two price
+    series and the recorder reads whichever it was asked for, so a fixture
+    whose provider is called "test" would produce a market no source ever
+    reads - and every test here would pass by ranking nothing.
+    """
+    row = Provider(code=SOURCE_PUBLIC, name="Public feed", capabilities={"ohlcv": True})
+    session.add(row)
+    session.flush()
+    return row
 
 
 @pytest.fixture()
@@ -146,8 +167,8 @@ class TestItFeedsTheComparison:
 
         described = journal_log.summary(market)
 
-        assert described["arms"][ARM_RULE]["recorded"] > 0
-        assert described["arms"][ARM_CONTROL]["recorded"] > 0
+        assert described["arms"][SOURCE_PUBLIC][ARM_RULE]["recorded"] > 0
+        assert described["arms"][SOURCE_PUBLIC][ARM_CONTROL]["recorded"] > 0
         # Nothing has resolved, so the comparison must report nothing rather
         # than zero - an empty measurement is not a measurement of zero.
         assert described["comparison"]["edge_over_control"] is None
@@ -288,3 +309,113 @@ class TestTheInstantIsWhereTheMarketWas:
         # through the recorded last bar, which is what the ranking reads.
         for symbol, payload in built.items():
             assert payload["last_at"] <= instant, symbol
+
+
+class TestTheTwoSeriesDoNotMix:
+    """The same rule runs on the public feed and on the broker's own prices,
+    and the two quote the same instrument 33-39% of a stop distance apart -
+    measured over 490 shared hourly bars. The edge being looked for is 0.021 R.
+
+    So a decision taken on one series and priced off the other does not lose a
+    little accuracy; it starts a third of the way to its stop in a random
+    direction, which is fifteen times the effect being measured. These tests
+    are about the two series staying separate all the way through."""
+
+    @pytest.fixture()
+    def broker(self, session, market):
+        """The same instruments, at the broker's prices - deliberately
+        different, and displaced the opposite way so a leak is visible in the
+        ranking rather than only in the numbers."""
+        row = Provider(
+            code=SOURCE_BROKER, name="MetaTrader bridge", capabilities={"ohlcv": True}
+        )
+        session.add(row)
+        session.flush()
+
+        from app.brain.crosssection import RANKED_UNIVERSE
+
+        universe = sorted(RANKED_UNIVERSE)[:30]
+        for n, symbol in enumerate(universe):
+            instrument = session.query(Instrument).filter_by(symbol=symbol).one()
+            for i in range(forward.LOOKBACK):
+                close = 100.0 if i < forward.LOOKBACK - 1 else 100.0 + (14 - n)
+                session.add(
+                    Bar(
+                        instrument_id=instrument.id,
+                        timeframe=Timeframe.H1.value,
+                        provider_id=row.id,
+                        event_time=NOW - timedelta(hours=forward.LOOKBACK - i),
+                        revision=1,
+                        ingested_at=NOW,
+                        open=close,
+                        high=close + 1,
+                        low=close - 1,
+                        close=close,
+                        volume=100,
+                        quality_score=1.0,
+                    )
+                )
+        session.flush()
+        return row
+
+    def test_a_snapshot_reads_only_the_series_it_was_asked_for(self, session, broker):
+        public, _ = forward.snapshot(session, as_of=NOW, provider_code=SOURCE_PUBLIC)
+        broker_side, _ = forward.snapshot(
+            session, as_of=NOW, provider_code=SOURCE_BROKER
+        )
+
+        from app.brain.crosssection import RANKED_UNIVERSE
+
+        symbol = sorted(RANKED_UNIVERSE)[0]
+        assert public[symbol]["closes"][-1] != broker_side[symbol]["closes"][-1]
+
+    def test_each_series_ranks_on_its_own_prices(self, session, broker):
+        """The broker fixture displaces every instrument the opposite way, so
+        a recorder reading the wrong series produces the opposite book. Equal
+        answers here would mean one series is being read for both."""
+        public = forward.record_cycle(session, as_of=NOW, price_source=SOURCE_PUBLIC)
+        broker_side = forward.record_cycle(
+            session, as_of=NOW, price_source=SOURCE_BROKER
+        )
+
+        assert public["recorded"] > 0
+        assert broker_side["recorded"] > 0
+        assert set(public["longs"]) == set(broker_side["shorts"])
+
+    def test_a_missing_series_records_nothing_rather_than_borrowing_one(
+        self, session, market
+    ):
+        """The broker provider does not exist in this database. The recorder
+        must decline, not fall through to whatever bars it can find - a
+        broker-side series quietly built from public prices would be the one
+        failure this whole design exists to prevent, and it would look like a
+        successful measurement."""
+        result = forward.record_cycle(session, as_of=NOW, price_source=SOURCE_BROKER)
+
+        assert result["recorded"] == 0
+        assert result["reason"]
+
+    def test_the_series_is_stamped_on_every_row(self, session, broker):
+        """So a series read back years later can be identified rather than
+        inferred from which symbols happen to appear."""
+        forward.record_cycle(session, as_of=NOW, price_source=SOURCE_BROKER)
+
+        rows = session.query(JournalEntry).all()
+        assert rows
+        assert {r.price_source for r in rows} == {SOURCE_BROKER}
+        assert all(r.before.get("price_source") == SOURCE_BROKER for r in rows)
+
+    def test_the_same_bar_is_decided_on_twice_without_colliding(
+        self, session, broker
+    ):
+        """One row per (symbol, bar, arm) was one row too few once there were
+        two series. Both decisions about the same bar have to survive."""
+        forward.record_cycle(session, as_of=NOW, price_source=SOURCE_PUBLIC)
+        forward.record_cycle(session, as_of=NOW, price_source=SOURCE_BROKER)
+
+        by_source = {SOURCE_PUBLIC: 0, SOURCE_BROKER: 0}
+        for row in session.query(JournalEntry).filter_by(arm=ARM_RULE).all():
+            by_source[row.price_source] += 1
+
+        assert by_source[SOURCE_PUBLIC] > 0
+        assert by_source[SOURCE_PUBLIC] == by_source[SOURCE_BROKER]

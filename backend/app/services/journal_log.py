@@ -28,7 +28,12 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.learning import control as control_module
-from app.models.journal import ARM_CONTROL, ARM_RULE, JournalEntry
+from app.models.journal import (
+    ARM_CONTROL,
+    ARM_RULE,
+    SOURCE_PUBLIC,
+    JournalEntry,
+)
 
 #: When the forward measurement begins. Entries before it are excluded from the
 #: comparison and kept in the table.
@@ -73,6 +78,7 @@ def record_decision(
     decision: str,
     at: datetime,
     arm: str = ARM_RULE,
+    price_source: str = SOURCE_PUBLIC,
     account_key: str | None = None,
     probability: float | None = None,
     before: dict[str, Any] | None = None,
@@ -90,6 +96,7 @@ def record_decision(
             JournalEntry.symbol == symbol,
             JournalEntry.opened_at == moment,
             JournalEntry.arm == arm,
+            JournalEntry.price_source == price_source,
         )
     )
     if existing is not None:
@@ -102,6 +109,7 @@ def record_decision(
         opened_at=moment,
         probability=probability,
         arm=arm,
+        price_source=price_source,
         before=before or {},
         during=during or {},
     )
@@ -118,6 +126,7 @@ def record_with_control(
     at: datetime,
     price: float,
     stop_distance: float,
+    price_source: str = SOURCE_PUBLIC,
     account_key: str | None = None,
     probability: float | None = None,
     before: dict[str, Any] | None = None,
@@ -135,6 +144,7 @@ def record_with_control(
         decision=decision,
         at=at,
         arm=ARM_RULE,
+        price_source=price_source,
         account_key=account_key,
         probability=probability,
         before=before,
@@ -163,8 +173,13 @@ def record_with_control(
         decision="long" if entry.side > 0 else "short",
         at=at,
         arm=ARM_CONTROL,
+        price_source=price_source,
         account_key=account_key,
-        before=entry.as_dict(),
+        # The series is stamped on the control's reasoning as well as the
+        # rule's. The control is a decision on a price series too, and one
+        # whose row says which series it came from beside a partner whose row
+        # does not is a pair that cannot be checked afterwards.
+        before={**entry.as_dict(), "price_source": price_source},
     )
     return {"rule": rule.as_dict(), "control": control_row.as_dict()}
 
@@ -196,7 +211,10 @@ def close(
 
 
 def comparison(
-    session: Session, *, since: datetime | None = None
+    session: Session,
+    *,
+    since: datetime | None = None,
+    price_source: str = SOURCE_PUBLIC,
 ) -> control_module.Comparison:
     """The rule against the control, over resolved entries only.
 
@@ -218,6 +236,7 @@ def comparison(
             func.count().filter(JournalEntry.r_multiple <= 0),
         ).where(
             JournalEntry.arm == arm,
+            JournalEntry.price_source == price_source,
             JournalEntry.closed_at.is_not(None),
             JournalEntry.r_multiple.is_not(None),
         )
@@ -238,19 +257,30 @@ def comparison(
 
 
 def summary(session: Session) -> dict[str, Any]:
-    """What the journal holds, and what the comparison says so far."""
+    """What the journal holds, on both price series.
+
+    Two comparisons, because the two answer different questions. The public
+    feed carries the universe the rule was tested on and is a market nobody can
+    trade in; the broker carries the prices that actually fill. The gap between
+    the two results is the measurement neither gives alone: how much of the edge
+    the difference between quoted and filled prices eats.
+    """
+    from app.models.journal import SOURCE_BROKER
+
     totals = session.execute(
         select(
+            JournalEntry.price_source,
             JournalEntry.arm,
             func.count(JournalEntry.id),
             func.count(JournalEntry.closed_at),
             func.min(JournalEntry.opened_at),
             func.max(JournalEntry.opened_at),
-        ).group_by(JournalEntry.arm)
+        ).group_by(JournalEntry.price_source, JournalEntry.arm)
     ).all()
 
-    by_arm = {
-        arm: {
+    by_arm: dict[str, dict[str, Any]] = {}
+    for source, arm, recorded, resolved, first, last in totals:
+        by_arm.setdefault(source, {})[arm] = {
             "recorded": int(recorded or 0),
             "resolved": int(resolved or 0),
             # Stated rather than left to subtraction. "40 recorded, 12
@@ -260,13 +290,31 @@ def summary(session: Session) -> dict[str, Any]:
             "first_at": first.isoformat() if first else None,
             "last_at": last.isoformat() if last else None,
         }
-        for arm, recorded, resolved, first, last in totals
-    }
 
-    measured = comparison(session)
+    public = comparison(session, price_source=SOURCE_PUBLIC)
+    broker = comparison(session, price_source=SOURCE_BROKER)
+
+    slippage = None
+    if public.edge is not None and broker.edge is not None:
+        # What the gap between quoted and filled prices costs. Positive means
+        # the edge survived the move to real prices; negative means it did not.
+        slippage = round(broker.edge - public.edge, 4)
+
     return {
         "arms": by_arm,
-        "comparison": measured.as_dict(),
+        "comparison": public.as_dict(),
+        "by_source": {
+            SOURCE_PUBLIC: public.as_dict(),
+            SOURCE_BROKER: broker.as_dict(),
+        },
+        "edge_lost_to_real_prices": slippage,
+        "why_two_series": (
+            "the broker's prices and the public feed's differ by 33-39% of the "
+            "stop distance on every major pair, measured over 490 shared hourly "
+            "bars, and the edge being looked for is 0.021 R. The public series "
+            "has the universe the rule was tested on and is a market nobody can "
+            "trade in; the broker series has the prices that actually fill"
+        ),
         # Stated, so nobody has to guess which entries the numbers above cover.
         "measurement_starts_at": MEASUREMENT_STARTS_AT.isoformat(),
         "why_it_starts_there": (

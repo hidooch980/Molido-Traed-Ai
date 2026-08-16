@@ -222,9 +222,15 @@ class TestTheComparison:
 
         described = journal_log.summary(session)
 
-        assert described["arms"][ARM_RULE]["recorded"] == 6
-        assert described["arms"][ARM_RULE]["resolved"] == 5
-        assert described["arms"][ARM_RULE]["still_open"] == 1
+        # Nested by price source now: the same rule runs on both the public
+        # feed and the broker's own prices, and merging them would report one
+        # count for two different measurements.
+        from app.models.journal import SOURCE_PUBLIC
+
+        rule = described["arms"][SOURCE_PUBLIC][ARM_RULE]
+        assert rule["recorded"] == 6
+        assert rule["resolved"] == 5
+        assert rule["still_open"] == 1
 
 
 class TestTheMeasurementWindowIsExplicit:
@@ -284,3 +290,58 @@ class TestTheMeasurementWindowIsExplicit:
         """The markets reopen then. A window that starts mid-weekend begins
         with two days of nothing and one crypto instant."""
         assert journal_log.MEASUREMENT_STARTS_AT.strftime("%A") == "Monday"
+
+
+class TestBothPriceSeriesAreMeasured:
+    """The broker's prices and the public feed's differ by 33-39% of the stop
+    distance on every major pair, measured over 490 shared hourly bars, and the
+    edge being looked for is 0.021 R. One series answers half the question."""
+
+    def test_the_same_bar_can_carry_a_decision_on_each_series(self, session):
+        from app.models.journal import SOURCE_BROKER, SOURCE_PUBLIC
+
+        public = journal_log.record_decision(
+            session, symbol="EURUSD", decision="long", at=NOW,
+            price_source=SOURCE_PUBLIC,
+        )
+        broker = journal_log.record_decision(
+            session, symbol="EURUSD", decision="short", at=NOW,
+            price_source=SOURCE_BROKER,
+        )
+
+        assert public.new is True
+        assert broker.new is True
+        assert public.entry_id != broker.entry_id
+
+    def test_a_comparison_counts_one_series_only(self, session):
+        """Merging them would report one number for two measurements."""
+        from app.models.journal import SOURCE_BROKER, SOURCE_PUBLIC
+
+        for arm in (ARM_RULE, ARM_CONTROL):
+            row = journal_log.record_decision(
+                session, symbol=f"P{arm}", decision="long",
+                at=journal_log.MEASUREMENT_STARTS_AT + timedelta(hours=1),
+                arm=arm, price_source=SOURCE_PUBLIC,
+            )
+            journal_log.close(session, row.entry_id, outcome="win", r_multiple=1.0)
+
+        public = journal_log.comparison(session, price_source=SOURCE_PUBLIC)
+        broker = journal_log.comparison(session, price_source=SOURCE_BROKER)
+
+        assert public.rule_trials == 1
+        assert broker.rule_trials == 0
+
+    def test_the_summary_publishes_both_and_the_gap(self, session):
+        from app.models.journal import SOURCE_BROKER, SOURCE_PUBLIC
+
+        described = journal_log.summary(session)
+
+        assert SOURCE_PUBLIC in described["by_source"]
+        assert SOURCE_BROKER in described["by_source"]
+        assert "edge_lost_to_real_prices" in described
+        assert "33-39%" in described["why_two_series"]
+
+    def test_the_gap_is_none_until_both_have_resolved(self, session):
+        """An empty measurement is not a measurement of zero, and a gap
+        computed from one arm is not a gap."""
+        assert journal_log.summary(session)["edge_lost_to_real_prices"] is None

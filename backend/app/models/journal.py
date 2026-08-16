@@ -21,6 +21,21 @@ from app.db.types import JSONType, TimestampType
 ARM_RULE = "rule"
 ARM_CONTROL = "control"
 
+#: Which price series a decision was taken on.
+#:
+#: Both run in parallel. The broker's prices and the public feed's differ by
+#: 33-39% of the stop distance on every major pair - measured over 490 shared
+#: hourly bars - and the edge being looked for is 0.021 R. A measurement on one
+#: series alone answers half the question: Yahoo has the universe the rule was
+#: tested on and is a market nobody can trade in; the broker has the prices that
+#: actually fill and three weeks of history.
+#:
+#: A column rather than a suffix on `arm`, because encoding two facts in one
+#: string is how a filter meaning "the control arm" quietly starts matching
+#: "control on broker prices" too.
+SOURCE_PUBLIC = "yfinance"
+SOURCE_BROKER = "metatrader"
+
 
 class JournalEntry(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     """A decision, its reasoning, and how it turned out."""
@@ -28,9 +43,14 @@ class JournalEntry(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     __tablename__ = "journal_entries"
     __table_args__ = (
         UniqueConstraint(
-            "symbol", "opened_at", "arm", name="uq_journal_symbol_bar_arm"
+            "symbol",
+            "opened_at",
+            "arm",
+            "price_source",
+            name="uq_journal_symbol_bar_arm_source",
         ),
         Index("ix_journal_arm_time", "arm", "opened_at"),
+        Index("ix_journal_source_arm_time", "price_source", "arm", "opened_at"),
     )
 
     symbol: Mapped[str] = mapped_column(String(32), index=True, nullable=False)
@@ -46,6 +66,9 @@ class JournalEntry(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     r_multiple: Mapped[float | None] = mapped_column(Float, nullable=True)
     outcome: Mapped[str | None] = mapped_column(String(24), index=True, nullable=True)
     arm: Mapped[str] = mapped_column(String(16), default=ARM_RULE, nullable=False)
+    price_source: Mapped[str] = mapped_column(
+        String(24), default=SOURCE_PUBLIC, nullable=False
+    )
 
     #: Written at different times by different events - a thesis at the open,
     #: observations while it runs, an outcome at the close. Separate columns so

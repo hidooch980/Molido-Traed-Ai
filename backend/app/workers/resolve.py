@@ -27,6 +27,14 @@ measurement pessimistic exactly when the market was trending.
 **Nothing is resolved from a bar at or before the entry.** The entry bar's own
 high and low are not evidence about what happened next - using them is
 lookahead wearing the costume of a fill.
+
+**A decision is scored on the series it was taken on.** Both run in parallel,
+and their prices differ by 33-39% of the stop distance on every major pair. A
+decision whose entry, stop and target came from the public feed but whose fills
+are read off the broker's bars starts a third of the way to its stop in a
+random direction - which is larger than the entire edge being measured, and
+would corrupt both series at once rather than telling us the difference between
+them.
 """
 
 from __future__ import annotations
@@ -38,7 +46,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.enums import Timeframe
-from app.models.instruments import Instrument
+from app.models.instruments import Instrument, Provider
 from app.models.journal import JournalEntry
 from app.models.market_data import Bar
 
@@ -97,6 +105,15 @@ def resolve_open(
     """
     moment = (now or datetime.now(UTC)).astimezone(UTC)
 
+    # `price_source` is the provider's own code, so this is a lookup rather than
+    # a mapping table nobody remembers to extend when a third series arrives.
+    providers = {
+        code: identifier
+        for code, identifier in session.execute(
+            select(Provider.code, Provider.id)
+        ).all()
+    }
+
     open_entries = session.scalars(
         select(JournalEntry)
         .where(JournalEntry.closed_at.is_(None))
@@ -108,6 +125,7 @@ def resolve_open(
     still_open = 0
     abandoned = 0
     missing: list[str] = []
+    by_source: dict[str, int] = {}
 
     for entry in open_entries:
         instrument = session.scalar(
@@ -118,6 +136,17 @@ def resolve_open(
             # instrument disappeared will otherwise sit open for the life of
             # the deployment and quietly shrink the sample.
             missing.append(entry.symbol)
+            continue
+
+        provider_id = providers.get(entry.price_source)
+        if provider_id is None:
+            # Named, not skipped quietly. An entry recorded against a series
+            # this deployment cannot read will otherwise stay open forever and
+            # shrink the sample without ever saying why.
+            missing.append(
+                f"{entry.symbol}: no provider named {entry.price_source} here, "
+                "so the series it was decided on cannot be read"
+            )
             continue
 
         # The levels as they were decided, not rebuilt from the ATR. A
@@ -145,6 +174,10 @@ def resolve_open(
             .where(
                 Bar.instrument_id == instrument.id,
                 Bar.timeframe == timeframe.value,
+                # The series the decision was taken on, never the other one.
+                # The two differ by a third of the stop distance, and the edge
+                # being measured is a fiftieth of it.
+                Bar.provider_id == provider_id,
                 Bar.event_time > entry.opened_at,
                 Bar.event_time <= moment,
             )
@@ -179,12 +212,20 @@ def resolve_open(
         entry.closed_at = bars[-1].event_time
         entry.outcome = outcome
         entry.r_multiple = r_multiple
-        entry.after = {"bars_to_resolve": len(bars)}
+        entry.after = {
+            "bars_to_resolve": len(bars),
+            "price_source": entry.price_source,
+        }
         resolved += 1
+        by_source[entry.price_source] = by_source.get(entry.price_source, 0) + 1
 
     session.commit()
     return {
         "resolved": resolved,
+        # Per series, because a pass that resolved forty on the public feed and
+        # none on the broker's is not the same fact as one that resolved twenty
+        # on each, and the total hides the difference.
+        "resolved_by_source": by_source,
         "abandoned": abandoned,
         "still_open": still_open,
         "considered": len(open_entries),
