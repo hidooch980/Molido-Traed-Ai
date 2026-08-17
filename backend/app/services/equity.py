@@ -206,3 +206,42 @@ def series(session: Session, account_key: str) -> Series:
         peak_equity=peak_equity(session, account_key),
         peak_day_open_balance=peak_day_open_balance(session, account_key),
     )
+
+
+def curve(
+    session: Session, account_key: str, *, limit: int = 500
+) -> list[dict[str, Any]]:
+    """The recorded equity points themselves, oldest first.
+
+    `series` answers "what is known about this account" - counts, peaks, span.
+    This answers the other question nobody could ask: what the equity actually
+    did. The samples have been written every fifteen minutes since the collector
+    started and nothing had ever read them back.
+
+    Bounded, and the newest kept rather than the oldest: a chart of the first
+    five hundred points from weeks ago describes a shape the account has since
+    left.
+    """
+    rows = session.execute(
+        select(
+            EquitySample.recorded_at,
+            EquitySample.equity,
+            EquitySample.balance,
+        )
+        .where(EquitySample.account_key == account_key)
+        .order_by(EquitySample.recorded_at.desc())
+        .limit(limit)
+    ).all()
+
+    return [
+        {
+            "at": at.isoformat(),
+            "equity": float(equity),
+            "balance": float(balance),
+            # Published per point rather than left to the reader to subtract.
+            # Equity below balance is open positions carrying their entry
+            # spread - a cost, not a result.
+            "floating": round(float(equity) - float(balance), 2),
+        }
+        for at, equity, balance in reversed(rows)
+    ]

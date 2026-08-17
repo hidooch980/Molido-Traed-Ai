@@ -289,6 +289,64 @@ def read_accounts(_: Principal = READ) -> dict[str, Any]:
     return payload
 
 
+@router.get("/equity")
+def read_equity(
+    session: Session = Depends(get_db),
+    limit: int = Query(default=500, ge=1, le=5000),
+    _: Principal = READ,
+) -> dict[str, Any]:
+    """One account's recorded equity, and what it did.
+
+    The samples have been written every fifteen minutes since the collector
+    started and nothing ever read them back - the curve existed and no page
+    could show it, which is the same shape of gap as an order path that could
+    not place an order.
+
+    The account is read from the terminal rather than taken as a parameter.
+    There is one connected account, and letting a caller name a different one
+    would return an empty curve that looks like a flat account rather than like
+    a question about the wrong account.
+    """
+    from app.providers.metatrader import MetaTraderBridge
+    from app.services import equity as equity_service
+
+    published = MetaTraderBridge().account()
+    login = str(published.get("login") or "") if published.get("available") else ""
+    if not login:
+        return {
+            "available": False,
+            "reason": (
+                "no account is connected, so there is no equity to read. The "
+                "bridge publishes no login - the terminal is down or not "
+                "signed in"
+            ),
+            "points": [],
+        }
+
+    known = equity_service.series(session, login)
+    points = equity_service.curve(session, login, limit=limit)
+
+    return {
+        "available": bool(points),
+        "account": login,
+        "points": points,
+        "summary": known.as_dict(),
+        "reason": (
+            None
+            if points
+            else (
+                f"account {login} is connected but has no recorded samples "
+                "yet. The collector writes one every cycle, so this fills in "
+                "within minutes of it running"
+            )
+        ),
+        "note": (
+            "equity below balance at a point is open positions carrying their "
+            "entry spread, which is a cost rather than a result"
+        ),
+    }
+
+
 @router.get("/autopilot")
 def read_autopilot(
     _: Principal = READ,
