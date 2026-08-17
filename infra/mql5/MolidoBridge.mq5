@@ -37,6 +37,15 @@
 input int RefreshSeconds = 20;
 //--- How many closed bars to publish per symbol and timeframe.
 input int BarCount = 500;
+//--- The same, for the minute timeframes, which are published so the rule can
+//--- be *measured* at speed before it is ever traded at speed.
+//---
+//--- Deliberately smaller. Four timeframes across every Market Watch symbol is
+//--- 176 files a cycle, and this expert shares four cores with the platform it
+//--- feeds - a full 500 bars of M1 per symbol is disk work for history the
+//--- rule never looks back that far into. 240 M1 bars is four hours, which is
+//--- more than the lookback needs and bounded.
+input int IntradayBarCount = 240;
 
 //--- Symbols to add to Market Watch on start, comma separated.
 //---
@@ -197,7 +206,8 @@ void WriteBars(string symbol, ENUM_TIMEFRAMES period)
   {
    MqlRates rates[];
    ArraySetAsSeries(rates, true);
-   int copied = CopyRates(symbol, period, 1, BarCount, rates);
+   int wanted = (period <= PERIOD_M5) ? IntradayBarCount : BarCount;
+   int copied = CopyRates(symbol, period, 1, wanted, rates);
    if(copied <= 0)
       return;
 
@@ -401,9 +411,19 @@ input bool   AllowTrading    = true;
 //--- Hard ceiling, whatever is asked. Raised from 0.10 after the first live
 //--- sizing run: 0.25% of a 10,000 account behind a real stop came out at 0.26
 //--- lots on USDCAD, which is correct risk and would have been refused by an
-//--- arbitrary ceiling. 0.50 still stops a fat finger without overruling the
-//--- risk calculation that has the account equity and the stop distance in it.
-input double MaxLots         = 0.50;
+//--- arbitrary ceiling.
+//---
+//--- Raised again to 5.00 for the practice account, which is deliberately
+//--- being run hard: at 2% of a 10,000 account the same USDCAD stop sizes to
+//--- about 2.1 lots, and a 0.50 ceiling would have silently refused every
+//--- order while looking like the risk setting had been applied. A ceiling
+//--- that fires on correct sizing teaches nothing.
+//---
+//--- It is still a fat-finger stop, not a risk control - the risk control is
+//--- the equity-and-stop calculation in the backend, and this only catches the
+//--- case where that calculation has gone wrong. Both are behind the account
+//--- gate, which reads the terminal's own trade_mode and refuses real money.
+input double MaxLots         = 5.00;
 input int    MaxSlippagePts  = 30;
 
 //--- Where requests arrive and results are written. Common folder, same as
@@ -666,6 +686,15 @@ void Publish()
       string name = SymbolName(i, true);
       WriteBars(name, PERIOD_H1);
       WriteBars(name, PERIOD_M15);
+      //--- Published so the faster timeframes can be measured. Whether the
+      //--- rule is *traded* on them is a separate decision, taken in the
+      //--- backend against what these bars turn out to say: the spread is a
+      //--- constant and the bar range falls with the square root of time, so
+      //--- the cost of a decision rises as the timeframe shortens whatever
+      //--- the edge does. Publishing the data settles that with evidence
+      //--- rather than with either of our opinions.
+      WriteBars(name, PERIOD_M5);
+      WriteBars(name, PERIOD_M1);
      }
 
    WriteHeartbeat(cycle);

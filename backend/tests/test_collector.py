@@ -452,3 +452,53 @@ class TestProviderComparison:
         result = collector.compare_providers(parse_watchlist("NOSUCH:NOSUCH=X:H1"))
 
         assert result["failures"] == []
+
+
+class TestEveryPublishedTimeframeIsRead:
+    """The bridge published M15 for weeks and none of it reached the database:
+    `ingest_broker_bars` called `ingest` with its default and the default was
+    hourly. Nothing failed. The files were on disk, the table had no rows, and
+    a query for them looked exactly like a feed that had never sent anything.
+    """
+
+    def test_all_four_timeframes_are_requested(self, monkeypatch):
+        from app.workers import collector
+
+        asked: list[str] = []
+
+        def fake_ingest(session, timeframe=None):
+            asked.append(timeframe.value if timeframe else "default")
+            return {"recorded": 1}
+
+        monkeypatch.setattr("app.workers.broker_bars.ingest", fake_ingest)
+
+        report = collector.ingest_broker_bars()
+
+        assert set(asked) == {"H1", "M15", "M5", "M1"}
+        assert report["recorded"] == 4
+
+    def test_the_hourly_bars_survive_a_broken_minute_file(self, monkeypatch):
+        """H1 is what the live rule decides on. A malformed M1 file must not
+        take the bars the account is trading on down with it."""
+        from app.workers import collector
+
+        def fake_ingest(session, timeframe=None):
+            if timeframe and timeframe.value == "M1":
+                raise ValueError("malformed row")
+            return {"recorded": 7}
+
+        monkeypatch.setattr("app.workers.broker_bars.ingest", fake_ingest)
+
+        report = collector.ingest_broker_bars()
+
+        assert report["by_timeframe"]["H1"]["recorded"] == 7
+        assert report["by_timeframe"]["M1"]["recorded"] == 0
+        assert "ValueError" in report["by_timeframe"]["M1"]["reason"]
+
+    def test_the_hourly_timeframe_is_still_among_them(self):
+        """The faster ones are for measuring. Dropping the one the live rule
+        decides on while adding them would be a silent downgrade."""
+        from app.core.enums import Timeframe
+        from app.workers.collector import _broker_timeframes
+
+        assert Timeframe.H1 in _broker_timeframes()

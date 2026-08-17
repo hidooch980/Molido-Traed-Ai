@@ -109,16 +109,18 @@ def decide(
     at=None,
     levels=True,
     during=None,
+    timeframe=None,
 ):
+    before = {"entry": 1.1580, "stop": 1.1530, "target": 1.1630} if levels else {}
+    if timeframe:
+        before["timeframe"] = timeframe
     row = JournalEntry(
         symbol=symbol,
         decision="long",
         opened_at=at or NOW - timedelta(minutes=5),
         arm=arm,
         price_source=source,
-        before=(
-            {"entry": 1.1580, "stop": 1.1530, "target": 1.1630} if levels else {}
-        ),
+        before=before,
         during=during or {},
     )
     session.add(row)
@@ -406,6 +408,115 @@ class TestTheAgeIsMeasuredFromTheClose:
         Folding them into one number hides which was chosen."""
         assert autotrade.DECISION_BAR_MINUTES == 60
         assert autotrade.MAX_DECISION_AGE_MINUTES == 90
+
+
+class TestHowHardItTradesIsDeploymentSettable:
+    """These two are the numbers most worth changing on a practice account.
+    A knob that reads back correctly but never reaches the sizing call is worse
+    than a constant, because it looks like it was set."""
+
+    def test_the_risk_percent_reaches_the_size(self, session, live, monkeypatch):
+        from app.core.config import get_settings
+
+        settings = get_settings()
+        monkeypatch.setattr(settings, "autotrade_risk_percent", 2.0, raising=False)
+        decide(session)
+        broker = FakeBroker()
+
+        report = autotrade.run_cycle(
+            session, now=NOW, broker=broker, bridge=FakeBridge()
+        )
+
+        assert report["risk_percent"] == 2.0
+        assert report["orders"] == 1
+
+    def test_a_bigger_risk_buys_a_bigger_position(self, session, live, monkeypatch):
+        """The number has to move the lots, not just the report."""
+        from app.core.config import get_settings
+
+        settings = get_settings()
+        sizes = {}
+        for name, symbol, percent in (
+            ("small", "EURUSD", 0.25),
+            ("large", "GBPUSD", 2.0),
+        ):
+            monkeypatch.setattr(
+                settings, "autotrade_risk_percent", percent, raising=False
+            )
+            broker = FakeBroker()
+            decide(session, symbol=symbol)
+            autotrade.run_cycle(
+                session, now=NOW, broker=broker, bridge=FakeBridge()
+            )
+            sizes[name] = (
+                broker.submitted[-1].metadata.get("lots")
+                if broker.submitted
+                else None
+            )
+
+        assert sizes["small"] is not None and sizes["large"] is not None
+        assert sizes["large"] > sizes["small"]
+
+    def test_the_position_cap_is_settable(self, session, live, monkeypatch):
+        from app.core.config import get_settings
+
+        monkeypatch.setattr(
+            get_settings(), "autotrade_max_open_positions", 20, raising=False
+        )
+        decide(session)
+
+        report = autotrade.run_cycle(
+            session, now=NOW, broker=FakeBroker(), bridge=FakeBridge()
+        )
+
+        assert report["max_open_positions"] == 20
+
+    def test_the_defaults_are_the_conservative_pair(self):
+        """Unset, it trades the way it has been trading. A deployment that sets
+        nothing must not inherit somebody else's appetite."""
+        from app.core.config import Settings
+
+        assert Settings().autotrade_risk_percent == 0.25
+        assert Settings().autotrade_max_open_positions == 8
+
+
+class TestEachDecisionIsChargedItsOwnBar:
+    """The add-back exists because a decision stamped 04:00 was taken at that
+    bar's close. Which close depends on the bar, and charging an hourly one to
+    an M5 decision keeps it tradeable for two and a half hours - trading the
+    delay, which is the exact thing the freshness window is there to stop."""
+
+    def test_an_hourly_decision_is_charged_an_hour(self):
+        entry = JournalEntry(before={"timeframe": "H1"})
+
+        assert autotrade._bar_minutes(entry) == 60
+
+    def test_a_five_minute_decision_is_charged_five_minutes(self):
+        entry = JournalEntry(before={"timeframe": "M5"})
+
+        assert autotrade._bar_minutes(entry) == 5
+
+    def test_an_entry_written_before_the_field_existed_keeps_the_old_charge(self):
+        """Backfilling a guess onto old rows would rewrite history; they were
+        all hourly, so the old constant is the honest answer for them."""
+        assert autotrade._bar_minutes(JournalEntry(before={})) == 60
+
+    def test_an_unreadable_timeframe_does_not_crash_the_cycle(self):
+        assert autotrade._bar_minutes(JournalEntry(before={"timeframe": "M7"})) == 60
+
+    def test_a_stale_five_minute_decision_is_refused_though_an_hourly_one_lives(
+        self, session, live
+    ):
+        """Both are 100 minutes old. Under one shared hourly add-back both
+        would trade; only the hourly one should."""
+        old = NOW - timedelta(minutes=100)
+        decide(session, symbol="EURUSD", at=old, timeframe="M5")
+
+        report = autotrade.run_cycle(
+            session, now=NOW, broker=FakeBroker(), bridge=FakeBridge()
+        )
+
+        assert report["orders"] == 0
 
 
 class TestOnlyANeverSentRequestIsRetried:

@@ -64,6 +64,10 @@ from app.models.journal import ARM_RULE, SOURCE_BROKER, JournalEntry
 #: Fraction of equity risked per position. Small on purpose: the rule proposes
 #: several positions per instant and the edge it is chasing is a fiftieth of a
 #: stop distance, so size is not where the return comes from.
+#: The conservative pair the live cycle ran on, and the fallback if the
+#: deployment sets nothing. Read through the accessors below rather than used
+#: directly: binding them at import means a deployment cannot change how hard
+#: it trades without a rebuild.
 RISK_PERCENT = 0.25
 
 #: How many positions may be open at the broker at once.
@@ -87,7 +91,42 @@ MAX_DECISION_AGE_MINUTES = 90
 
 #: How long the bar the decision was taken on lasts. The decision happened at
 #: its close, not at its label.
+#:
+#: Only a fallback now. Entries record their own timeframe, and this is what an
+#: entry written before that field existed is charged. Hardcoding it was safe
+#: while every decision was hourly and becomes a silent error the moment one is
+#: not: an M5 decision charged an hour would stay tradeable for two and a half
+#: hours, which is the delay being traded rather than the rule.
 DECISION_BAR_MINUTES = 60
+
+
+def _bar_minutes(entry: JournalEntry) -> int:
+    """How long the bar this particular decision was taken on lasted."""
+    from app.core.enums import Timeframe
+
+    recorded = (entry.before or {}).get("timeframe")
+    if not recorded:
+        return DECISION_BAR_MINUTES
+    try:
+        return max(1, int(Timeframe(str(recorded)).delta.total_seconds() // 60))
+    except (ValueError, KeyError):
+        return DECISION_BAR_MINUTES
+
+
+def _risk_percent() -> float:
+    """What fraction of equity to put behind one stop, as the deployment set it."""
+    from app.core.config import get_settings
+
+    return float(getattr(get_settings(), "autotrade_risk_percent", RISK_PERCENT))
+
+
+def _max_open_positions() -> int:
+    """How many positions may be open at once, as the deployment set it."""
+    from app.core.config import get_settings
+
+    return int(
+        getattr(get_settings(), "autotrade_max_open_positions", MAX_OPEN_POSITIONS)
+    )
 
 
 def _lots(
@@ -107,7 +146,7 @@ def _lots(
     sized = calculators.lot_size(
         symbol=str(specification.get("name") or ""),
         equity=equity,
-        risk_percent=RISK_PERCENT,
+        risk_percent=_risk_percent(),
         stop_distance_price=stop_distance,
         tick_value=specification.get("tick_value"),
         tick_size=specification.get("tick_size"),
@@ -167,13 +206,14 @@ def run_cycle(
     # across two of them - twice the risk the sizing computed for one
     # decision, and invisible in any count-based limit.
     held = {str(p.get("symbol")) for p in live_positions if p.get("symbol")}
-    room = MAX_OPEN_POSITIONS - open_now
+    cap = _max_open_positions()
+    room = cap - open_now
     if room <= 0:
         return _report(
             mode=mode,
             refused=(
                 f"{open_now} positions are already open and the cap is "
-                f"{MAX_OPEN_POSITIONS}"
+                f"{cap}"
             ),
             open_positions=open_now,
         )
@@ -229,7 +269,7 @@ def run_cycle(
                 symbol=entry.symbol,
                 side=OrderSide.BUY if entry.decision == "long" else OrderSide.SELL,
                 order_type=OrderType.MARKET,
-                risk_r=RISK_PERCENT / 100.0,
+                risk_r=_risk_percent() / 100.0,
                 entry=float(price),
                 stop=float(stop),
                 target=float(target) if target is not None else None,
@@ -243,7 +283,9 @@ def run_cycle(
                     Approval(
                         source="risk",
                         approved=True,
-                        detail=f"{RISK_PERCENT}% of equity behind the recorded stop",
+                        detail=(
+                            f"{_risk_percent()}% of equity behind the recorded stop"
+                        ),
                         at=moment,
                     ),
                 ),
@@ -330,7 +372,11 @@ def _pending(session: Session, moment: datetime) -> list[JournalEntry]:
     from datetime import timedelta
 
     # The bar's length is added back, because a decision stamped 04:00 was
-    # taken on that bar's close at 05:00.
+    # taken on that bar's close at 05:00. Which bar differs per entry now, so
+    # the query takes the widest window any timeframe could justify and each
+    # row is then charged its own bar below. Filtering only in SQL would need
+    # one cutoff for all of them, and the only safe single value is the
+    # loosest - which is exactly the stale M5 decision this guards against.
     cutoff = moment - timedelta(
         minutes=MAX_DECISION_AGE_MINUTES + DECISION_BAR_MINUTES
     )
@@ -345,7 +391,13 @@ def _pending(session: Session, moment: datetime) -> list[JournalEntry]:
         .order_by(JournalEntry.opened_at)
     ).all()
 
-    return [row for row in rows if _needs_an_order(row)]
+    fresh = [
+        row
+        for row in rows
+        if row.opened_at
+        >= moment - timedelta(minutes=MAX_DECISION_AGE_MINUTES + _bar_minutes(row))
+    ]
+    return [row for row in fresh if _needs_an_order(row)]
 
 
 #: The one rejection reason that proves nothing reached the broker.
@@ -399,8 +451,8 @@ def _report(
         # orders because there was nothing to send" are different facts.
         "skipped": skipped or [],
         "refused": refused,
-        "risk_percent": RISK_PERCENT,
-        "max_open_positions": MAX_OPEN_POSITIONS,
+        "risk_percent": _risk_percent(),
+        "max_open_positions": _max_open_positions(),
         "note": (
             "the rule arm on the broker's own price series only. The control "
             "is recorded and never traded - it exists so the rule has "

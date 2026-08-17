@@ -228,6 +228,12 @@ def record_cycle(
                     "stop_multiple": STOP_MULTIPLE,
                     "cross_section_size": ranked.considered,
                     "price_source": price_source,
+                    # Recorded, not assumed. The freshness window that
+                    # decides whether this is still tradeable has to add
+                    # back the bar it was taken on, and a decision taken
+                    # on an M5 bar charged an hour is an hour of drift
+                    # nobody chose.
+                    "timeframe": timeframe.value,
                     # The levels, resolved and stored rather than recomputed
                     # later. A resolver that rebuilds them from the ATR would
                     # score the trade against a geometry the decision never

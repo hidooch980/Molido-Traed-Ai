@@ -323,6 +323,20 @@ def sample_equity() -> dict[str, Any]:
     return {"recorded": stored, "account": login}
 
 
+def _broker_timeframes() -> tuple:
+    """Which timeframes to pull from the terminal.
+
+    H1 is what the live rule decides on. The faster three are pulled so the
+    same rule can be *measured* at speed before anything is traded at speed:
+    the spread is a constant and the bar range falls with the square root of
+    time, so a decision costs more the shorter the timeframe, and the only
+    honest way to find out whether the edge survives that is to have the bars.
+    """
+    from app.core.enums import Timeframe
+
+    return (Timeframe.H1, Timeframe.M15, Timeframe.M5, Timeframe.M1)
+
+
 def record_forward() -> dict[str, Any]:
     """Write what the rule proposes - on both price series, every cycle.
 
@@ -388,11 +402,36 @@ def send_orders() -> dict[str, Any]:
 
 
 def ingest_broker_bars() -> dict[str, Any]:
-    """Read the bars the terminal publishes into the metatrader provider."""
+    """Read the bars the terminal publishes into the metatrader provider.
+
+    Every timeframe the expert writes, not just the hourly one. The bridge has
+    been publishing M15 for weeks and none of it reached the database, because
+    this called `ingest` with its default and the default was H1 - so the
+    faster timeframes existed as files on the server and as nothing at all in
+    any query. That is the failure mode worth naming: not a crash, just a
+    quiet absence that looks like the feed never sent anything.
+
+    Each timeframe commits on its own. A malformed M1 file must not roll back
+    the hourly bars, which are the ones the live rule is deciding on.
+    """
+    from app.core.enums import Timeframe
     from app.workers.broker_bars import ingest
 
-    with session_scope() as session:
-        return ingest(session)
+    reports: dict[str, Any] = {}
+    for timeframe in _broker_timeframes():
+        try:
+            with session_scope() as session:
+                reports[timeframe.value] = ingest(session, timeframe=timeframe)
+        except Exception as problem:  # noqa: BLE001 - reported, never fatal
+            reports[timeframe.value] = {
+                "recorded": 0,
+                "reason": f"{type(problem).__name__} on {timeframe.value}",
+            }
+
+    return {
+        "recorded": sum(int(r.get("recorded") or 0) for r in reports.values()),
+        "by_timeframe": reports,
+    }
 
 
 async def collect(ctx: dict) -> dict[str, Any]:

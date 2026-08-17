@@ -114,6 +114,21 @@ class Settings(BaseSettings):
     allow_real_money_orders: bool = False
     max_risk_r_per_order: float = 1.0
 
+    #: How hard the autopilot trades. Settings rather than constants because
+    #: these are the two numbers most worth turning on a practice account and
+    #: least worth editing code to change - and because the value that makes
+    #: sense for a demo is not the value that makes sense anywhere else.
+    #:
+    #: The defaults are the conservative pair the live cycle has been running.
+    #: Raising them changes how much of the account one bad instant can take:
+    #: risk percent times open positions is the fraction of equity at stake if
+    #: every stop fills at once, and the cross-section deliberately takes both
+    #: tails, so its positions are correlated and "at once" is the normal case
+    #: rather than the tail one. `account_gate` still refuses a real-money
+    #: account whatever these say.
+    autotrade_risk_percent: float = 0.25
+    autotrade_max_open_positions: int = 8
+
     # Collector (the long-running data-gathering worker)
     collector_provider: str = "yfinance"
     collector_interval_seconds: int = 900
