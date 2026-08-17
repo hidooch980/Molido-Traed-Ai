@@ -502,3 +502,70 @@ class TestEveryPublishedTimeframeIsRead:
         from app.workers.collector import _broker_timeframes
 
         assert Timeframe.H1 in _broker_timeframes()
+
+
+class TestWhichTimeframesTheRuleDecidesOn:
+    """Adding a faster timeframe is how the forward test stops needing a year:
+    the same ~6,573 instants arrive about twelve times sooner on M5. What must
+    not happen is a typo in one environment variable quietly stopping the
+    hourly decisions the account is actually trading on."""
+
+    def test_the_default_is_hourly_only(self):
+        from app.core.enums import Timeframe
+        from app.workers.collector import _forward_timeframes
+
+        assert _forward_timeframes() == (Timeframe.H1,)
+
+    def test_a_faster_timeframe_can_be_added(self, monkeypatch):
+        from app.core.config import get_settings
+        from app.core.enums import Timeframe
+        from app.workers.collector import _forward_timeframes
+
+        monkeypatch.setattr(
+            get_settings(), "forward_timeframes", "H1,M5", raising=False
+        )
+
+        assert _forward_timeframes() == (Timeframe.H1, Timeframe.M5)
+
+    def test_hourly_survives_being_left_out(self, monkeypatch):
+        """The live rule decides on it. A deployment that names only M5 has
+        almost certainly not decided to stop trading hourly."""
+        from app.core.config import get_settings
+        from app.core.enums import Timeframe
+        from app.workers.collector import _forward_timeframes
+
+        monkeypatch.setattr(get_settings(), "forward_timeframes", "M5", raising=False)
+
+        assert _forward_timeframes()[0] is Timeframe.H1
+
+    def test_an_unreadable_name_is_dropped_and_the_rest_kept(self, monkeypatch):
+        from app.core.config import get_settings
+        from app.core.enums import Timeframe
+        from app.workers.collector import _forward_timeframes
+
+        monkeypatch.setattr(
+            get_settings(), "forward_timeframes", "H1, M7 ,M5", raising=False
+        )
+
+        assert _forward_timeframes() == (Timeframe.H1, Timeframe.M5)
+
+    def test_a_repeated_name_is_recorded_once(self, monkeypatch):
+        """Twice through would write the same instant twice and inflate the
+        very sample the whole measurement rests on."""
+        from app.core.config import get_settings
+        from app.workers.collector import _forward_timeframes
+
+        monkeypatch.setattr(
+            get_settings(), "forward_timeframes", "H1,M5,M5,H1", raising=False
+        )
+
+        assert len(_forward_timeframes()) == len(set(_forward_timeframes()))
+
+    def test_an_empty_setting_still_decides(self, monkeypatch):
+        from app.core.enums import Timeframe
+        from app.core.config import get_settings
+        from app.workers.collector import _forward_timeframes
+
+        monkeypatch.setattr(get_settings(), "forward_timeframes", "", raising=False)
+
+        assert _forward_timeframes() == (Timeframe.H1,)

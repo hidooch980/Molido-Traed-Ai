@@ -323,6 +323,32 @@ def sample_equity() -> dict[str, Any]:
     return {"recorded": stored, "account": login}
 
 
+def _forward_timeframes() -> tuple:
+    """Which timeframes the rule records decisions on.
+
+    Unreadable names are dropped with the rest kept rather than failing the
+    cycle: a typo in one environment variable should not stop the hourly
+    decisions the account is actually trading on. H1 is always included for
+    the same reason - the live rule decides on it, and a deployment that
+    fat-fingers this must not silently stop deciding.
+    """
+    from app.core.enums import Timeframe
+
+    raw = str(getattr(get_settings(), "forward_timeframes", "H1") or "H1")
+    chosen = [Timeframe.H1]
+    for name in raw.split(","):
+        name = name.strip().upper()
+        if not name:
+            continue
+        try:
+            timeframe = Timeframe(name)
+        except ValueError:
+            continue
+        if timeframe not in chosen:
+            chosen.append(timeframe)
+    return tuple(chosen)
+
+
 def _broker_timeframes() -> tuple:
     """Which timeframes to pull from the terminal.
 
@@ -354,19 +380,26 @@ def record_forward() -> dict[str, Any]:
     barely clears the minimum cross-section, so it will fail to rank far more
     often than the public one, and that must not stop the public one.
     """
+    from app.core.enums import Timeframe
     from app.models.journal import SOURCE_BROKER, SOURCE_PUBLIC
     from app.workers.forward import record_cycle
 
     reports: dict[str, Any] = {}
-    for source in (SOURCE_PUBLIC, SOURCE_BROKER):
-        try:
-            with session_scope() as session:
-                reports[source] = record_cycle(session, price_source=source)
-        except Exception as problem:  # noqa: BLE001 - reported, never fatal
-            reports[source] = {
-                "recorded": 0,
-                "reason": f"{type(problem).__name__} while recording on {source}",
-            }
+    for timeframe in _forward_timeframes():
+        for source in (SOURCE_PUBLIC, SOURCE_BROKER):
+            key = source if timeframe is Timeframe.H1 else f"{source}:{timeframe.value}"
+            try:
+                with session_scope() as session:
+                    reports[key] = record_cycle(
+                        session, price_source=source, timeframe=timeframe
+                    )
+            except Exception as problem:  # noqa: BLE001 - reported, never fatal
+                reports[key] = {
+                    "recorded": 0,
+                    "reason": (
+                        f"{type(problem).__name__} while recording on {key}"
+                    ),
+                }
 
     return {
         "recorded": sum(int(r.get("recorded") or 0) for r in reports.values()),

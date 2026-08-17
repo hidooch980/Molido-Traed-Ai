@@ -129,6 +129,22 @@ class Settings(BaseSettings):
     autotrade_risk_percent: float = 0.25
     autotrade_max_open_positions: int = 8
 
+    #: Which timeframes the rule records decisions on, comma separated.
+    #:
+    #: Adding one does not dilute the hourly evidence: entries carry their own
+    #: timeframe now and the measurement groups on it, so H1 and M5 accumulate
+    #: as separate bodies of proof rather than one blurred pile.
+    #:
+    #: The reason to add M5 is arithmetic. The forward test needs about 6,573
+    #: independent instants to separate this edge from noise, which is roughly
+    #: a year of hourly bars and about a month of five-minute ones. The reason
+    #: to be careful about it is also arithmetic, and points the other way: the
+    #: spread is a constant while bar range falls with the square root of time,
+    #: so the same 1.4 pip spread is 16% of an average hourly bar and near 58%
+    #: of a five-minute one. Faster answers, dearer trades. The measurement is
+    #: net of costs, which is exactly why it is allowed to settle this.
+    forward_timeframes: str = "H1"
+
     # Collector (the long-running data-gathering worker)
     collector_provider: str = "yfinance"
     collector_interval_seconds: int = 900
