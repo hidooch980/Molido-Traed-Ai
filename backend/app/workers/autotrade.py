@@ -113,6 +113,102 @@ MAX_SPREAD_COST_R = 0.25
 DECISION_BAR_MINUTES = 60
 
 
+def _feed_age_bars(published: dict[str, Any], moment: datetime) -> float | None:
+    """How stale the terminal's own publication is, in decision bars.
+
+    Returned as None when the stamp is unreadable, and the brain treats None
+    as stale rather than fresh - not knowing the age of a feed is not evidence
+    that it is young. That is its rule, and this does not soften it by
+    substituting a number.
+    """
+    stamp = str(published.get("published_at") or "").strip()
+    try:
+        published_at = datetime.strptime(stamp, "%Y.%m.%d %H:%M:%S").replace(tzinfo=UTC)
+    except (ValueError, TypeError):
+        return None
+    minutes = abs((moment - published_at).total_seconds()) / 60.0
+    return minutes / max(DECISION_BAR_MINUTES, 1)
+
+
+def _authorise(state: Any, *, feed_age_bars: float | None) -> Any:
+    """Ask the risk brain whether this cycle may open new risk.
+
+    Health is reported honestly rather than flatteringly. `calibrated` and
+    `training_eligible` are left at their pessimistic defaults because this
+    deployment has neither a calibrated probability nor a proven edge, and
+    both of those halve the permitted risk rather than blocking - which is the
+    brain's own considered answer to being unsure, and not one to override
+    from here.
+    """
+    from app.brain.risk import DataHealth, authorise
+
+    return authorise(
+        requested_risk_r=_risk_percent() / 100.0,
+        account=state,
+        health=DataHealth(data_age_bars=feed_age_bars),
+    )
+
+
+def _account_state(
+    session: Session, published: dict[str, Any], open_positions: int
+) -> tuple[Any, str]:
+    """Build the state the risk brain requires, or name what is missing.
+
+    `AccountState` takes no optional fields on purpose - its own docstring
+    says an optional balance would let a caller omit the one number that
+    would have blocked the trade. So a missing peak or day-open refuses the
+    cycle rather than being filled with a plausible default. Both come from
+    recorded history, and the honest reading of "nothing recorded" is that
+    the drawdown against them cannot be computed, not that it is zero.
+    """
+    from app.brain.risk import AccountState
+    from app.services import equity as equity_service
+
+    account_key = str(published.get("login") or "")
+    if not account_key:
+        return None, "the terminal published no login, so there is no account to size against"
+
+    equity = float(published.get("equity") or 0.0)
+    balance = float(published.get("balance") or 0.0)
+    if equity <= 0:
+        return None, "the terminal published no equity, so risk cannot be sized"
+
+    peak = equity_service.peak_equity(session, account_key)
+    if peak is None:
+        return None, (
+            "no equity has ever been recorded for this account, so the drawdown "
+            "from peak cannot be computed - and an unknown drawdown is not a zero one"
+        )
+
+    day_open = equity_service.peak_day_open_balance(session, account_key)
+    if day_open is None:
+        return None, (
+            "no day-boundary balance has been recorded, so today's loss cannot be "
+            "measured against anything"
+        )
+
+    # The day's P&L expressed in R, which is what the brain's limits are in.
+    # One R is what a single trade risks, so a 3 R daily limit is three losing
+    # trades - which is the unit the limit was written in.
+    one_r = equity * (_risk_percent() / 100.0)
+    if one_r <= 0:
+        return None, "the configured risk per trade is zero, so R is undefined"
+    daily_pnl_r = (equity - float(day_open)) / one_r
+
+    return (
+        AccountState(
+            equity=equity,
+            balance=balance,
+            peak_equity=float(peak),
+            daily_pnl_r=daily_pnl_r,
+            open_positions=open_positions,
+            used_margin=float(published.get("margin") or 0.0),
+            free_margin=float(published.get("free_margin") or 0.0),
+        ),
+        "",
+    )
+
+
 def _spread_cost_r(
     specification: dict[str, Any], stop_distance: float
 ) -> tuple[float | None, str]:
@@ -182,8 +278,14 @@ def _lots(
     equity: float,
     stop_distance: float,
     specification: dict[str, Any],
+    risk_percent: float | None = None,
 ) -> tuple[float | None, str]:
-    """How many lots put `RISK_PERCENT` of equity behind this stop.
+    """How many lots put this much of equity behind this stop.
+
+    `risk_percent` defaults to the configured figure. The caller passes the
+    risk brain's *permitted* figure instead, which is often smaller: consulting
+    a limit and then sizing as though it had approved the full request is not
+    consulting it at all.
 
     Returns `(None, why)` rather than a default when the broker has not
     published what a tick is worth. A default size is a position whose risk
@@ -194,7 +296,7 @@ def _lots(
     sized = calculators.lot_size(
         symbol=str(specification.get("name") or ""),
         equity=equity,
-        risk_percent=_risk_percent(),
+        risk_percent=_risk_percent() if risk_percent is None else risk_percent,
         stop_distance_price=stop_distance,
         tick_value=specification.get("tick_value"),
         tick_size=specification.get("tick_size"),
@@ -266,6 +368,22 @@ def run_cycle(
     # across two of them - twice the risk the sizing computed for one
     # decision, and invisible in any count-based limit.
     held = {str(p.get("symbol")) for p in live_positions if p.get("symbol")}
+
+    # The risk brain, which until now decided nothing. It exists to be the
+    # link that cannot be talked out of its answer, and it was reachable only
+    # from an API route - so the daily loss limit it enforces had never once
+    # been consulted by the thing that trades.
+    state, missing = _account_state(session, published, open_now)
+    if state is None:
+        return _report(mode=mode, refused=f"risk state unavailable: {missing}")
+
+    verdict = _authorise(state, feed_age_bars=_feed_age_bars(published, moment))
+    if not verdict.approves:
+        return _report(
+            mode=mode,
+            refused="risk brain: " + "; ".join(verdict.hard_breaches or verdict.reasons),
+        )
+
     cap = _max_open_positions()
     room = cap - open_now
     if room <= 0:
@@ -319,6 +437,10 @@ def run_cycle(
             equity=equity,
             stop_distance=abs(float(price) - float(stop)),
             specification=specification,
+            # The brain's answer, not the request. It halves risk while
+            # nothing is calibrated and no edge is proven, which is its
+            # considered response to being unsure - and both are true here.
+            risk_percent=verdict.permitted_risk_r * 100.0,
         )
         if lots is None:
             skipped.append(f"{entry.symbol}: {problem}")

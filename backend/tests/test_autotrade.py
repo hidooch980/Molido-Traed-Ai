@@ -44,6 +44,12 @@ class FakeBridge:
             "trade_mode": self._trade_mode,
             "equity": self._equity,
             "balance": self._equity,
+            # The real terminal stamps every publication and the risk brain
+            # treats an unknown age as stale, not fresh. A fake account without
+            # one is not a fresher feed, it is an unmeasurable one.
+            "published_at": NOW.strftime("%Y.%m.%d %H:%M:%S"),
+            "margin": 0.0,
+            "free_margin": self._equity,
         }
 
     def positions(self):
@@ -121,6 +127,15 @@ def live(monkeypatch):
 
     monkeypatch.setattr(autopilot, "mode_now", lambda: ("live", "armed", True))
     monkeypatch.setattr(autopilot, "account_gate", lambda a: (True, "demo"))
+
+    # The risk brain is a gate like the others, so it opens here and is closed
+    # deliberately by the tests that are about it. Production reads these from
+    # recorded equity history; a test account with no history is not a
+    # realistic account, it is one the brain correctly refuses to size.
+    from app.services import equity as equity_service
+
+    monkeypatch.setattr(equity_service, "peak_equity", lambda *a, **k: 10_000.0)
+    monkeypatch.setattr(equity_service, "peak_day_open_balance", lambda *a, **k: 10_000.0)
 
 
 def decide(
@@ -810,3 +825,116 @@ class TestTheKillSwitchIsTheFirstGate:
 
         assert broker.submitted == []
         assert "kill switch" in report["refused"]
+
+
+class TestTheRiskBrainGovernsTheSize:
+    """The layer that says no, which until now said it only to an API route.
+
+    `brain/risk.py` holds the daily loss limit, the drawdown ceiling and the
+    margin rules, and nothing that traded had ever consulted it. These are
+    about it deciding rather than merely being asked."""
+
+    @staticmethod
+    def state(**over):
+        from app.brain.risk import AccountState
+
+        base = dict(
+            equity=10_000.0,
+            balance=10_000.0,
+            peak_equity=10_000.0,
+            daily_pnl_r=0.0,
+            open_positions=2,
+            used_margin=100.0,
+            free_margin=9_900.0,
+        )
+        base.update(over)
+        return AccountState(**base)
+
+    def verdict(self, state):
+        from app.brain.risk import DataHealth, authorise
+
+        return authorise(
+            requested_risk_r=0.008, account=state, health=DataHealth(data_age_bars=0.5)
+        )
+
+    def test_the_daily_loss_limit_blocks(self):
+        """The circuit breaker the audit found missing from the live path."""
+        blocked = self.verdict(self.state(daily_pnl_r=-4.0))
+
+        assert blocked.approves is False
+        assert any("daily loss" in b for b in blocked.hard_breaches)
+
+    def test_a_loss_short_of_the_limit_reduces_rather_than_blocks(self):
+        """A limit that only ever slams shut teaches nothing on the way down."""
+        softened = self.verdict(self.state(daily_pnl_r=-2.0))
+
+        assert softened.approves is True
+        assert softened.permitted_risk_r < 0.008
+
+    def test_drawdown_from_peak_reduces_the_size(self):
+        shrunk = self.verdict(self.state(equity=9_200.0))
+
+        assert shrunk.permitted_risk_r < self.verdict(self.state()).permitted_risk_r
+
+    def test_an_uncalibrated_system_is_sized_down_even_when_healthy(self):
+        """Nothing here is calibrated and no edge is proven, and the brain's
+        answer to being unsure is a smaller position rather than none."""
+        healthy = self.verdict(self.state())
+
+        assert healthy.approves is True
+        assert healthy.permitted_risk_r < 0.008
+
+    def test_an_unknown_feed_age_blocks(self):
+        """Not knowing how old the feed is is not evidence that it is young."""
+        from app.brain.risk import DataHealth, authorise
+
+        unknown = authorise(
+            requested_risk_r=0.008, account=self.state(), health=DataHealth()
+        )
+
+        assert unknown.approves is False
+
+
+class TestTheAccountStateRefusesToBeGuessed:
+    """`AccountState` takes no optional fields on purpose. These are about the
+    builder honouring that rather than filling gaps with plausible numbers."""
+
+    def test_no_recorded_equity_refuses_the_cycle(self, session, monkeypatch):
+        from app.services import equity as equity_service
+
+        monkeypatch.setattr(equity_service, "peak_equity", lambda *a, **k: None)
+        state, why = autotrade._account_state(
+            session, {"login": "1", "equity": 10_000.0}, 0
+        )
+
+        assert state is None
+        assert "unknown drawdown is not a zero one" in why
+
+    def test_no_day_boundary_refuses_the_cycle(self, session, monkeypatch):
+        from app.services import equity as equity_service
+
+        monkeypatch.setattr(equity_service, "peak_equity", lambda *a, **k: 10_000.0)
+        monkeypatch.setattr(equity_service, "peak_day_open_balance", lambda *a, **k: None)
+        state, why = autotrade._account_state(
+            session, {"login": "1", "equity": 10_000.0}, 0
+        )
+
+        assert state is None
+        assert "cannot be measured against anything" in why
+
+    def test_no_login_refuses(self, session):
+        state, why = autotrade._account_state(session, {"equity": 10_000.0}, 0)
+
+        assert state is None
+        assert "no login" in why
+
+    def test_an_unreadable_stamp_leaves_the_age_unknown(self):
+        """Which the brain then treats as stale. This does not soften that by
+        substituting a number."""
+        assert autotrade._feed_age_bars({"published_at": "nonsense"}, NOW) is None
+        assert autotrade._feed_age_bars({}, NOW) is None
+
+    def test_a_fresh_stamp_measures_zero_bars(self):
+        published = {"published_at": NOW.strftime("%Y.%m.%d %H:%M:%S")}
+
+        assert autotrade._feed_age_bars(published, NOW) == 0.0
