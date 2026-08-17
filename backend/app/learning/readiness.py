@@ -30,6 +30,8 @@ would be a forecast of the assumption.
 from __future__ import annotations
 
 import math
+
+from app.workers.resolve import HORIZON
 from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Any
@@ -104,6 +106,27 @@ class Readiness:
     answerable_on: date | None
     open_requirements: tuple[str, ...] = ()
     met_requirements: tuple[str, ...] = ()
+    #: Bars each decision is scored over. Instants one bar apart share all but
+    #: one bar of that window, so consecutive instants are not independent
+    #: draws and the instant count is itself an optimistic number.
+    horizon_bars: int = HORIZON
+
+    @property
+    def independent_blocks(self) -> int:
+        """Resolved instants that share no part of an outcome window.
+
+        A floor, not an estimate. Two instants one bar apart are scored over
+        windows overlapping in 119 of 120 bars, so they largely re-measure one
+        market move - the same error as counting eight simultaneous decisions
+        as eight, taken along time instead of across the book. The true
+        effective sample sits between this and `instants_resolved`; where
+        exactly needs the serial correlation measured, which needs more
+        resolved instants than exist. Published as a floor so the optimistic
+        number is never the only one on the page.
+        """
+        if self.horizon_bars <= 0:
+            return self.instants_resolved
+        return self.instants_resolved // self.horizon_bars
 
     @property
     def fraction(self) -> float | None:
@@ -118,6 +141,8 @@ class Readiness:
             "instants_needed": self.instants_needed,
             "fraction": round(self.fraction, 4) if self.fraction is not None else None,
             "decisions_resolved": self.decisions_resolved,
+            "independent_blocks": self.independent_blocks,
+            "horizon_bars": self.horizon_bars,
             "instants_per_week": (
                 round(self.instants_per_week, 1)
                 if self.instants_per_week is not None
@@ -141,6 +166,15 @@ class Readiness:
                 "about one market move rather than eight. The historical "
                 "measurement had 107,045 trades inside 11,414 instants, and "
                 "counting those as independent counts one move nine times"
+            ),
+            "why_blocks": (
+                f"each decision is scored over {self.horizon_bars} bars, and "
+                "instants land one bar apart, so consecutive instants share "
+                f"{self.horizon_bars - 1} of those {self.horizon_bars} bars. "
+                "They are not independent draws. `independent_blocks` counts "
+                "only instants sharing no part of a window - a floor, not an "
+                "estimate. The honest reading of `fraction` is that it is an "
+                "upper bound on progress"
             ),
             "the_assumption": (
                 f"sized for an edge of {HISTORICAL_EDGE_R} R per instant "

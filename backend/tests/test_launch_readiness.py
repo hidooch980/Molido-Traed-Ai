@@ -292,3 +292,58 @@ class TestItReadsTheRealJournal:
         assert journal_log.readiness_of(
             session, price_source=SOURCE_BROKER
         ).instants_resolved == 0
+
+
+class TestOverlappingWindowsAreNotIndependentDraws:
+    """The module already learned this once across the book: eight decisions
+    at one instant are one piece of evidence. The same error runs along time.
+    A decision is scored over 120 bars and instants land one bar apart, so
+    consecutive instants re-measure almost the same stretch of market."""
+
+    def make(self, resolved: int, **kw):
+        return readiness.Readiness(
+            instants_resolved=resolved,
+            instants_needed=6573,
+            decisions_resolved=resolved * 8,
+            instants_per_week=40.0,
+            answerable_on=None,
+            **kw,
+        )
+
+    def test_the_horizon_is_imported_not_restated(self):
+        """A window that drifts from the one the measurement scored over is a
+        different measurement wearing the same name."""
+        from app.workers.resolve import HORIZON
+
+        assert readiness.Readiness.horizon_bars == HORIZON
+
+    def test_the_floor_divides_by_the_window(self):
+        assert self.make(250).independent_blocks == 2      # 250 // 120
+        assert self.make(6573).independent_blocks == 54
+
+    def test_the_floor_is_never_above_the_instant_count(self):
+        for resolved in (0, 1, 119, 120, 121, 10_000):
+            entry = self.make(resolved)
+            assert entry.independent_blocks <= entry.instants_resolved
+
+    def test_a_single_bar_horizon_makes_them_equal(self):
+        """With no overlap there is nothing to discount, and the floor should
+        not invent a penalty that is not there."""
+        assert self.make(250, horizon_bars=1).independent_blocks == 250
+
+    def test_a_zero_horizon_does_not_divide_by_zero(self):
+        assert self.make(250, horizon_bars=0).independent_blocks == 250
+
+    def test_both_numbers_are_published_so_neither_stands_alone(self):
+        published = self.make(250).as_dict()
+
+        assert published["instants_resolved"] == 250
+        assert published["independent_blocks"] == 2
+        assert published["horizon_bars"] == 120
+
+    def test_the_payload_says_the_fraction_is_an_upper_bound(self):
+        """Somebody will read `fraction` as progress. It is a ceiling."""
+        published = self.make(250).as_dict()
+
+        assert "upper bound on progress" in published["why_blocks"]
+        assert "not independent draws" in published["why_blocks"]
