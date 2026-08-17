@@ -39,6 +39,8 @@ bet on the market, which is the thing it was built not to be.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any
@@ -181,6 +183,52 @@ def stretch_of(closes: list[float], atr: float) -> float | None:
     window = closes[-(MEAN_WINDOW + 1) : -1]
     mean = sum(window) / len(window)
     return (closes[-1] - mean) / atr
+
+
+#: Timeframes must agree at least this often before a signal is treated as
+#: confirmed. Two out of three is a coin landing the same way twice; this is
+#: the first ratio that is not.
+MIN_AGREEMENT = 0.75
+
+
+def agreement(stretches: Sequence[float | None]) -> tuple[int, int, float | None]:
+    """How many timeframes point the same way as the majority of them.
+
+    A stretch that shows on one timeframe and nowhere else is usually the last
+    bar rather than a move. One that shows on five is a move. This counts the
+    agreement rather than averaging the stretches: averaging lets one violent
+    short timeframe outvote four calm long ones, which is the opposite of what
+    confirmation means.
+
+    A `None` stretch is a timeframe with too little history to have an opinion.
+    It is dropped from both sides rather than counted as disagreement - absent
+    is not the same as against - and the total returned is what remained, so a
+    caller can tell unanimity-of-five from unanimity-of-one.
+
+    Returns (agreeing, usable, ratio). Ratio is None when nothing was usable,
+    because zero out of zero is not zero agreement, it is no evidence.
+    """
+    usable = [x for x in stretches if x is not None and x != 0.0]
+    if not usable:
+        return 0, 0, None
+
+    up = sum(1 for x in usable if x > 0)
+    down = len(usable) - up
+    agreeing = max(up, down)
+    return agreeing, len(usable), agreeing / len(usable)
+
+
+def confirmed(stretches: Sequence[float | None], *, minimum: float = MIN_AGREEMENT) -> bool:
+    """Whether the timeframes agree enough to act on.
+
+    Refuses on a single usable timeframe however emphatic it is: one
+    timeframe agreeing with itself is not confirmation, and it would otherwise
+    score a perfect 1.0 and pass every threshold.
+    """
+    _, usable, ratio = agreement(stretches)
+    if ratio is None or usable < 2:
+        return False
+    return ratio >= minimum
 
 
 def rank(
