@@ -373,6 +373,20 @@ def resolve_forward() -> dict[str, Any]:
         return resolve_open(session)
 
 
+def send_orders() -> dict[str, Any]:
+    """Turn this cycle's fresh decisions into orders, behind every gate.
+
+    Its own session and its own commit, like the forward record: a failure here
+    must not roll back the bars or the decisions. Decisions are the thing that
+    survives a bad day; orders can be re-derived from them, and are, on the
+    next cycle.
+    """
+    from app.workers.autotrade import run_cycle
+
+    with session_scope() as session:
+        return run_cycle(session)
+
+
 def ingest_broker_bars() -> dict[str, Any]:
     """Read the bars the terminal publishes into the metatrader provider."""
     from app.workers.broker_bars import ingest
@@ -428,6 +442,18 @@ async def collect(ctx: dict) -> dict[str, Any]:
         payload["forward"] = {
             "recorded": 0,
             "reason": f"{type(problem).__name__} while recording the forward series",
+        }
+
+    # Orders last, after the decisions they come from exist and after the
+    # market has been read. A cycle that fails before this point simply does
+    # not trade, which is the right failure: the decision is recorded either
+    # way and the next cycle can act on it.
+    try:
+        payload["orders"] = await asyncio.to_thread(send_orders)
+    except Exception as problem:  # noqa: BLE001 - reported, never fatal
+        payload["orders"] = {
+            "orders": 0,
+            "reason": f"{type(problem).__name__} while sending orders",
         }
 
     # And close whatever the market has answered. Without this the journal
