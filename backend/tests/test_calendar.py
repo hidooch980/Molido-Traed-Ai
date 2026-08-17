@@ -295,3 +295,40 @@ class TestTheTimezoneConverter:
         naive = datetime(2026, 8, 17, 12, 0)
 
         assert calendar.convert(naive)["utc"].startswith("2026-08-17T12:00")
+
+
+class TestTheFeedIsNotRefetchedOnEveryLoad:
+    """This is the only page component that reaches another continent on every
+    load, and the answer it gets is a week old by design."""
+
+    def test_an_injected_opener_is_never_cached(self, monkeypatch):
+        """A test fixture left in the cache would be served to the next test,
+        and to production if the injection ever happened there."""
+        calls: list[int] = []
+
+        def counting(request, timeout=None):
+            calls.append(1)
+            return opener_for(FEED)(request, timeout)
+
+        calendar.fetch(opener=counting)
+        calendar.fetch(opener=counting)
+
+        assert len(calls) == 2
+
+    def test_the_cache_window_is_stated(self):
+        assert calendar.CACHE_SECONDS == 600
+
+    def test_a_failed_fetch_does_not_poison_the_cache(self, monkeypatch):
+        """A calendar that keeps showing last week because the feed went down
+        is worse than one that says it could not be read."""
+        import urllib.error
+
+        monkeypatch.setattr(calendar, "_cached", None)
+
+        def broken(request, timeout=None):
+            raise urllib.error.URLError("down")
+
+        with pytest.raises(ProviderError):
+            calendar.fetch(opener=broken)
+
+        assert calendar._cached is None

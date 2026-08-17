@@ -27,6 +27,7 @@ first.
 from __future__ import annotations
 
 import re
+import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -173,15 +174,49 @@ def looks_shifted(releases: list[Release]) -> str | None:
     return None
 
 
+#: How long a fetched week is reused. The feed publishes a whole week at once
+#: and revises it rarely, so re-fetching it on every page load spends a
+#: round-trip to another continent to learn the same 96 events. Ten minutes is
+#: short enough that a revised forecast appears while somebody is still looking
+#: at the page, and long enough that a busy hour costs one fetch.
+CACHE_SECONDS = 600
+
+#: Set by `fetch`, read by `fetch`. Deliberately module-level rather than
+#: threaded through: every caller wants the same week, and a cache one caller
+#: has to remember to pass is a cache that gets bypassed.
+_cached: tuple[float, str] | None = None
+
+
 def fetch(*, timeout: float = 20.0, opener: Any = None) -> str:
-    """The raw feed. Separate from parsing so tests never touch the network."""
+    """The raw feed, reused for `CACHE_SECONDS` between fetches.
+
+    Cached because this is the only page component that reaches another
+    continent on every load, and the answer it gets back is a week old by
+    design.
+
+    A failed fetch does not poison the cache and a cached week is not served
+    past its age - the alternative is a calendar that keeps showing last week
+    because the feed went down, which is worse than a calendar that says it
+    could not be read.
+    """
+    global _cached
+
+    if opener is None and _cached is not None:
+        cached_at, body = _cached
+        if time.monotonic() - cached_at < CACHE_SECONDS:
+            return body
     request = urllib.request.Request(  # noqa: S310 - constant https URL
         FEED, headers={"User-Agent": "molido/1.0 (economic calendar)"}
     )
     try:
         open_url = opener or urllib.request.urlopen
         with open_url(request, timeout=timeout) as response:
-            return str(response.read().decode(ENCODING, "replace"))
+            body = str(response.read().decode(ENCODING, "replace"))
+        # Stored only on success, and only for the real opener - a test that
+        # injects one must never leave its fixture in the cache for the next.
+        if opener is None:
+            _cached = (time.monotonic(), body)
+        return body
     except urllib.error.HTTPError as problem:
         raise ProviderError(
             f"the economic calendar feed answered {problem.code}",
