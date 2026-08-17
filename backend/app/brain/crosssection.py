@@ -218,17 +218,37 @@ def agreement(stretches: Sequence[float | None]) -> tuple[int, int, float | None
     return agreeing, len(usable), agreeing / len(usable)
 
 
-def confirmed(stretches: Sequence[float | None], *, minimum: float = MIN_AGREEMENT) -> bool:
+def confirmed(
+    stretches: Sequence[float | None],
+    *,
+    minimum: float = MIN_AGREEMENT,
+    direction: float | None = None,
+) -> bool:
     """Whether the timeframes agree enough to act on.
 
-    Refuses on a single usable timeframe however emphatic it is: one
-    timeframe agreeing with itself is not confirmation, and it would otherwise
-    score a perfect 1.0 and pass every threshold.
+    Refuses on a single usable timeframe however emphatic it is: one timeframe
+    agreeing with itself is not confirmation, and it would otherwise score a
+    perfect 1.0 and pass every threshold.
+
+    `direction` is the reading being confirmed. Without it this asks only
+    whether the timeframes agree with *each other*, which is a different and
+    much weaker question: three saying down and one saying up is 75% agreement
+    and is not confirmation of the up. When a caller is acting on a particular
+    reading it must pass that reading here, or the check will happily confirm
+    the opposite of what is about to be traded.
     """
-    _, usable, ratio = agreement(stretches)
-    if ratio is None or usable < 2:
+    usable = [x for x in stretches if x is not None and x != 0.0]
+    if len(usable) < 2:
         return False
-    return ratio >= minimum
+
+    if direction is None:
+        _, _, ratio = agreement(usable)
+        return ratio is not None and ratio >= minimum
+
+    if direction == 0:
+        return False
+    with_it = sum(1 for x in usable if (x > 0) == (direction > 0))
+    return with_it / len(usable) >= minimum
 
 
 def rank(
@@ -239,6 +259,7 @@ def rank(
     tail_fraction: float = TAIL_FRACTION,
     bar_interval: timedelta | None = None,
     universe: frozenset[str] | None = RANKED_UNIVERSE,
+    confirmations: dict[str, Sequence[float | None]] | None = None,
 ) -> CrossSection:
     """Rank the instruments priced at this instant and take both tails.
 
@@ -246,6 +267,17 @@ def rank(
     An instrument with too little history, a zero ATR or a missing series is
     skipped by name rather than dropped silently - one that vanishes from every
     ranking looks exactly like one the rule simply never picks.
+
+    `confirmations` optionally maps a symbol to the stretches the same rule
+    reads on other timeframes. When given, an instrument whose timeframes
+    disagree is skipped by name: a stretch on one timeframe and nowhere else
+    is usually the last bar rather than a move.
+
+    Omitted, nothing is filtered and this ranks exactly as it did before. A
+    symbol absent from the map is also unfiltered rather than refused - no
+    confirmation offered is not the same as confirmation withheld, and
+    refusing on absence would silently empty the ranking the first time a
+    caller passed a partial map.
     """
     ranked: list[Ranked] = []
     skipped: list[str] = []
@@ -286,6 +318,25 @@ def rank(
         if value is None:
             skipped.append(f"{symbol}: fewer than {MEAN_WINDOW + 1} closes")
             continue
+
+        if confirmations is not None and symbol in confirmations:
+            # This timeframe's own reading votes alongside the others, so a
+            # symbol confirmed here is confirmed including the view being
+            # ranked rather than by a quorum that excludes it.
+            votes = [value, *confirmations[symbol]]
+            usable = [v for v in votes if v is not None and v != 0.0]
+            agreeing = sum(1 for v in usable if (v > 0) == (value > 0))
+            # Confirmed against this reading's own direction, not merely that
+            # the timeframes agree among themselves: three saying down and one
+            # saying up is 75% agreement and is not confirmation of the up.
+            if not confirmed(votes, direction=value):
+                skipped.append(
+                    f"{symbol}: only {agreeing} of {len(usable)} timeframes agree "
+                    f"with this one, "
+                    f"under the {MIN_AGREEMENT:.0%} needed to call it a move"
+                )
+                continue
+
         ranked.append(Ranked(symbol=symbol, stretch=value, atr=atr, price=closes[-1]))
 
     if len(ranked) < min_cross_section:

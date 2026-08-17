@@ -9,7 +9,13 @@ long ones, which is the opposite of what confirmation means.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
+from app.brain import crosssection
 from app.brain.crosssection import MIN_AGREEMENT, agreement, confirmed
+
+
+AT = datetime(2026, 8, 18, 12, 0, tzinfo=UTC)
 
 
 class TestCountingNotAveraging:
@@ -82,3 +88,109 @@ class TestActingOnIt:
     def test_the_default_is_stricter_than_two_in_three(self):
         """Two out of three is a coin landing the same way twice."""
         assert MIN_AGREEMENT > 2 / 3
+
+
+class TestConfirmationInsideTheRanking:
+    """Wired into `rank` as an optional filter, so the existing contract is
+    unchanged and a caller that offers no confirmations ranks as before."""
+
+    @staticmethod
+    def series(base: float, drift: float) -> dict[str, object]:
+        closes = [base + drift * i for i in range(60)]
+        return {
+            "closes": closes,
+            "bars": [(c + 0.5, c - 0.5, c) for c in closes],
+        }
+
+    def snapshot(self, count: int = 24) -> dict[str, object]:
+        # Distinct drifts so the ranking has real tails rather than a tie.
+        return {
+            f"SYM{i:02d}": self.series(100.0 + i, 0.1 + i * 0.01)
+            for i in range(count)
+        }
+
+    def test_no_confirmations_ranks_exactly_as_before(self):
+        snap = self.snapshot()
+
+        without = crosssection.rank(snap, at=AT, universe=None)
+        empty = crosssection.rank(snap, at=AT, universe=None, confirmations={})
+
+        assert [r.symbol for r in without.longs] == [r.symbol for r in empty.longs]
+        assert without.skipped == empty.skipped
+
+    def test_a_symbol_whose_timeframes_disagree_is_skipped_by_name(self):
+        snap = self.snapshot()
+        # SYM00 rises here; three other timeframes say it is falling.
+        result = crosssection.rank(
+            snap, at=AT, universe=None, confirmations={"SYM00": [-1.0, -1.0, -1.0]}
+        )
+
+        assert all(r.symbol != "SYM00" for r in result.longs + result.shorts)
+        assert any("SYM00" in s and "timeframes agree" in s for s in result.skipped)
+
+    def test_a_symbol_whose_timeframes_agree_survives(self):
+        snap = self.snapshot()
+
+        result = crosssection.rank(
+            snap, at=AT, universe=None, confirmations={"SYM00": [1.0, 1.0, 1.0]}
+        )
+
+        assert not any("SYM00" in s for s in result.skipped)
+
+    def test_a_symbol_absent_from_the_map_is_not_refused(self):
+        """No confirmation offered is not confirmation withheld. Refusing on
+        absence would empty the ranking the first time a caller passed a
+        partial map."""
+        snap = self.snapshot()
+
+        result = crosssection.rank(
+            snap, at=AT, universe=None, confirmations={"SYM00": [1.0, 1.0]}
+        )
+
+        assert not any("timeframes agree" in s for s in result.skipped)
+
+    def test_the_ranked_timeframe_votes_alongside_the_others(self):
+        """One dissenting other timeframe against this one plus one agreeing
+        other is 2 of 3 - under the threshold, so it is refused."""
+        snap = self.snapshot()
+
+        result = crosssection.rank(
+            snap, at=AT, universe=None, confirmations={"SYM00": [1.0, -1.0]}
+        )
+
+        assert any("SYM00" in s and "2 of 3" in s for s in result.skipped)
+
+    def test_the_skip_reason_names_the_count_and_the_threshold(self):
+        snap = self.snapshot()
+
+        result = crosssection.rank(
+            snap, at=AT, universe=None, confirmations={"SYM00": [-1.0, -1.0, -1.0]}
+        )
+
+        reason = next(s for s in result.skipped if "SYM00" in s)
+
+        assert "1 of 4" in reason
+        assert "75%" in reason
+
+
+class TestConfirmationIsDirectional:
+    """The flaw the ranking test caught: agreement among timeframes is not the
+    same as agreement with the reading being acted on."""
+
+    def test_three_against_one_is_not_confirmation_of_the_one(self):
+        """75% of them agree - with each other, in the opposite direction."""
+        assert crosssection.confirmed([1.0, -1.0, -1.0, -1.0]) is True
+        assert crosssection.confirmed([1.0, -1.0, -1.0, -1.0], direction=1.0) is False
+
+    def test_agreeing_with_the_reading_confirms_it(self):
+        assert crosssection.confirmed([1.0, 1.0, 1.0, -1.0], direction=1.0) is True
+
+    def test_the_same_votes_confirm_the_other_way_too(self):
+        assert crosssection.confirmed([-1.0, -1.0, -1.0, 1.0], direction=-1.0) is True
+
+    def test_a_flat_reading_confirms_nothing(self):
+        """Zero is not a direction to agree with."""
+        assert crosssection.confirmed([1.0, 1.0, 1.0], direction=0.0) is False
+
+    def test_one_usable_timeframe_still_refuses_with_a_direction(self):
+        assert crosssection.confirmed([2.0, None, None], direction=2.0) is False
