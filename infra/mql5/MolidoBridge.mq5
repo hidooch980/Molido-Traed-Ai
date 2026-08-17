@@ -398,7 +398,12 @@ void OnDeinit(const int reason)
 //--- account - and MOLIDO_ALLOW_REAL_MONEY_ORDERS is a separate refusal on top
 //--- of that.
 input bool   AllowTrading    = true;
-input double MaxLots         = 0.10;    // hard ceiling, whatever is asked
+//--- Hard ceiling, whatever is asked. Raised from 0.10 after the first live
+//--- sizing run: 0.25% of a 10,000 account behind a real stop came out at 0.26
+//--- lots on USDCAD, which is correct risk and would have been refused by an
+//--- arbitrary ceiling. 0.50 still stops a fat finger without overruling the
+//--- risk calculation that has the account equity and the stop distance in it.
+input double MaxLots         = 0.50;
 input int    MaxSlippagePts  = 30;
 
 //--- Where requests arrive and results are written. Common folder, same as

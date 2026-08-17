@@ -142,12 +142,22 @@ services:
     restart: unless-stopped
     environment: *backend-env
     volumes:
-      # The same read-only bridge the API reads. The collector needs it because
-      # the equity sample rides on its cycle, and without the mount that sample
-      # reported "no heartbeat file" forever while the terminal was running
-      # perfectly - a failure that looks identical to a broken bridge and is
-      # not one.
-      - ${MOLIDO_MT5_BRIDGE_HOST:-/home/ubuntu/.mt5/drive_c/users/ubuntu/AppData/Roaming/MetaQuotes/Terminal/Common/Files}:/home/ubuntu/.mt5/drive_c/users/ubuntu/AppData/Roaming/MetaQuotes/Terminal/Common/Files:ro
+      # The bridge, and writable here alone.
+      #
+      # The collector needs to read it because the equity sample rides on its
+      # cycle - without the mount that sample reported "no heartbeat file"
+      # forever while the terminal ran perfectly, a failure that looks
+      # identical to a broken bridge and is not one.
+      #
+      # It needs to *write* it because this is the only process that places an
+      # order, and an order is a file the expert picks up. Mounted read-only,
+      # the first live cycle sized four positions correctly, sent all four, and
+      # had every one rejected with "Read-only file system" - the design
+      # reporting its own blocker per order, which is what it is for.
+      #
+      # The API keeps its read-only mount. Exactly one process can write an
+      # order, and it is the one behind the autopilot's gates.
+      - ${MOLIDO_MT5_BRIDGE_HOST:-/home/ubuntu/.mt5/drive_c/users/ubuntu/AppData/Roaming/MetaQuotes/Terminal/Common/Files}:/home/ubuntu/.mt5/drive_c/users/ubuntu/AppData/Roaming/MetaQuotes/Terminal/Common/Files
     depends_on:
       postgres:
         condition: service_healthy
