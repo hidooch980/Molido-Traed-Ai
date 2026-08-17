@@ -388,7 +388,16 @@ void OnDeinit(const int reason)
 //| leaves an unexplained position, which reconcile() is for. Neither |
 //| can double it.                                                    |
 //+------------------------------------------------------------------+
-input bool   AllowTrading    = false;   // must be turned on deliberately
+//--- Turned on deliberately, for a demo account, after the refusal path was
+//--- watched working: a request was claimed, refused with "AllowTrading is off
+//--- on the expert", and no order was sent.
+//---
+//--- MaxLots stays small and still refuses rather than clamps. The account
+//--- gate on the autopilot reads the terminal's own trade_mode and treats an
+//--- absent field as real money, so this switch alone cannot reach a funded
+//--- account - and MOLIDO_ALLOW_REAL_MONEY_ORDERS is a separate refusal on top
+//--- of that.
+input bool   AllowTrading    = true;
 input double MaxLots         = 0.10;    // hard ceiling, whatever is asked
 input int    MaxSlippagePts  = 30;
 
