@@ -8,13 +8,16 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.core.enums import DataQualityIssue, Severity, Timeframe
+from app.api.deps import Principal, require
+from app.core.enums import DataQualityIssue, Permission, Severity, Timeframe
 from app.db.session import get_db
 from app.models.ingestion import DataQualityFinding, DatasetQuality
 from app.schemas.market import DataQualityResponse, DatasetQualityOut, FindingOut
 from app.services.instruments import get_instrument
 
 router = APIRouter(prefix="/data-quality", tags=["data-quality"])
+
+READ = Depends(require(Permission.READ))
 
 
 @router.get("/{instrument_id}", response_model=DataQualityResponse)
@@ -26,6 +29,7 @@ def read_data_quality(
     include_resolved: bool = False,
     limit: int = Query(default=200, ge=1, le=1000),
     session: Session = Depends(get_db),
+    _: Principal = READ,
 ) -> DataQualityResponse:
     instrument = get_instrument(session, instrument_id)
 

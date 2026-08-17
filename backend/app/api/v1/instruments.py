@@ -23,6 +23,7 @@ READ = Depends(require(Permission.READ))
 
 @router.get("", response_model=list[InstrumentOut])
 def list_instruments(
+    _: Principal = READ,
     session: Session = Depends(get_db),
     asset_class: AssetClass | None = None,
     search: str | None = Query(default=None, max_length=64),
@@ -42,7 +43,11 @@ def list_instruments(
 
 
 @router.get("/{instrument_id}", response_model=InstrumentOut)
-def read_instrument(instrument_id: uuid.UUID, session: Session = Depends(get_db)) -> Instrument:
+def read_instrument(
+    instrument_id: uuid.UUID,
+    session: Session = Depends(get_db),
+    _: Principal = READ,
+) -> Instrument:
     return get_instrument(session, instrument_id)
 
 

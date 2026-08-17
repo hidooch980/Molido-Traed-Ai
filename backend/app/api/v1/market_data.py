@@ -14,13 +14,16 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
-from app.core.enums import Timeframe
+from app.api.deps import Principal, require
+from app.core.enums import Permission, Timeframe
 from app.db.session import get_db
 from app.schemas.market import BarOut, BarsResponse
 from app.services.instruments import get_instrument
 from app.services.point_in_time import get_bars, is_training_eligible
 
 router = APIRouter(prefix="/bars", tags=["market-data"])
+
+READ = Depends(require(Permission.READ))
 
 
 @router.get("", response_model=BarsResponse)
@@ -34,6 +37,7 @@ def read_bars(
     lookback: int = Query(default=500, ge=1, le=5000),
     provider_id: uuid.UUID | None = None,
     session: Session = Depends(get_db),
+    _: Principal = READ,
 ) -> BarsResponse:
     instrument = get_instrument(session, instrument_id)
     bars = get_bars(

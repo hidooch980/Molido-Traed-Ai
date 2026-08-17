@@ -8,13 +8,16 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
-from app.core.enums import Timeframe
+from app.api.deps import Principal, require
+from app.core.enums import Permission, Timeframe
 from app.db.session import get_db
 from app.schemas.market import EpisodeOut, EpisodesResponse
 from app.services import episodes as episode_service
 from app.services.instruments import get_instrument
 
 router = APIRouter(prefix="/episodes", tags=["episodes"])
+
+READ = Depends(require(Permission.READ))
 
 
 @router.get("/{instrument_id}", response_model=EpisodesResponse)
@@ -32,6 +35,7 @@ def read_episodes(
     ),
     limit: int = Query(default=100, ge=1, le=1000),
     session: Session = Depends(get_db),
+    _: Principal = READ,
 ) -> EpisodesResponse:
     instrument = get_instrument(session, instrument_id)
     cutoff = (as_of or datetime.now(UTC)).astimezone(UTC)

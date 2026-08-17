@@ -8,7 +8,8 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
-from app.core.enums import Timeframe
+from app.api.deps import Principal, require
+from app.core.enums import Permission, Timeframe
 from app.db.session import get_db
 from app.features import all_specs
 from app.schemas.market import FeatureRowOut, FeatureSpecOut, FeaturesResponse
@@ -17,9 +18,11 @@ from app.services.instruments import get_instrument
 
 router = APIRouter(prefix="/features", tags=["features"])
 
+READ = Depends(require(Permission.READ))
+
 
 @router.get("/catalog", response_model=list[FeatureSpecOut])
-def read_catalog() -> list[FeatureSpecOut]:
+def read_catalog(_: Principal = READ) -> list[FeatureSpecOut]:
     """Every registered feature, with the version and lookback it declares."""
     return [
         FeatureSpecOut(
@@ -43,6 +46,7 @@ def read_features(
     ),
     lookback: int = Query(default=100, ge=1, le=2000),
     session: Session = Depends(get_db),
+    _: Principal = READ,
 ) -> FeaturesResponse:
     instrument = get_instrument(session, instrument_id)
     rows = feature_store.read_materialized(

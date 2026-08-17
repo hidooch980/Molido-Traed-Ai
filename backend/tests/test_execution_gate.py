@@ -135,14 +135,38 @@ class TestForgottenPermissions:
 
         assert find_ungated_routes(application, require_auth=True) == []
 
-    def test_get_routes_are_never_gated(self):
+    def test_a_read_is_free_while_the_deployment_publishes_its_data(self):
+        """With require_auth off, reads are public by design and the gate says
+        nothing about them."""
         router = APIRouter()
 
         @router.get("/bars")
         async def bars() -> list[str]:
             return []
 
-        assert find_ungated_routes(toy_app(router), require_auth=True) == []
+        assert find_ungated_routes(toy_app(router), require_auth=False) == []
+
+    def test_a_read_must_declare_a_permission_once_auth_is_required(self):
+        """This reverses the rule above, deliberately.
+
+        MOLIDO_REQUIRE_AUTH was turned on in production and 18 of 88 routes
+        kept answering anonymously - the flag only reaches routes that declare
+        the dependency, and those never had. The model failed open: a new route
+        with no dependency was public by default and nothing said so.
+
+        Now it is a boot failure. Which is the point: the next route somebody
+        forgets breaks the deploy instead of publishing the data quietly.
+        """
+        router = APIRouter()
+
+        @router.get("/bars")
+        async def bars() -> list[str]:
+            return []
+
+        offenders = find_ungated_routes(toy_app(router), require_auth=True)
+
+        assert len(offenders) == 1
+        assert "declares no permission" in offenders[0].reason
 
     def test_the_assertion_raises_and_names_the_route(self):
         router = APIRouter()

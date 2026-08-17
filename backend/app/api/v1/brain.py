@@ -13,14 +13,17 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
+from app.api.deps import Principal, require
 from app.brain import calibration, cognitive, strategy
-from app.core.enums import Timeframe
+from app.core.enums import Permission, Timeframe
 from app.db.session import get_db
 from app.services import episodes as episode_service
 from app.services import regime as regime_service
 from app.services import world_state
 
 router = APIRouter(prefix="/brain", tags=["brain"])
+
+READ = Depends(require(Permission.READ))
 
 
 def _cutoff(as_of: datetime | None) -> datetime:
@@ -33,6 +36,7 @@ def read_regime(
     timeframe: Timeframe = Query(default=Timeframe.H1),
     as_of: datetime | None = None,
     session: Session = Depends(get_db),
+    _: Principal = READ,
 ) -> dict:
     return regime_service.classify(
         session, instrument_id, timeframe, _cutoff(as_of)
@@ -45,6 +49,7 @@ def read_proposal(
     timeframe: Timeframe = Query(default=Timeframe.H1),
     as_of: datetime | None = None,
     session: Session = Depends(get_db),
+    _: Principal = READ,
 ) -> dict:
     """The full reasoning chain behind one proposal (spec 46 decision replay)."""
     return cognitive.think(session, instrument_id, timeframe, _cutoff(as_of)).as_dict()
@@ -56,6 +61,7 @@ def read_strategies(
     timeframe: Timeframe = Query(default=Timeframe.H1),
     as_of: datetime | None = None,
     session: Session = Depends(get_db),
+    _: Principal = READ,
 ) -> dict:
     cutoff = _cutoff(as_of)
     state = world_state.build(session, instrument_id, timeframe, cutoff).as_dict()
@@ -80,6 +86,7 @@ def read_calibration(
     timeframe: Timeframe = Query(default=Timeframe.H1),
     as_of: datetime | None = None,
     session: Session = Depends(get_db),
+    _: Principal = READ,
 ) -> dict:
     """Whether any stored score has earned the word probability.
 

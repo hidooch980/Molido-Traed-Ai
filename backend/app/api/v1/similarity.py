@@ -8,12 +8,15 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
-from app.core.enums import Timeframe
+from app.api.deps import Principal, require
+from app.core.enums import Permission, Timeframe
 from app.db.session import get_db
 from app.services import similarity
 from app.services.instruments import get_instrument
 
 router = APIRouter(prefix="/similarity", tags=["similarity"])
+
+READ = Depends(require(Permission.READ))
 
 
 @router.get("/{instrument_id}")
@@ -27,6 +30,7 @@ def read_similar(
     ),
     k: int = Query(default=50, ge=5, le=500),
     session: Session = Depends(get_db),
+    _: Principal = READ,
 ) -> dict:
     instrument = get_instrument(session, instrument_id)
     cutoff = (as_of or datetime.now(UTC)).astimezone(UTC)

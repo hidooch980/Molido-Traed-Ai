@@ -11,10 +11,13 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends
 
-from app.api.deps import Principal, resolve_principal
+from app.api.deps import Principal, require, resolve_principal
 from app.core.config import get_settings
+from app.core.enums import Permission
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+READ = Depends(require(Permission.READ))
 
 
 @router.get("/whoami")

@@ -9,6 +9,8 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.api.deps import Principal, require
+from app.core.enums import Permission
 from app.db.session import get_db
 from app.models.calendar import MarketHoliday
 from app.schemas.market import HolidayOut, SessionStatusOut
@@ -16,6 +18,8 @@ from app.services.instruments import get_instrument
 from app.services.sessions import active_sessions, build_calendar
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
+
+READ = Depends(require(Permission.READ))
 
 
 @router.get("/{instrument_id}", response_model=SessionStatusOut)
@@ -25,6 +29,7 @@ def read_session_status(
         default=None, description="UTC instant to evaluate. Defaults to now."
     ),
     session: Session = Depends(get_db),
+    _: Principal = READ,
 ) -> SessionStatusOut:
     instrument = get_instrument(session, instrument_id)
     moment = (at or datetime.now(UTC)).astimezone(UTC) if at else datetime.now(UTC)
@@ -54,6 +59,7 @@ def list_holidays(
     end: date | None = None,
     limit: int = Query(default=200, ge=1, le=1000),
     session: Session = Depends(get_db),
+    _: Principal = READ,
 ) -> list[MarketHoliday]:
     query = select(MarketHoliday)
     if market_code:

@@ -172,8 +172,39 @@ def public_mutations(app: Any) -> list[tuple[str, str]]:
     return sorted(found)
 
 
+#: Paths that stay reachable without a key, by name, forever.
+#:
+#: The liveness probes and the OpenAPI document. Docker asks the first two
+#: before anything is signed in, and a probe that needs a credential reports
+#: the credential's health rather than the service's. Anything added here is a
+#: decision somebody has to write down and defend.
+PUBLIC_PATHS = frozenset({
+    "/health/live",
+    "/health/ready",
+    "/",
+    "/openapi.json",
+    # Guarded by `resolve_principal`, which raises on its own when
+    # require_auth is on and no key arrived. It cannot declare a permission
+    # because it is the route that answers "which permissions do I have" -
+    # a door that needs a key to reach the key is not a door.
+    "/api/v1/auth/whoami",
+})
+
+
 def find_ungated_routes(app: Any, *, require_auth: bool) -> list[UngatedRoute]:
-    """Mutating routes that are not safely reachable. Empty means the gate holds."""
+    """Routes that are not safely reachable. Empty means the gate holds.
+
+    Mutating routes are checked always. Reads are checked too, but only when
+    `require_auth` is on - which is the difference between "this deployment
+    publishes its data" and "this deployment asked for a key and left eighteen
+    routes answering anonymously anyway".
+
+    That second case was real. MOLIDO_REQUIRE_AUTH was turned on in production
+    and 18 of 88 routes kept answering without one, because the flag only
+    reaches routes that declare the dependency and those never had. The model
+    failed open: a new route with no dependency was public by default, and
+    nothing anywhere said so. This makes that a boot failure instead.
+    """
     offenders: list[UngatedRoute] = []
 
     for path, route, inherited in iter_leaf_routes(app):
@@ -184,6 +215,17 @@ def find_ungated_routes(app: Any, *, require_auth: bool) -> list[UngatedRoute]:
 
         mutating = tuple(sorted(set(methods) - SAFE_METHODS))
         if not mutating:
+            if not require_auth or path in PUBLIC_PATHS:
+                continue
+            if not (_declared_permissions(dependant) | set(inherited)):
+                offenders.append(
+                    UngatedRoute(
+                        path,
+                        tuple(sorted(methods)),
+                        "reads data on a deployment that requires auth, but "
+                        "declares no permission",
+                    )
+                )
             continue
 
         permissions = _declared_permissions(dependant) | set(inherited)
