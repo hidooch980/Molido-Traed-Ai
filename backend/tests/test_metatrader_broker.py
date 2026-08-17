@@ -234,3 +234,32 @@ class TestItSatisfiesTheProtocol:
 
         assert "cannot double" in described["note"]
         assert "UNKNOWN rather than rejected" in described["note"]
+
+
+class TestThePatienceBudget:
+    """The first live probe took seventy seconds to come back. The timeout was
+    45, reasoned from the expert's twenty-second timer - so a real fill would
+    have been reported UNKNOWN, which is the most expensive outcome this
+    adapter can produce."""
+
+    def test_it_waits_longer_than_the_slowest_observed_answer(self):
+        from app.execution import metatrader_broker
+
+        assert metatrader_broker.DEFAULT_TIMEOUT >= 70.0
+
+    def test_waiting_longer_costs_only_the_blocked_call(self, tmp_path):
+        """Giving up early costs a manual reconciliation and possibly a
+        duplicated position. The asymmetry is the whole argument."""
+        slept: list[float] = []
+        ticks = iter(range(0, 10_000))
+        broker = MetaTraderBroker(
+            directory=tmp_path,
+            timeout=100.0,
+            clock=lambda: next(ticks),
+            sleeper=slept.append,
+        )
+
+        report = broker.submit(intent())
+
+        assert report.state is OrderState.UNKNOWN
+        assert len(slept) > 50

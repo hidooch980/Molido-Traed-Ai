@@ -46,11 +46,20 @@ REQUEST_PREFIX = "molido_order_"
 RESULT_PREFIX = "molido_result_"
 CLAIM_PREFIX = "molido_claimed_"
 
-#: How long to wait for the expert to answer. Its timer runs every twenty
-#: seconds, so anything below that reports UNKNOWN on orders that are simply
-#: waiting their turn - and an UNKNOWN that resolves to a fill is the most
-#: expensive kind of uncertainty to handle.
-DEFAULT_TIMEOUT = 45.0
+#: How long to wait for the expert to answer.
+#:
+#: Was 45s, reasoned from the expert's twenty-second timer. The first live
+#: probe took **seventy** - the timer fires on a terminal that is also
+#: publishing forty-four bar files a cycle under Wine on a shared core, and it
+#: had just restarted. At 45s that answer would have been reported UNKNOWN,
+#: which is the most expensive outcome this adapter can produce: it means
+#: reconciling against the terminal before anything else can be sent for that
+#: symbol.
+#:
+#: Two minutes is not a latency budget, it is a patience budget. Waiting longer
+#: costs one blocked call; giving up early costs a manual reconciliation and
+#: possibly a duplicated position.
+DEFAULT_TIMEOUT = 120.0
 
 #: How often to look for the result file.
 POLL_SECONDS = 0.5
