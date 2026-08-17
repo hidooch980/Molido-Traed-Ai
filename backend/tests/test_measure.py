@@ -430,3 +430,47 @@ class TestResearchYieldsToTheServingPath:
         monkeypatch.setattr(os, "nice", refuse)
 
         measure._yield_to_the_serving_path()
+
+
+class TestTheCostIsMeasuredNotAssumed:
+    """A constant cost is the wrong shape. R is defined by the stop distance,
+    so what the spread costs in R falls out of that distance - which is why a
+    shorter timeframe is dearer without anybody re-estimating anything."""
+
+    SPREAD = 0.00014  # live EURUSD, measured off the terminal
+
+    def test_a_tighter_stop_costs_more_in_r(self):
+        wide = measure.cost_in_r(self.SPREAD, 0.00225)   # H1 geometry
+        tight = measure.cost_in_r(self.SPREAD, 0.00027)  # M1 geometry
+
+        assert tight > wide
+        assert round(wide, 4) == 0.0622
+        assert round(tight, 4) == 0.5185
+
+    def test_the_ratio_tracks_the_stop_and_nothing_else(self):
+        """Halve the stop, double the cost. Nothing else may move it."""
+        assert measure.cost_in_r(self.SPREAD, 0.001) == pytest.approx(
+            2 * measure.cost_in_r(self.SPREAD, 0.002)
+        )
+
+    def test_a_zero_stop_raises_rather_than_defaulting(self):
+        """R is undefined without a stop, and a cost against an undefined R is
+        a number with no meaning that would go on to be subtracted from an edge."""
+        with pytest.raises(ValueError, match="positive stop distance"):
+            measure.cost_in_r(self.SPREAD, 0.0)
+
+    def test_a_negative_spread_raises(self):
+        with pytest.raises(ValueError, match="cannot be negative"):
+            measure.cost_in_r(-0.0001, 0.002)
+
+    def test_a_zero_spread_is_free_rather_than_an_error(self):
+        """Zero is a real spread on some instruments, unlike a zero stop."""
+        assert measure.cost_in_r(0.0, 0.002) == 0.0
+
+    def test_the_old_constant_understated_the_real_h1_cost(self):
+        """The registry charged 0.01 R. On this deployment's own spread and
+        stop geometry the H1 cost is six times that, and it is subtracted from
+        an edge of 0.0212 R - so the gap decides the answer, not the rounding."""
+        real = measure.cost_in_r(self.SPREAD, 0.00225)
+
+        assert real > measure.COST_R * 5

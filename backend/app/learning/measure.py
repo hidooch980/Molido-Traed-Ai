@@ -46,10 +46,37 @@ from app.learning import control as control_module
 from app.workers.forward import STOP_MULTIPLE, TARGET_MULTIPLE
 from app.workers.resolve import HORIZON, _outcome
 
-#: Round-trip cost in R, the same figure the edge registry charges. Subtracted
+#: Round-trip cost in R, used only when the real spread is unknown. Subtracted
 #: from the edge rather than from the rule alone: the control pays it too, and
 #: charging one arm and not the other invents an edge worth exactly the cost.
+#:
+#: A constant is the wrong shape for this number and is kept only as a floor
+#: for series with no spread on record. See `cost_in_r`.
 COST_R = 0.01
+
+
+def cost_in_r(spread: float, stop_distance: float) -> float:
+    """What crossing the spread costs, expressed in R.
+
+    R is *defined* by the stop distance, so a cost in R is the spread measured
+    against that distance - not a constant. This is the whole reason a shorter
+    timeframe is more expensive: the spread does not shrink when the bars do.
+    Measured on this deployment, the average bar range is 9.02 pips at H1 and
+    4.18 at M15 against a 1.4 pip EURUSD spread, so the same rule pays roughly
+    twice as much per decision at M15 as at H1, and the stop distance carries
+    that through without anybody having to re-estimate a constant.
+
+    Raises rather than returning a default on a non-positive stop: a zero stop
+    means R is undefined, and a cost of "0.01 R" against an undefined R is a
+    number with no meaning that would go on to be subtracted from an edge.
+    """
+    if stop_distance <= 0:
+        raise ValueError(
+            "a cost in R needs a positive stop distance - R is defined by it"
+        )
+    if spread < 0:
+        raise ValueError("a spread cannot be negative")
+    return spread / stop_distance
 
 
 @dataclass(frozen=True)
