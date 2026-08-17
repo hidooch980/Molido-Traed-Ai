@@ -47,7 +47,7 @@ class FakeBridge:
             # The real terminal stamps every publication and the risk brain
             # treats an unknown age as stale, not fresh. A fake account without
             # one is not a fresher feed, it is an unmeasurable one.
-            "published_at": NOW.strftime("%Y.%m.%d %H:%M:%S"),
+            "state": {"age_seconds": 18.0, "usable": True},
             "margin": 0.0,
             "free_margin": self._equity,
         }
@@ -928,13 +928,20 @@ class TestTheAccountStateRefusesToBeGuessed:
         assert state is None
         assert "no login" in why
 
-    def test_an_unreadable_stamp_leaves_the_age_unknown(self):
+    def test_no_published_age_leaves_it_unknown(self):
         """Which the brain then treats as stale. This does not soften that by
         substituting a number."""
-        assert autotrade._feed_age_bars({"published_at": "nonsense"}, NOW) is None
         assert autotrade._feed_age_bars({}, NOW) is None
+        assert autotrade._feed_age_bars({"state": {}}, NOW) is None
+        assert autotrade._feed_age_bars({"state": {"age_seconds": "x"}}, NOW) is None
 
-    def test_a_fresh_stamp_measures_zero_bars(self):
-        published = {"published_at": NOW.strftime("%Y.%m.%d %H:%M:%S")}
+    def test_the_age_comes_from_the_bridge_that_measured_it(self):
+        """Recomputing it here meant parsing a stamp in a format the bridge
+        does not publish, and the first live call blocked on it."""
+        fresh = autotrade._feed_age_bars({"state": {"age_seconds": 18.0}}, NOW)
 
-        assert autotrade._feed_age_bars(published, NOW) == 0.0
+        assert fresh is not None
+        assert fresh < 0.01
+
+    def test_a_flat_payload_still_works(self):
+        assert autotrade._feed_age_bars({"age_seconds": 60.0}, NOW) == 1.0 / 60

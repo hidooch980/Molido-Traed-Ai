@@ -116,17 +116,25 @@ DECISION_BAR_MINUTES = 60
 def _feed_age_bars(published: dict[str, Any], moment: datetime) -> float | None:
     """How stale the terminal's own publication is, in decision bars.
 
-    Returned as None when the stamp is unreadable, and the brain treats None
-    as stale rather than fresh - not knowing the age of a feed is not evidence
+    The bridge already measures this and publishes `age_seconds` under
+    `state`, so that is read rather than recomputed from a stamp. Re-deriving
+    it here meant parsing a timestamp in a format the bridge does not use -
+    the first live call returned None and the brain correctly blocked, which
+    is how the mistake surfaced. One measurement, in the place that owns it.
+
+    Returned as None when the bridge offers no age, and the brain treats None
+    as stale rather than fresh: not knowing the age of a feed is not evidence
     that it is young. That is its rule, and this does not soften it by
     substituting a number.
     """
-    stamp = str(published.get("published_at") or "").strip()
+    state = published.get("state")
+    seconds = state.get("age_seconds") if isinstance(state, dict) else None
+    if seconds is None:
+        seconds = published.get("age_seconds")
     try:
-        published_at = datetime.strptime(stamp, "%Y.%m.%d %H:%M:%S").replace(tzinfo=UTC)
-    except (ValueError, TypeError):
+        minutes = abs(float(seconds)) / 60.0
+    except (TypeError, ValueError):
         return None
-    minutes = abs((moment - published_at).total_seconds()) / 60.0
     return minutes / max(DECISION_BAR_MINUTES, 1)
 
 
