@@ -370,9 +370,180 @@ void OnDeinit(const int reason)
    Print("MolidoBridge: stopped, reason ", reason);
   }
 
+//+------------------------------------------------------------------+
+//| Order execution                                                   |
+//|                                                                   |
+//| The bridge published prices for weeks and could not place a       |
+//| single order. `api_can_place_orders` was false, the only broker   |
+//| adapter was a paper one that fills nothing, and the autopilot     |
+//| reported `would_send_live_orders: true` - a policy verdict about  |
+//| a path that did not exist.                                        |
+//|                                                                   |
+//| One property matters more than every other here: a request must   |
+//| execute at most once. A duplicated OrderSend opens a second real  |
+//| position, and no amount of care further up recovers from it. So   |
+//| the sequence is: claim the request by renaming it, then send,     |
+//| then write the result. A crash between claim and send loses the   |
+//| order, which is recoverable. A crash between send and result      |
+//| leaves an unexplained position, which reconcile() is for. Neither |
+//| can double it.                                                    |
+//+------------------------------------------------------------------+
+input bool   AllowTrading    = false;   // must be turned on deliberately
+input double MaxLots         = 0.10;    // hard ceiling, whatever is asked
+input int    MaxSlippagePts  = 30;
+
+//--- Where requests arrive and results are written. Common folder, same as
+//--- everything else the bridge exchanges with the platform.
+#define REQUEST_PREFIX "molido_order_"
+#define RESULT_PREFIX  "molido_result_"
+#define CLAIM_PREFIX   "molido_claimed_"
+
+string JsonField(string body, string key)
+  {
+   string needle = "\"" + key + "\"";
+   int at = StringFind(body, needle);
+   if(at < 0)
+      return "";
+   int colon = StringFind(body, ":", at + StringLen(needle));
+   if(colon < 0)
+      return "";
+   int i = colon + 1;
+   while(i < StringLen(body) && (StringGetCharacter(body, i) == ' ' || StringGetCharacter(body, i) == '"'))
+      i++;
+   int end = i;
+   while(end < StringLen(body))
+     {
+      ushort c = StringGetCharacter(body, end);
+      if(c == ',' || c == '}' || c == '"')
+         break;
+      end++;
+     }
+   return StringSubstr(body, i, end - i);
+  }
+
+void WriteResult(string id, bool ok, ulong ticket, double price, string reason)
+  {
+   int handle = FileOpen(RESULT_PREFIX + id + ".json",
+                         FILE_WRITE | FILE_TXT | FILE_ANSI | FILE_COMMON);
+   if(handle == INVALID_HANDLE)
+     {
+      Print("MolidoBridge: cannot write result for ", id);
+      return;
+     }
+   FileWriteString(handle, "{\"id\":\"" + id + "\",");
+   FileWriteString(handle, "\"ok\":" + (ok ? "true" : "false") + ",");
+   FileWriteString(handle, "\"ticket\":" + IntegerToString((long)ticket) + ",");
+   FileWriteString(handle, "\"price\":" + DoubleToString(price, 5) + ",");
+   FileWriteString(handle, "\"reason\":\"" + reason + "\",");
+   FileWriteString(handle, "\"at\":\"" + TimeToString(TimeCurrent(), TIME_DATE | TIME_SECONDS) + "\"}");
+   FileClose(handle);
+  }
+
+void ExecuteOne(string filename)
+  {
+   //--- The id is whatever sits between the prefix and the extension.
+   string id = StringSubstr(filename, StringLen(REQUEST_PREFIX));
+   int dot = StringFind(id, ".json");
+   if(dot >= 0)
+      id = StringSubstr(id, 0, dot);
+
+   //--- Claimed before it is read, so a second pass of the timer cannot pick
+   //--- up the same request while this one is still working on it.
+   string claimed = CLAIM_PREFIX + id + ".json";
+   if(!FileMove(filename, FILE_COMMON, claimed, FILE_COMMON))
+     {
+      Print("MolidoBridge: could not claim ", filename, " - leaving it alone");
+      return;
+     }
+
+   int handle = FileOpen(claimed, FILE_READ | FILE_TXT | FILE_ANSI | FILE_COMMON);
+   if(handle == INVALID_HANDLE)
+     {
+      WriteResult(id, false, 0, 0.0, "claimed file could not be read");
+      return;
+     }
+   string body = "";
+   while(!FileIsEnding(handle))
+      body += FileReadString(handle);
+   FileClose(handle);
+
+   string symbol = JsonField(body, "symbol");
+   string side   = JsonField(body, "side");
+   double lots   = StringToDouble(JsonField(body, "lots"));
+   double sl     = StringToDouble(JsonField(body, "stop"));
+   double tp     = StringToDouble(JsonField(body, "target"));
+
+   if(!AllowTrading)
+     {
+      WriteResult(id, false, 0, 0.0, "AllowTrading is off on the expert");
+      return;
+     }
+   if(symbol == "" || lots <= 0.0)
+     {
+      WriteResult(id, false, 0, 0.0, "request has no symbol or no size");
+      return;
+     }
+   if(lots > MaxLots)
+     {
+      //--- Refused, not clamped. Silently filling a smaller size than asked
+      //--- makes every risk number above this wrong by an unknown factor.
+      WriteResult(id, false, 0, 0.0,
+                  "size " + DoubleToString(lots, 2) + " exceeds MaxLots " + DoubleToString(MaxLots, 2));
+      return;
+     }
+   if(!SymbolSelect(symbol, true))
+     {
+      WriteResult(id, false, 0, 0.0, "symbol not available: " + symbol);
+      return;
+     }
+
+   MqlTradeRequest request;
+   MqlTradeResult  result;
+   ZeroMemory(request);
+   ZeroMemory(result);
+
+   request.action       = TRADE_ACTION_DEAL;
+   request.symbol       = symbol;
+   request.volume       = lots;
+   request.type         = (side == "sell") ? ORDER_TYPE_SELL : ORDER_TYPE_BUY;
+   request.price        = (side == "sell") ? SymbolInfoDouble(symbol, SYMBOL_BID)
+                                           : SymbolInfoDouble(symbol, SYMBOL_ASK);
+   request.sl           = sl;
+   request.tp           = tp;
+   request.deviation    = MaxSlippagePts;
+   request.type_filling = ORDER_FILLING_IOC;
+   request.comment      = "molido:" + id;
+
+   bool sent = OrderSend(request, result);
+   if(!sent || (result.retcode != TRADE_RETCODE_DONE && result.retcode != TRADE_RETCODE_PLACED))
+     {
+      WriteResult(id, false, 0, 0.0,
+                  "retcode " + IntegerToString(result.retcode) + " " + result.comment);
+      return;
+     }
+
+   WriteResult(id, true, result.order, result.price, "filled");
+   Print("MolidoBridge: executed ", side, " ", lots, " ", symbol, " ticket ", result.order);
+  }
+
+void ExecutePending()
+  {
+   string filename;
+   long search = FileFindFirst(REQUEST_PREFIX + "*.json", filename, FILE_COMMON);
+   if(search == INVALID_HANDLE)
+      return;
+   do
+     {
+      ExecuteOne(filename);
+     }
+   while(FileFindNext(search, filename));
+   FileFindClose(search);
+  }
+
 void OnTimer()
   {
    Publish();
+   ExecutePending();
   }
 
 //--- Required for an expert, and deliberately empty. Publishing is on the
