@@ -1,0 +1,1761 @@
+
+
+TRADE-AI X v5.2
+MASTER BUILD PROMPT
+GLOBAL AI TRADING INTELLIGENCE, RISK &amp; EXECUTION PLATFORM
+
+DOCUMENT PURPOSE
+This is the authoritative build specification for Claude Code. Inspect the existing repository first, preserve working functionality, then implement the system incrementally. Do not rewrite the project blindly.
+
+0. MISSION
+
+Build Trade-AI X v5.2 as a production-grade, multi-tenant AI trading platform.
+
+The system is NOT merely a signal bot. It must combine:
+
+- Historical Market Intelligence
+- Multi-year market data
+- Point-in-Time data
+- Market Memory
+- Symbol DNA
+- Historical Episodes
+- Similarity Search
+- World State
+- Regime Intelligence
+- Cognitive Trading Brain
+- AI Council
+- Meta-Brain
+- Adversarial AI
+- Counterfactual Analysis
+- Probability and Calibration
+- Expected Value
+- Portfolio Intelligence
+- Autonomous Risk Brain
+- Challenge Engine
+- Multi-Broker Execution
+- Position Guardian
+- AI Journal
+- Continuous Research/Learning
+- Champion/Challenger models
+- Drift Detection
+- AI Command Center
+- Telegram
+- n8n
+- Multi-language / RTL / LTR
+- Stability, Reliability and Disaster Recovery
+
+CORE PRINCIPLE:
+
+Trading AI proposes.
+Risk Brain authorizes.
+Execution Engine executes.
+Position Guardian supervises.
+Learning Lab evaluates.
+Production models change only through validated deployment.
+
+No component may bypass hard risk limits.
+
+1. NON-NEGOTIABLE SAFETY &amp; TRADING PRINCIPLES
+
+1. Capital preservation has priority over signal frequency.
+2. Insufficient evidence means WAIT.
+3. Strong AI disagreement should normally reduce risk or produce WAIT.
+4. Risk Engine is independent from the predictive AI.
+5. No order may bypass authorization, risk checks, challenge rules, or execution safety.
+6. No future information may enter training/backtesting for a historical decision.
+7. Live trades must not directly modify a production model.
+8. No model is promoted without validation evidence.
+9. Duplicate execution is forbidden.
+10. Every critical decision must be auditable.
+11. Never fabricate market data, confidence, probability, performance, or backtest results.
+12. No guaranteed-profit claims.
+13. Never design mechanisms intended to conceal automated trading from a broker or bypass broker/platform restrictions.
+14. Credentials and secrets must never be exposed in logs or frontend.
+15. If data integrity, broker state, risk state, or position state is uncertain, enter a safe state and reconcile before acting.
+
+2. FIRST ACTION: REPOSITORY AUDIT
+
+Before changing code:
+
+- Inspect repository structure.
+- Inspect backend and frontend.
+- Inspect database schema and migrations.
+- Inspect existing AI/analysis modules.
+- Inspect market-data adapters.
+- Inspect execution adapters.
+- Inspect risk engine.
+- Inspect position management.
+- Inspect dashboard.
+- Inspect authentication/authorization.
+- Inspect Telegram and n8n integration.
+- Inspect deployment and process management.
+- Inspect tests.
+- Inspect logs and current failure points.
+
+Run and document:
+
+- git status
+- dependency inventory
+- test inventory
+- service inventory
+- port/config inventory
+- environment-variable inventory without exposing secrets
+
+Produce:
+
+TRADE-AI X v5.2 GAP ANALYSIS
+
+The gap analysis must list:
+- Existing
+- Missing
+- Broken
+- Duplicate
+- Risky
+- Needs refactor
+- Recommended implementation order
+
+Do not delete or rewrite unrelated working modules.
+
+3. TARGET ARCHITECTURE
+
+GLOBAL MARKET DATA
+        |
+        v
+DATA ACQUISITION
+        |
+        v
+DATA QUALITY ENGINE
+        |
+        v
+POINT-IN-TIME DATA LAYER
+        |
+        v
+HISTORICAL MARKET INTELLIGENCE
+        |
+        v
+FEATURE STORE
+        |
+        v
+MARKET MEMORY
+        |
+        v
+WORLD STATE ENGINE
+        |
+        v
+REGIME ENGINE
+        |
+        v
+COGNITIVE TRADING BRAIN
+        |
+        +---- AI COUNCIL
+        +---- META-BRAIN
+        +---- ADVERSARIAL AI
+        +---- COUNTERFACTUAL AI
+        |
+        v
+STRATEGY ENGINE
+        |
+        v
+PROBABILITY / CALIBRATION
+        |
+        v
+EXPECTED VALUE
+        |
+        v
+PORTFOLIO BRAIN
+        |
+        v
+AUTONOMOUS RISK BRAIN
+        |
+        v
+CAPITAL ALLOCATION
+        |
+        v
+FINAL DECISION
+        |
+        v
+EXECUTION SAFETY
+        |
+        v
+BROKER / PLATFORM
+        |
+        v
+POSITION GUARDIAN
+        |
+        v
+JOURNAL / OUTCOME
+        |
+        v
+LEARNING LAB
+        |
+        v
+BENCHMARK / DRIFT
+        |
+        v
+MODEL REGISTRY
+        |
+        v
+CHAMPION / CHALLENGER
+
+STABILITY CORE surrounds all production-critical services.
+
+4. HISTORICAL MARKET INTELLIGENCE CORE
+
+Build a multi-year historical data platform.
+
+Support, depending on provider availability:
+
+- Tick data
+- Bid/Ask
+- OHLC
+- Volume/Tick Volume
+- Spread
+- Sessions
+- Volatility
+- Market structure
+- Liquidity events
+- Economic events
+- News
+- Macro data
+- Correlation
+- Currency strength
+- Execution statistics
+- Order book / DOM when legitimately available
+- Open interest / futures reference data when available
+
+Provider adapters must be replaceable.
+
+Pipeline:
+
+Provider Adapter
+-&gt; Raw Data
+-&gt; Validation
+-&gt; Normalization
+-&gt; Canonical Data
+-&gt; Point-in-Time Storage
+-&gt; Feature Engineering
+
+Required:
+- retry
+- resume
+- checkpoints
+- deduplication
+- rate-limit handling
+- source tracking
+- timestamp validation
+- missing-data detection
+
+5. DATA QUALITY &amp; PROVENANCE
+
+Each dataset must preserve:
+
+- source
+- provider
+- symbol
+- timestamp
+- timezone
+- ingestion time
+- revision/version
+- quality score
+
+Detect:
+- missing candles
+- duplicate ticks
+- invalid timestamps
+- price gaps
+- abnormal spreads
+- abnormal volume
+- outliers
+- provider conflicts
+- session/timezone errors
+
+Data without trustworthy provenance must not enter production training datasets.
+
+6. POINT-IN-TIME INTEGRITY
+
+Historical decisions must only see information available at that historical timestamp.
+
+Prevent:
+- lookahead bias
+- future leakage
+- future news
+- future prices
+- revised future information
+- survivorship bias
+- data snooping
+
+All backtests and historical training pipelines must be auditable for temporal leakage.
+
+7. CANONICAL INSTRUMENT / SYMBOL DNA
+
+Normalize broker-specific symbol names to canonical instruments while preserving broker-specific properties.
+
+Preserve:
+- contract size
+- digits
+- point
+- tick size
+- tick value
+- margin rules
+- trading hours
+- spread model
+
+Create Symbol DNA:
+
+- historical behavior
+- regime profile
+- volatility profile
+- session profile
+- liquidity profile
+- news sensitivity
+- strategy performance
+- failure patterns
+- correlation profile
+- execution profile
+- market memory
+
+8. MARKET MEMORY
+
+Three levels:
+
+SHORT-TERM MEMORY
+- recent hours/days
+
+MEDIUM-TERM MEMORY
+- weeks/months
+
+LONG-TERM MEMORY
+- multi-year history
+
+Meta-Brain determines which memory is relevant.
+
+9. HISTORICAL EPISODES
+
+Convert meaningful market states into searchable Episodes.
+
+Each Episode should include:
+
+- episode_id
+- symbol
+- timestamp
+- regime
+- structure
+- liquidity state
+- volatility
+- session
+- macro state
+- news state
+- strategy
+- decision
+- outcome
+- MFE
+- MAE
+- R multiple
+- execution quality
+- model/version metadata
+
+10. HISTORICAL SIMILARITY ENGINE
+
+Compare current market state against historical episodes.
+
+Similarity must consider more than price shape:
+
+- structure
+- volatility
+- liquidity
+- session
+- regime
+- macro
+- news
+- momentum
+- correlation
+- market context
+
+Return:
+- similar episode count
+- similarity score
+- outcome distribution
+- regime-conditioned outcomes
+- uncertainty
+- data-quality score
+
+Never invent historical statistics when insufficient data exists.
+
+11. WORLD STATE ENGINE
+
+Build a point-in-time market state containing:
+
+- trend
+- structure
+- liquidity
+- volatility
+- momentum
+- regime
+- macro
+- news
+- sentiment where legitimately sourced
+- correlation
+- currency strength
+- session
+- spread
+- data freshness
+
+12. REGIME ENGINE
+
+Support:
+
+- TREND_UP
+- TREND_DOWN
+- RANGE
+- BREAKOUT
+- REVERSAL
+- HIGH_VOLATILITY
+- LOW_VOLATILITY
+- NEWS_EVENT
+- UNCERTAIN
+
+Detect regime transitions and uncertainty.
+
+Risk allocation must be able to decrease when regime uncertainty rises.
+
+13. COGNITIVE TRADING BRAIN
+
+Design the AI as a layered reasoning system:
+
+Perception
+-&gt; Context
+-&gt; Memory
+-&gt; Reasoning
+-&gt; Scenario Analysis
+-&gt; Prediction
+-&gt; Uncertainty
+-&gt; Risk Awareness
+-&gt; Decision
+
+It must reason about:
+- current market context
+- historical analogues
+- supporting evidence
+- contradictory evidence
+- alternative scenarios
+- invalidation
+- uncertainty
+- risk-adjusted opportunity
+
+The brain must be capable of deciding WAIT.
+
+14. AI COUNCIL
+
+Independent analytical agents:
+
+1. Market Analyst
+2. Structure Analyst
+3. Liquidity Analyst
+4. Quant Analyst
+5. Macro Analyst
+6. News Analyst
+7. Sentiment Analyst
+8. Regime Analyst
+9. Vision/Chart Analyst
+10. Risk Analyst
+11. Execution Analyst
+12. Adversarial Analyst
+
+Standard output:
+
+- decision
+- score
+- probability/confidence where appropriate
+- evidence
+- reason_codes
+- timestamp
+- model_version
+- data_quality
+
+15. META-BRAIN
+
+Meta-Brain decides:
+- which agents are trustworthy for current regime
+- dynamic evidence weighting
+- disagreement level
+- uncertainty
+- whether the signal should be suppressed
+- which memory level matters
+- whether further analysis is required
+
+Weights must be validated and versioned.
+
+16. ADVERSARIAL AI
+
+For every trade candidate, an independent agent tries to disprove the trade.
+
+Check:
+- contradictory structure
+- liquidity risk
+- news risk
+- regime conflict
+- poor R:R
+- execution risk
+- correlation risk
+- overconfidence
+- historical failure patterns
+
+High adversarial risk =&gt; WAIT/REDUCE/BLOCK according to policy.
+
+17. COUNTERFACTUAL BRAIN
+
+Compare:
+- current entry
+- no trade
+- earlier entry
+- later entry
+- different SL
+- different TP
+- reduced risk
+- alternative strategy
+
+Select the best risk-adjusted decision, not merely the highest price prediction.
+
+18. STRATEGY ENGINE
+
+Support modular strategy families:
+
+- trend following
+- breakout
+- breakout-retest
+- mean reversion
+- momentum
+- reversal
+- liquidity sweep
+- structure-based
+- volatility-based
+- statistical
+
+Strategies must be regime-aware.
+
+19. PROBABILITY &amp; CALIBRATION
+
+Probability must be evaluated for calibration.
+
+Track:
+- Brier score
+- reliability
+- calibration error
+- precision
+- recall
+- false signal rate
+- confidence vs outcome
+
+Do not equate model confidence with true probability.
+
+20. EXPECTED VALUE
+
+For every candidate calculate, where data supports it:
+
+- probability
+- R:R
+- expected return
+- expected loss
+- spread
+- commission
+- swap
+- slippage
+- latency
+- drawdown impact
+- correlation impact
+- risk of ruin
+
+Insufficient EV =&gt; WAIT.
+
+21. AUTONOMOUS RISK BRAIN
+
+Risk Brain must be independent from predictive AI.
+
+Inputs:
+- AI proposal
+- account state
+- portfolio
+- drawdown
+- exposure
+- correlation
+- margin
+- spread
+- slippage
+- volatility
+- news
+- challenge rules
+- execution health
+- model uncertainty
+
+Outputs:
+- APPROVE
+- REDUCE
+- BLOCK
+
+Hard limits cannot be overridden by AI, user, Telegram, n8n, or dashboard.
+
+22. DYNAMIC RISK
+
+Risk allocation may adapt to:
+
+- edge quality
+- regime
+- volatility
+- drawdown
+- correlation
+- liquidity
+- execution quality
+- model uncertainty
+- portfolio exposure
+
+Risk should decrease when uncertainty or account stress increases.
+
+23. RISK MODES
+
+NORMAL
+CAUTION
+DEFENSIVE
+BLOCK_NEW_TRADES
+EMERGENCY
+
+Emergency:
+- new orders blocked
+- risk increases blocked
+- monitoring active
+- reconciliation active
+- alerts active
+
+24. RISK-OF-RUIN &amp; STRESS ENGINE
+
+Calculate/estimate:
+- drawdown probability
+- risk of ruin
+- consecutive-loss risk
+- daily-loss risk
+- concentration risk
+- correlation shock
+- challenge failure risk
+
+Before execution evaluate:
+
+BASE
+ADVERSE
+STRESS
+EXTREME
+
+If stress violates hard policy =&gt; BLOCK.
+
+25. PORTFOLIO BRAIN
+
+Never evaluate a trade only in isolation.
+
+Check:
+- currency exposure
+- correlated positions
+- asset exposure
+- aggregate risk
+- portfolio volatility
+- margin
+- existing positions
+- scenario impact
+
+26. NO-TRADE INTELLIGENCE
+
+Dedicated engine for finding reasons not to trade:
+
+- bad spread
+- news risk
+- uncertain regime
+- AI disagreement
+- poor R:R
+- weak edge
+- high correlation
+- execution risk
+- challenge risk
+- stale data
+- model health problems
+
+27. DIGITAL TWIN / WHAT-IF
+
+Simulate:
+
+Current Account
++
+Proposed Trade
++
+Portfolio
++
+Challenge Rules
++
+Stress Scenarios
+=
+Projected State
+
+Allow simulation of:
+- risk
+- entry
+- SL
+- TP
+- position size
+- leverage
+- strategy
+
+Never send simulated orders to a broker.
+
+28. EXECUTION ENGINE
+
+Support modular adapters for:
+
+- MetaTrader 5
+- MetaTrader 4
+- cTrader
+- FIX
+- broker APIs
+- exchange APIs where appropriate
+
+Execution must be broker/platform compliant.
+
+Every order must have:
+- request_id
+- idempotency_key
+- audit record
+
+Timeout handling:
+
+Send/attempt
+-&gt; uncertain state
+-&gt; query broker
+-&gt; reconcile
+-&gt; retry only if confirmed safe
+
+Never blindly retry an uncertain order.
+
+29. POSITION GUARDIAN
+
+Continuously reconcile:
+- ticket
+- volume
+- entry
+- current price
+- SL
+- TP
+- P/L
+- status
+
+If local state differs from broker state:
+- pause unsafe actions
+- reconcile
+- persist authoritative state
+- alert
+
+30. CHALLENGE ENGINE
+
+Challenge rules must be configurable per provider/account.
+
+Support:
+- profit target
+- daily drawdown
+- max drawdown
+- minimum/maximum days
+- leverage
+- consistency
+- news rules
+- weekend rules
+- position rules
+
+Challenge checks occur before execution.
+
+31. AI JOURNAL
+
+Before:
+- thesis
+- bull case
+- bear case
+- probability
+- EV
+- risk
+- regime
+
+During:
+- market changes
+- regime changes
+- SL/TP changes
+- AI changes
+
+After:
+- outcome
+- R multiple
+- prediction vs reality
+- execution quality
+- error
+- lesson
+
+32. LEARNING LAB
+
+Live trades must not directly alter production models.
+
+Pipeline:
+
+LIVE
+-&gt; JOURNAL
+-&gt; DATASET
+-&gt; RESEARCH
+-&gt; VALIDATION
+-&gt; BACKTEST
+-&gt; WALK-FORWARD
+-&gt; OUT-OF-SAMPLE
+-&gt; MONTE CARLO
+-&gt; PAPER
+-&gt; SHADOW
+-&gt; CANARY
+-&gt; PRODUCTION
+
+33. MODEL REGISTRY
+
+Track:
+- model id
+- version
+- dataset version
+- feature version
+- training period
+- validation metrics
+- calibration
+- drift status
+- deployment status
+- rollback version
+
+Support Champion/Challenger.
+
+34. DRIFT DETECTION
+
+Detect:
+- feature drift
+- concept drift
+- calibration drift
+- performance drift
+- regime drift
+- execution drift
+
+Possible response:
+- reduce risk
+- pause model
+- review
+- rollback
+
+35. STABILITY, RELIABILITY &amp; DISASTER RECOVERY CORE
+
+This is a mandatory production subsystem.
+
+Every critical service must have:
+
+- liveness
+- readiness
+- health checks
+- heartbeat
+- metrics
+- structured logs
+- trace/request IDs
+- watchdog
+- graceful shutdown
+- startup recovery
+- automatic restart
+- retry with exponential backoff
+- circuit breaker
+- rate limiting
+- dead-letter queue where applicable
+- idempotency
+- timeout policies
+- dependency health checks
+
+36. CRASH RECOVERY
+
+The system must survive:
+- process crash
+- worker crash
+- server restart
+- database restart
+- queue restart
+- broker disconnect
+- market-data disconnect
+- Telegram outage
+- n8n outage
+
+On restart:
+
+LOAD PERSISTED STATE
+-&gt; CHECK BROKER STATE
+-&gt; RECONCILE POSITIONS/ORDERS
+-&gt; REBUILD SAFE INTERNAL STATE
+-&gt; RESUME ONLY WHEN CONSISTENT
+
+Never assume an order did or did not execute after an uncertain failure.
+
+37. CIRCUIT BREAKERS
+
+Circuit breakers must exist for:
+- broker
+- market data
+- database
+- AI service
+- external APIs
+- notification service
+
+States:
+- CLOSED
+- OPEN
+- HALF_OPEN
+
+Repeated failures must not cause cascading failures.
+
+38. QUEUE RELIABILITY
+
+Use durable queues for critical asynchronous jobs.
+
+Support:
+- retry
+- exponential backoff
+- dead-letter queue
+- job idempotency
+- job timeout
+- job cancellation
+- recovery after restart
+
+Critical financial actions must never depend on an unreliable fire-and-forget queue.
+
+39. DATABASE &amp; STATE SAFETY
+
+Use transactional updates where needed.
+
+Protect:
+- orders
+- positions
+- account state
+- risk state
+- challenge state
+- execution events
+
+Backups:
+- scheduled
+- encrypted
+- verified by restore tests
+
+Never claim a backup is valid without restore verification.
+
+40. MARKET-DATA FAILURE POLICY
+
+If market data becomes:
+- stale
+- inconsistent
+- incomplete
+- disconnected
+
+then:
+
+NO NEW TRADE
+
+unless a specifically validated fallback source is active and passes quality checks.
+
+41. BROKER-STATE FAILURE POLICY
+
+If broker state is uncertain:
+
+BLOCK NEW ORDERS
+RECONCILE
+VERIFY
+THEN RESUME
+
+42. AI FAILURE POLICY
+
+If critical AI components fail:
+- use a validated fallback only if configured
+- otherwise SAFE MODE
+- no uncontrolled trading
+
+AI outage must never bypass risk.
+
+43. DASHBOARD — AI COMMAND CENTER
+
+Build a premium, professional, responsive dashboard.
+
+Main navigation:
+
+HOME
+AI BRAIN
+SITUATION ROOM
+MARKETS
+MARKET MAP
+SCANNER
+CHARTS
+SIGNALS
+POSITIONS
+ORDERS
+PORTFOLIO
+RISK
+CHALLENGE
+EXECUTION
+AI JOURNAL
+AI LAB
+BACKTEST
+RESEARCH
+BENCHMARK
+MODEL REGISTRY
+AI HEALTH
+ACCOUNTS
+BROKERS
+PLATFORMS
+TELEGRAM
+AUTOMATION
+NOTIFICATIONS
+SECURITY
+SETTINGS
+ADMIN
+
+44. AI SITUATION ROOM
+
+Show:
+- market regime
+- market risk
+- AI confidence
+- AI agreement
+- top opportunities
+- critical alerts
+- upcoming news
+- portfolio risk
+- challenge status
+- execution health
+- AI health
+
+45. AI COMMAND PALETTE
+
+CTRL+K / mobile equivalent.
+
+Examples:
+- Analyze XAUUSD
+- Show best opportunities
+- Why is EURUSD WAIT?
+- Analyze my portfolio
+- Simulate this trade
+
+Permissions:
+
+READ
+SIMULATE
+EXECUTE
+
+Natural language must map to authorized backend actions only.
+
+46. DECISION REPLAY
+
+For every major decision provide an auditable timeline:
+
+Market State
+-&gt; Data
+-&gt; Features
+-&gt; Regime
+-&gt; AI Council
+-&gt; Adversarial
+-&gt; Probability
+-&gt; EV
+-&gt; Portfolio
+-&gt; Risk
+-&gt; Decision
+-&gt; Execution
+-&gt; Outcome
+
+Do not expose private model chain-of-thought. Show evidence, reason codes, metrics, and decision factors.
+
+47. PROFESSIONAL CHART ENGINE
+
+Support:
+- candlesticks
+- multi-timeframe
+- volume
+- market structure
+- BOS
+- CHoCH
+- liquidity
+- FVG
+- order blocks
+- support/resistance
+- sessions
+- news
+- AI entry/SL/TP
+- position overlays
+- replay
+- drawing tools
+- alerts
+
+48. GLOBAL MARKET MAP &amp; SCANNER
+
+Support all instruments actually available through configured data providers.
+
+Do not hard-code a fictional "all currencies" universe.
+
+Categories may include:
+- Forex
+- Metals
+- Indices
+- Stocks
+- Futures
+- Crypto
+
+Filters:
+- regime
+- AI score
+- probability
+- EV
+- risk
+- volatility
+- news
+- session
+- data quality
+
+Rank by risk-adjusted edge.
+
+49. MULTI-ACCOUNT / MULTI-BROKER
+
+Users may connect multiple authorized accounts.
+
+Each account has:
+- broker
+- platform
+- equity
+- drawdown
+- positions
+- risk
+- challenge
+- execution status
+
+Strict tenant isolation.
+
+50. TELEGRAM &amp; n8n
+
+Telegram:
+- signals
+- alerts
+- reports
+- daily briefing
+- journal notifications
+
+n8n:
+- orchestration
+- notification workflows
+- reporting
+- integrations
+
+Neither may bypass:
+Authentication
+Authorization
+Risk Engine
+Challenge Engine
+Execution Safety
+
+51. MULTILINGUAL / RTL / LTR
+
+Architecture must support translation without changing trading logic.
+
+At minimum provide localization architecture for:
+- Persian
+- English
+- Arabic
+- Turkish
+- German
+- Dutch
+- French
+- Spanish
+- Italian
+- Portuguese
+- Russian
+- Chinese
+- Japanese
+- Korean
+- Hindi
+- Urdu
+
+Support:
+- RTL
+- LTR
+- locale-aware numbers
+- locale-aware dates
+- translated AI responses
+- translated alerts
+- translated dashboards
+
+52. SECURITY
+
+Implement:
+- authentication
+- authorization
+- RBAC
+- tenant isolation
+- encryption
+- secret management
+- secure webhooks
+- rate limiting
+- audit logs
+- security headers
+- dependency scanning
+- secret scanning
+- session management
+- API key rotation
+
+Never expose broker credentials in frontend.
+
+53. OBSERVABILITY
+
+Monitor:
+- API latency
+- AI latency
+- execution latency
+- data freshness
+- queue depth
+- CPU
+- memory
+- database
+- broker connection
+- model drift
+- signal quality
+- slippage
+- errors
+- recovery events
+
+Provide dashboards and alerts.
+
+54. PERFORMANCE &amp; SCALING
+
+Initial architecture must support at least:
+- 100 concurrent users
+- hundreds of trading accounts
+- thousands of instruments where data availability permits
+
+Architecture should have a credible scaling path to:
+- 1,000 users
+- 10,000 users
+- 100,000+ users
+
+Do not introduce unnecessary microservices. Prefer:
+- modular monolith
+- workers
+- queue
+- Redis
+- PostgreSQL
+- object storage
+- WebSocket/SSE
+
+Split services only when measured bottlenecks justify it.
+
+55. LOAD ISOLATION
+
+Separate:
+- real-time trading workloads
+- historical research
+- backtesting
+- dashboard queries
+- notifications
+
+A heavy backtest must never starve live execution or risk processing.
+
+56. BACKTEST INTEGRITY
+
+Include realistic:
+- spread
+- commission
+- swap
+- slippage
+- latency
+- execution constraints
+
+Prevent:
+- lookahead
+- future leakage
+- unrealistic fills
+- survivorship bias
+- data snooping
+- overfitting
+
+57. BENCHMARK
+
+Track:
+- win rate
+- profit factor
+- expectancy
+- average R
+- max drawdown
+- Sharpe
+- Sortino
+- Calmar
+- risk of ruin
+- Brier score
+- calibration
+- false signal rate
+- WAIT accuracy
+- regime accuracy
+- entry quality
+- exit quality
+- execution quality
+- slippage
+- latency
+- adversarial resilience
+
+58. TESTING
+
+Mandatory:
+- unit
+- integration
+- API
+- AI
+- risk
+- execution
+- guardian
+- challenge
+- Telegram
+- n8n
+- security
+- load
+- recovery
+- E2E
+
+Explicit regression cases:
+- zero volume
+- negative volume
+- risk rejected
+- HOLD
+- invalid signal
+- duplicate order
+- timeout after submission
+- broker disconnect
+- missing SL
+- missing TP
+- stale data
+- drawdown breach
+- challenge breach
+- tenant isolation violation
+- credential exposure
+- future leakage
+- model drift
+- rollback
+- server restart during execution
+
+59. DISASTER RECOVERY
+
+Define and test:
+- RPO
+- RTO
+- backup schedule
+- restore procedure
+- database recovery
+- broker reconciliation
+- queue recovery
+- service restart
+- rollback
+- emergency shutdown
+
+No disaster-recovery claim without an actual test.
+
+60. PRODUCTION DEPLOYMENT
+
+Provide:
+- environment separation
+- secure configuration
+- migrations
+- health checks
+- graceful deploy
+- rollback
+- zero/low-downtime strategy where feasible
+- log rotation
+- metrics
+- alerts
+- backup
+- restore verification
+
+Never hard-code production secrets.
+
+61. AI COMMAND CENTER DESIGN
+
+The dashboard must feel like:
+
+INSTITUTIONAL AI TRADING COMMAND CENTER
+
+Not a generic admin panel.
+
+Design principles:
+- premium
+- professional
+- fast
+- readable
+- data-dense but organized
+- responsive
+- accessible
+- customizable
+- real-time
+- AI-native
+- RTL/LTR
+
+Use clear information hierarchy and avoid visual clutter.
+
+62. AI EXPLAINABILITY
+
+For decisions show:
+
+Decision
+Supporting Evidence
+Contradictory Evidence
+Market Regime
+Historical Context
+Probability
+Expected Value
+Risk
+Invalidation
+Data Quality
+Model Version
+Timestamp
+
+Never fabricate evidence.
+
+63. DAILY AI BRIEFING
+
+Generate:
+- market regime
+- top opportunities
+- top risks
+- important news
+- portfolio status
+- challenge status
+- AI health
+- recommended watchlist/actions
+
+Deliver through dashboard and authorized notification channels.
+
+64. AI HEALTH CENTER
+
+Display:
+- model health
+- data quality
+- calibration
+- feature drift
+- concept drift
+- AI agreement
+- execution quality
+- system health
+- service health
+- data freshness
+
+65. ADMIN &amp; OPERATIONS
+
+Admin must manage:
+- tenants
+- subscriptions
+- roles
+- data providers
+- brokers
+- platform adapters
+- model versions
+- feature flags
+- risk policies
+- challenge templates
+- notification policies
+- system health
+- audit logs
+
+All administrative actions must be audited.
+
+66. OBSERVABILITY EVENT MODEL
+
+Use structured events with:
+- event_id
+- trace_id
+- tenant_id where applicable
+- user_id where applicable
+- account_id where applicable
+- service
+- timestamp
+- severity
+- event_type
+- payload metadata
+- model/version identifiers where relevant
+
+Do not log secrets.
+
+67. DATABASE PRINCIPLES
+
+Design clear boundaries between:
+- market data
+- features
+- historical episodes
+- AI decisions
+- orders
+- positions
+- accounts
+- risk
+- challenges
+- journals
+- model registry
+- audit events
+
+Use indexes appropriate for time-series and account queries.
+
+Use retention policies for high-volume raw data.
+
+68. COST CONTROL
+
+Do not call expensive AI models for every tick.
+
+Use a tiered architecture:
+- deterministic calculations first
+- cached intelligence
+- lightweight models for frequent decisions
+- heavier reasoning only when justified
+- batch research for historical analysis
+
+Measure:
+- cost per analysis
+- cost per user
+- cost per trade candidate
+- data cost
+- model cost
+
+69. NOISE &amp; OVERTRADING CONTROL
+
+Implement:
+- signal cooldown
+- duplicate signal suppression
+- minimum evidence threshold
+- regime-aware frequency limits
+- portfolio-aware signal suppression
+- challenge-aware suppression
+
+The system must prefer fewer high-quality decisions over excessive activity.
+
+70. FINAL DECISION OBJECT
+
+Every final decision must be represented by a versioned structured object containing, where applicable:
+
+- decision
+- symbol
+- timestamp
+- regime
+- probability
+- EV
+- risk allocation
+- supporting evidence
+- contradictory evidence
+- historical context
+- adversarial result
+- portfolio impact
+- challenge impact
+- data quality
+- model versions
+- risk decision
+- execution status
+- reason codes
+
+71. SAFE STATE
+
+Define a universal SAFE MODE.
+
+Trigger examples:
+- critical data failure
+- broker uncertainty
+- risk engine unavailable
+- database inconsistency
+- position reconciliation failure
+- security incident
+- model health failure
+- system overload
+
+Safe Mode:
+- blocks new risk-increasing actions
+- keeps monitoring active
+- preserves state
+- attempts recovery
+- alerts operators
+- requires validated conditions before resuming
+
+72. DEVELOPMENT PHASES
+
+PHASE 0  Repository Audit
+PHASE 1  Architecture/Gaps
+PHASE 2  Data Infrastructure
+PHASE 3  Historical Data Acquisition
+PHASE 4  Data Quality/Provenance
+PHASE 5  Point-in-Time Engine
+PHASE 6  Canonical Instrument Engine
+PHASE 7  Feature Store
+PHASE 8  Symbol DNA
+PHASE 9  Market Memory
+PHASE 10 Historical Episodes
+PHASE 11 Similarity Engine
+PHASE 12 World State
+PHASE 13 Regime Engine
+PHASE 14 Cognitive Brain
+PHASE 15 AI Council
+PHASE 16 Meta-Brain
+PHASE 17 Adversarial AI
+PHASE 18 Counterfactual Brain
+PHASE 19 Strategy Engine
+PHASE 20 Probability/Calibration
+PHASE 21 Expected Value
+PHASE 22 Portfolio Brain
+PHASE 23 Autonomous Risk Brain
+PHASE 24 Risk-of-Ruin/Stress
+PHASE 25 Execution Safety
+PHASE 26 Broker Adapters
+PHASE 27 Position Guardian
+PHASE 28 Challenge Engine
+PHASE 29 AI Journal
+PHASE 30 Learning Lab
+PHASE 31 Model Registry
+PHASE 32 Champion/Challenger
+PHASE 33 Drift Detection
+PHASE 34 Benchmark
+PHASE 35 Stability Core
+PHASE 36 Crash Recovery
+PHASE 37 Disaster Recovery
+PHASE 38 Dashboard Command Center
+PHASE 39 Professional Charts
+PHASE 40 AI Assistant/Command Mode
+PHASE 41 What-If
+PHASE 42 Decision Replay
+PHASE 43 Multi-Account
+PHASE 44 Multi-Broker
+PHASE 45 Telegram
+PHASE 46 n8n
+PHASE 47 Multilingual
+PHASE 48 Security
+PHASE 49 Observability
+PHASE 50 Performance
+PHASE 51 Load Testing
+PHASE 52 E2E
+PHASE 53 Production Readiness
+
+73. PHASE COMPLETION STANDARD
+
+Never mark a phase PASS based only on code existence.
+
+For every phase report:
+
+- status
+- implementation summary
+- files created
+- files modified
+- files deleted
+- migrations
+- API changes
+- tests
+- passed
+- failed
+- security findings
+- performance findings
+- known limitations
+- rollback plan
+- evidence
+- next phase
+
+74. GIT &amp; CHANGE SAFETY
+
+Before changes:
+git status
+
+Then:
+Inspect
+Design
+Implement
+Test
+Review Diff
+Security Check
+Performance Check
+Commit intentionally
+
+Do not create unnecessary commits.
+Do not modify unrelated projects.
+Do not delete working functionality without a documented replacement.
+
+75. REQUIRED FIRST OUTPUT FROM CLAUDE CODE
+
+Do NOT immediately start rewriting.
+
+First produce:
+
+TRADE-AI X v5.2 REPOSITORY AUDIT
+
+with:
+
+1. Current architecture
+2. Current backend
+3. Current frontend
+4. Current database
+5. Current AI modules
+6. Current market data
+7. Current execution
+8. Current risk
+9. Current position management
+10. Current challenge system
+11. Current Telegram/n8n
+12. Current dashboard
+13. Current deployment
+14. Current tests
+15. Current bugs
+16. Security risks
+17. Performance risks
+18. Missing modules
+19. Duplicate modules
+20. Recommended phased plan
+
+Then wait for the repository-aware implementation plan before destructive or large-scale refactoring.
+
+76. FINAL ACCEPTANCE
+
+Trade-AI X v5.2 is Production Ready only when:
+
+- Historical data pipeline works
+- Point-in-Time integrity is tested
+- Market Memory works
+- Symbol DNA works
+- Similarity Engine works
+- Cognitive Brain works
+- AI Council works
+- Meta-Brain works
+- Adversarial AI works
+- Probability is calibrated
+- EV is validated
+- Risk Brain is independent
+- Portfolio risk works
+- Challenge rules work
+- Execution is idempotent
+- Broker reconciliation works
+- Position Guardian works
+- Crash recovery is tested
+- Disaster recovery is tested
+- Dashboard works
+- Command Mode is permission-aware
+- Telegram/n8n cannot bypass risk
+- Multilingual/RTL/LTR works
+- Security tests pass
+- Load tests pass
+- E2E tests pass
+- Monitoring works
+- Backups are restore-tested
+- Rollback works
+- No critical unresolved security issue remains
+
+FINAL PRODUCT:
+
+TRADE-AI X v5.2
+GLOBAL AI TRADING INTELLIGENCE PLATFORM
+
+Core:
+COGNITIVE BRAIN
++
+HISTORICAL MARKET INTELLIGENCE
++
+MARKET MEMORY
++
+AUTONOMOUS RISK BRAIN
++
+STABILITY CORE
++
+SAFE EXECUTION
++
+CONTINUOUS VALIDATION
+
+The system should understand the market, compare current conditions with historical context, reason across multiple analytical agents, challenge its own decisions, quantify uncertainty and expected value, evaluate portfolio and challenge risk, execute safely, monitor positions continuously, recover from failures, and improve only through validated research and deployment.

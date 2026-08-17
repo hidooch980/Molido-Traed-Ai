@@ -554,6 +554,89 @@ void ExecutePending()
    FileFindClose(search);
   }
 
+//+------------------------------------------------------------------+
+//| Closed deals                                                      |
+//|                                                                   |
+//| Realised profit is the one figure the platform could not compute. |
+//| Positions publish their floating profit every cycle, but a closed |
+//| trade leaves the positions file entirely and nothing recorded     |
+//| where it went - so an account could be up four hundred dollars on |
+//| the day and every page would show only what was still open.       |
+//|                                                                   |
+//| Deals rather than orders. An order is a request; a deal is what   |
+//| the account was actually charged or paid, which is the number a   |
+//| P&L is made of.                                                   |
+//+------------------------------------------------------------------+
+input int DealHistoryDays = 30;
+
+void WriteDeals()
+  {
+   datetime from = TimeCurrent() - (datetime)DealHistoryDays * 86400;
+   if(!HistorySelect(from, TimeCurrent()))
+     {
+      Print("MolidoBridge: HistorySelect failed for the deal window");
+      return;
+     }
+
+   int handle = FileOpen("molido_deals.json", FLAGS);
+   if(handle == INVALID_HANDLE)
+      return;
+
+   FileWriteString(handle, "{\"published_at\":\"" +
+                   TimeToString(TimeCurrent(), TIME_DATE | TIME_SECONDS) + "\",");
+   FileWriteString(handle, "\"window_days\":" + IntegerToString(DealHistoryDays) + ",");
+   FileWriteString(handle, "\"deals\":[");
+
+   int total = HistoryDealsTotal();
+   bool first = true;
+   for(int i = 0; i < total; i++)
+     {
+      ulong ticket = HistoryDealGetTicket(i);
+      if(ticket == 0)
+         continue;
+
+      //--- Entry deals open a position and carry no realised profit; only
+      //--- the closing side does. Publishing both would double every trade
+      //--- and put a zero beside each real one.
+      long entry = HistoryDealGetInteger(ticket, DEAL_ENTRY);
+      if(entry != DEAL_ENTRY_OUT && entry != DEAL_ENTRY_INOUT)
+         continue;
+
+      if(!first)
+         FileWriteString(handle, ",");
+      first = false;
+
+      double profit = HistoryDealGetDouble(ticket, DEAL_PROFIT);
+      double swap   = HistoryDealGetDouble(ticket, DEAL_SWAP);
+      double fee    = HistoryDealGetDouble(ticket, DEAL_COMMISSION);
+
+      FileWriteString(handle, "{\"ticket\":" + IntegerToString((long)ticket) + ",");
+      FileWriteString(handle, "\"symbol\":\"" +
+                      Escape(HistoryDealGetString(ticket, DEAL_SYMBOL)) + "\",");
+      FileWriteString(handle, "\"side\":\"" +
+                      (HistoryDealGetInteger(ticket, DEAL_TYPE) == DEAL_TYPE_BUY ? "buy" : "sell") + "\",");
+      FileWriteString(handle, "\"volume\":" +
+                      DoubleToString(HistoryDealGetDouble(ticket, DEAL_VOLUME), 4) + ",");
+      FileWriteString(handle, "\"price\":" +
+                      DoubleToString(HistoryDealGetDouble(ticket, DEAL_PRICE), 8) + ",");
+      FileWriteString(handle, "\"profit\":" + DoubleToString(profit, 2) + ",");
+      FileWriteString(handle, "\"swap\":" + DoubleToString(swap, 2) + ",");
+      FileWriteString(handle, "\"commission\":" + DoubleToString(fee, 2) + ",");
+      //--- Published summed as well as split. Every page that shows "profit"
+      //--- without swap and commission is showing a number the account never
+      //--- saw, and the three are stored separately by the terminal.
+      FileWriteString(handle, "\"net\":" + DoubleToString(profit + swap + fee, 2) + ",");
+      FileWriteString(handle, "\"closed_at\":\"" +
+                      TimeToString((datetime)HistoryDealGetInteger(ticket, DEAL_TIME),
+                                   TIME_DATE | TIME_SECONDS) + "\",");
+      FileWriteString(handle, "\"comment\":\"" +
+                      Escape(HistoryDealGetString(ticket, DEAL_COMMENT)) + "\"}");
+     }
+
+   FileWriteString(handle, "]}");
+   FileClose(handle);
+  }
+
 void OnTimer()
   {
    Publish();
@@ -575,6 +658,7 @@ void Publish()
    WriteAccount();
    WriteSymbols();
    WritePositions();
+   WriteDeals();
 
    int total = SymbolsTotal(true);
    for(int i = 0; i < total; i++)

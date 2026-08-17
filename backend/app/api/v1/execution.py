@@ -347,6 +347,41 @@ def read_equity(
     }
 
 
+@router.get("/realised")
+def read_realised(
+    session: Session = Depends(get_db),
+    days: int = Query(default=30, ge=1, le=365),
+    _: Principal = READ,
+) -> dict[str, Any]:
+    """Closed trades and what they actually earned, net of everything.
+
+    The one figure the platform could not compute. Every page showed floating
+    profit; a closed trade leaves the positions file entirely, so an account
+    could be up on the day and nothing would say so.
+
+    The broker's clock offset is measured, not assumed - the same alignment
+    that fixed the bar series, because reading these stamps as UTC would put
+    every close three hours in the future on this broker.
+    """
+    from datetime import timedelta
+
+    from app.services import realised as realised_service
+    from app.workers import broker_offset
+
+    measured = broker_offset.measure(session)
+    since = datetime.now(UTC) - timedelta(days=days)
+
+    payload = realised_service.read(
+        offset_hours=float(measured.hours or 0),
+        since=since,
+    )
+    # Published so a reader can tell a clock nobody could measure from a
+    # window that genuinely holds nothing.
+    payload["clock_offset"] = measured.as_dict()
+    payload["window_days"] = days
+    return payload
+
+
 @router.get("/autopilot")
 def read_autopilot(
     _: Principal = READ,
