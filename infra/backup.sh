@@ -30,22 +30,17 @@ compose() {
 }
 
 echo "[$(date -u +%FT%TZ)] dumping ${POSTGRES_DB}"
-# TimescaleDB's own catalogue tables - hypertable, chunk, continuous_agg -
-# carry circular foreign keys between each other. A plain custom-format dump
-# of them cannot be restored in dependency order, and the first real run of
-# this script proved it: pg_dump warned three times and the restore
-# verification failed outright.
+# TimescaleDB's catalogue tables carry circular foreign keys between each
+# other, so pg_dump warns and a plain restore fails on ordering. The first
+# fix excluded the _timescaledb_* schemas and made it worse: the restore
+# passed and the database came back with zero bars, because a hypertable's
+# rows live in _timescaledb_internal chunks. Excluding the catalogue excluded
+# the data, and an empty backup that reports OK is worse than one that fails.
 #
-# --exclude-schema drops that catalogue from the dump. The extension rebuilds
-# it when the schema is recreated, so what is being excluded is machinery
-# rather than data. Every application table, including the hypertables'
-# contents, is still in there.
+# The whole database is dumped. The ordering problem is solved at restore
+# time by --disable-triggers, which is where it belongs.
 compose exec -T postgres pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
-  --format=custom \
-  --exclude-schema=_timescaledb_internal \
-  --exclude-schema=_timescaledb_catalog \
-  --exclude-schema=_timescaledb_config \
-  --file="/backups/${FILE}"
+  --format=custom --file="/backups/${FILE}"
 
 echo "[$(date -u +%FT%TZ)] verifying by restoring into a scratch database"
 VERIFY_DB="verify_${STAMP}"
