@@ -262,6 +262,15 @@ export default function Shell({
           >
             <span className="font-semibold">MolidoTrade AI</span>
             <span>{coverage}</span>
+            {/* Version, commit and build time together. Any one alone leaves
+                a question the other two answer: which release is this, which
+                code exactly, and did my deploy actually land. */}
+            <span className="num" title="release version">
+              v{process.env.NEXT_PUBLIC_VERSION || "dev"}
+            </span>
+            <span className="num" title="git commit">
+              {process.env.NEXT_PUBLIC_COMMIT || "local"}
+            </span>
             <span className="num" title="build timestamp (UTC)">
               build {process.env.NEXT_PUBLIC_BUILD || "dev"}
             </span>

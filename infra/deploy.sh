@@ -19,6 +19,12 @@ cd "$(dirname "$0")/.."
 BUILD_STAMP="$(date -u '+%Y-%m-%d %H:%M')"
 export BUILD_STAMP
 
+# Version and commit travel with the build, so the footer can answer
+# "which release is this" and "which code exactly" without anybody
+# checking by hand.
+APP_VERSION="$(grep -oE '[0-9]+[.][0-9]+[.][0-9]+' backend/app/__init__.py | head -1)"
+export APP_VERSION
+
 # Pull first, and say which commit is being deployed.
 #
 # This script used to build whatever happened to be in the working tree. A
@@ -31,6 +37,8 @@ export BUILD_STAMP
 echo "-> at ${BEFORE:=$(git rev-parse --short HEAD)}, pulling"
 git pull --ff-only --quiet origin main
 AFTER="$(git rev-parse --short HEAD)"
+GIT_COMMIT="$AFTER"
+export GIT_COMMIT
 if [ "$BEFORE" = "$AFTER" ]; then
   echo "-> already at ${AFTER} - nothing new to deploy, rebuilding anyway"
 else
@@ -45,6 +53,8 @@ git --no-pager log --oneline -1
 # variable through `sudo env` is explicit and cannot be dropped.
 compose() {
   sudo env "BUILD_STAMP=${BUILD_STAMP}" \
+    "APP_VERSION=${APP_VERSION}" \
+    "GIT_COMMIT=${GIT_COMMIT}" \
     docker compose \
     -f infra/docker-compose.prod.yml \
     -f infra/docker-compose.ip.yml \

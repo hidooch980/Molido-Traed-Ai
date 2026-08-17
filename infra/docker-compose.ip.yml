@@ -24,3 +24,5 @@ services:
     build:
       args:
         BUILD_STAMP: ${BUILD_STAMP:-unset}
+        APP_VERSION: ${APP_VERSION:-dev}
+        GIT_COMMIT: ${GIT_COMMIT:-local}
