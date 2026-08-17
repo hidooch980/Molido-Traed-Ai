@@ -53,7 +53,23 @@ class FakeBridge:
         }
 
     def positions(self):
-        return {"positions": [{"ticket": i} for i in range(self._positions)]}
+        # The shape a real terminal publishes. A position without a stop or a
+        # size is not a cheaper one - it is one whose risk cannot be priced,
+        # and the portfolio brain refuses to add to a book it cannot measure.
+        return {
+            "positions": [
+                {
+                    "ticket": i,
+                    "symbol": "GBPNZD",
+                    "side": "buy" if i % 2 else "sell",
+                    "volume": 0.01,
+                    "price_open": 1.1000,
+                    "stop": 1.0950,
+                    "target": 1.1050,
+                }
+                for i in range(self._positions)
+            ]
+        }
 
     def symbols(self):
         if self._symbols is not None:
@@ -677,7 +693,18 @@ class FakeBridgeHolding(FakeBridge):
         self.symbol = symbol
 
     def positions(self):
-        return {"positions": [{"ticket": 1, "symbol": self.symbol}]}
+        return {
+            "positions": [
+                {
+                    "ticket": 1,
+                    "symbol": self.symbol,
+                    "side": "buy",
+                    "volume": 0.01,
+                    "price_open": 1.1000,
+                    "stop": 1.0950,
+                }
+            ]
+        }
 
 
 class TestTheSpreadIsPricedFromTheBrokerAtSendTime:
@@ -1039,3 +1066,83 @@ class TestThePropRulebookGovernsWhenThereIsOne:
 
         assert allowed is False
         assert "could not be read" in why
+
+
+class TestTheOpenBookIsPricedBeforeAddingToIt:
+    """`brain/portfolio.py` exists because two independently excellent EURUSD
+    and GBPUSD longs are one larger dollar-short position, and a sizer judging
+    each on its own merit approves twice the exposure it believes it did."""
+
+    SPEC = {"tick_value": 1.0, "tick_size": 0.00001, "name": "USDCAD"}
+    ONE_R = 20.0  # 0.2% of a 10,000 account
+
+    def position(self, **over):
+        base = {
+            "symbol": "USDCAD",
+            "side": "sell",
+            "volume": 0.01,
+            "price_open": 1.1000,
+            "stop": 1.0950,
+        }
+        base.update(over)
+        return base
+
+    def test_an_open_position_is_priced_from_its_own_stop_and_size(self):
+        """Not assumed to be one R. A position opened at a different equity,
+        by hand, or before a risk change is not one R - and these are summed,
+        so a wrong unit becomes a wrong total for the whole book."""
+        risk = autotrade._open_risk_r(self.position(), self.SPEC, self.ONE_R)
+
+        assert risk is not None
+        assert round(risk, 4) == 0.25
+
+    def test_a_bigger_position_carries_more_r(self):
+        small = autotrade._open_risk_r(self.position(), self.SPEC, self.ONE_R)
+        large = autotrade._open_risk_r(
+            self.position(volume=0.05), self.SPEC, self.ONE_R
+        )
+
+        assert large == pytest.approx(5 * small)
+
+    def test_a_position_with_no_stop_cannot_be_priced(self):
+        """It is not a position risking nothing. It is one whose risk has no
+        ceiling, which no number here can express."""
+        assert autotrade._open_risk_r(
+            self.position(stop=1.1000), self.SPEC, self.ONE_R
+        ) is None
+
+    def test_a_position_missing_fields_cannot_be_priced(self):
+        assert autotrade._open_risk_r({"symbol": "X"}, self.SPEC, self.ONE_R) is None
+
+    def test_an_unpriceable_position_refuses_the_trade(self):
+        """Unknown exposure is not absent exposure, and adding to a book you
+        cannot measure is what this module exists to prevent."""
+        headroom, why = autotrade._portfolio_headroom(
+            "EURUSD", "buy", 0.002, [{"symbol": "USDCAD"}], {"USDCAD": self.SPEC}, self.ONE_R
+        )
+
+        assert headroom is None
+        assert "unknown is not zero" in why
+
+    def test_an_empty_book_absorbs_the_whole_trade(self):
+        headroom, why = autotrade._portfolio_headroom(
+            "EURUSD", "buy", 0.002, [], {}, self.ONE_R
+        )
+
+        assert headroom == pytest.approx(0.002)
+        assert why == ""
+
+    def test_a_correlated_book_leaves_less_room_than_an_empty_one(self):
+        """The whole point: the same trade is smaller when the book already
+        leans the same way."""
+        crowded = [
+            self.position(symbol=s, side="buy") for s in ("EURUSD", "GBPUSD", "AUDUSD")
+        ]
+        specs = {s: {**self.SPEC, "name": s} for s in ("EURUSD", "GBPUSD", "AUDUSD")}
+
+        alone, _ = autotrade._portfolio_headroom("NZDUSD", "buy", 0.002, [], {}, self.ONE_R)
+        among, _ = autotrade._portfolio_headroom(
+            "NZDUSD", "buy", 0.002, crowded, specs, self.ONE_R
+        )
+
+        assert among is None or among <= alone

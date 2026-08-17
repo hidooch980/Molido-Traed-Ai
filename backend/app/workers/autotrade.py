@@ -157,6 +157,89 @@ def _authorise(state: Any, *, feed_age_bars: float | None) -> Any:
     )
 
 
+def _open_risk_r(
+    position: dict[str, Any], specification: dict[str, Any], one_r_money: float
+) -> float | None:
+    """What an already-open position still risks, in R.
+
+    Computed from its own stop and size rather than assumed to be one R.
+    Positions opened at a different equity, or by hand, or before a risk
+    change, are not one R - and the portfolio brain adds these up, so a wrong
+    unit here becomes a wrong total for the whole book.
+
+    None when the terminal has not published enough to price it. The caller
+    treats an unpriceable position as unknown exposure rather than none.
+    """
+    try:
+        opened = float(position.get("price_open"))
+        stop = float(position.get("stop"))
+        volume = float(position.get("volume"))
+        tick_value = float(specification.get("tick_value"))
+        tick_size = float(specification.get("tick_size"))
+    except (TypeError, ValueError):
+        return None
+    if tick_size <= 0 or one_r_money <= 0 or volume <= 0:
+        return None
+    distance = abs(opened - stop)
+    if distance <= 0:
+        # A position with no stop is not a position risking nothing. It is one
+        # whose risk has no ceiling, which no number here can express.
+        return None
+    money = (distance / tick_size) * tick_value * volume
+    return money / one_r_money
+
+
+def _portfolio_headroom(
+    symbol: str,
+    direction: str,
+    proposed_risk_r: float,
+    live_positions: list[dict[str, Any]],
+    specifications: dict[str, dict[str, Any]],
+    one_r_money: float,
+) -> tuple[float | None, str]:
+    """How much of this trade the open book can still absorb.
+
+    `brain/portfolio.py` exists because two independently excellent EURUSD and
+    GBPUSD longs are one larger dollar-short position, and a sizer that judges
+    each on its own merit approves twice the exposure it believes it approved.
+    It had no caller in the live path either.
+
+    Returns `(headroom_r, reason)`. A None headroom is a refusal, and the
+    reason says which position could not be priced - an unpriceable position
+    is unknown exposure, not absent exposure, and adding to a book you cannot
+    measure is the thing this module exists to prevent.
+    """
+    from app.brain import portfolio as portfolio_brain
+
+    book: list[portfolio_brain.Position] = []
+    for row in live_positions:
+        held = str(row.get("symbol") or "")
+        specification = specifications.get(held) or {}
+        risk_r = _open_risk_r(row, specification, one_r_money)
+        if risk_r is None:
+            return None, (
+                f"the open {held or 'position'} cannot be priced in R, so the "
+                "book's total exposure is unknown - and unknown is not zero"
+            )
+        book.append(
+            portfolio_brain.Position(
+                symbol=held,
+                direction="buy" if str(row.get("side") or "").lower() == "buy" else "sell",
+                risk_r=risk_r,
+            )
+        )
+
+    verdict = portfolio_brain.evaluate(
+        symbol=symbol,
+        direction=direction,
+        proposed_risk_r=proposed_risk_r,
+        positions=book,
+    )
+    if not verdict.allowed:
+        return None, "portfolio: " + "; ".join(verdict.breaches or ["blocked"])
+    return verdict.max_additional_risk_r, ""
+
+
 def _challenge_gate(
     session: Session,
     published: dict[str, Any],
@@ -548,20 +631,30 @@ def run_cycle(
             )
             continue
 
-        lots, problem = _lots(
-            equity=equity,
-            stop_distance=abs(float(price) - float(stop)),
-            specification=specification,
-            # The brain's answer, not the request. It halves risk while
-            # nothing is calibrated and no edge is proven, which is its
-            # considered response to being unsure - and both are true here.
-            risk_percent=verdict.permitted_risk_r * 100.0,
+        stop_distance = abs(float(price) - float(stop))
+
+        # What the open book can still absorb of this, which is a different
+        # question from whether the account can afford it. Two excellent
+        # correlated longs are one larger position, and sizing each on its own
+        # merit approves twice the exposure it believes it approved.
+        headroom, portfolio_reason = _portfolio_headroom(
+            entry.symbol,
+            "buy" if entry.decision == "long" else "sell",
+            verdict.permitted_risk_r,
+            live_positions,
+            specifications,
+            equity * (verdict.permitted_risk_r or 0.0),
         )
-        if lots is None:
-            skipped.append(f"{entry.symbol}: {problem}")
+        if headroom is None:
+            skipped.append(f"{entry.symbol}: {portfolio_reason}")
+            continue
+        risk_for_this = min(verdict.permitted_risk_r, headroom)
+        if risk_for_this <= 0:
+            skipped.append(
+                f"{entry.symbol}: the book has no room left for it at this correlation"
+            )
             continue
 
-        stop_distance = abs(float(price) - float(stop))
         spread_cost, spread_reason = _spread_cost_r(specification, stop_distance)
         if spread_cost is None:
             skipped.append(f"{entry.symbol}: {spread_reason}")
@@ -572,6 +665,20 @@ def run_cycle(
                 f"over the {MAX_SPREAD_COST_R} R ceiling. The trade starts that "
                 "far behind before it has an opinion"
             )
+            continue
+
+        lots, problem = _lots(
+            equity=equity,
+            stop_distance=stop_distance,
+            specification=specification,
+            # The tightest of the three that spoke: the risk brain's ceiling,
+            # the challenge headroom folded into it, and what the open book
+            # can still absorb at this correlation. Consulting three limits
+            # and obeying the loosest is consulting none.
+            risk_percent=risk_for_this * 100.0,
+        )
+        if lots is None:
+            skipped.append(f"{entry.symbol}: {problem}")
             continue
 
         try:
