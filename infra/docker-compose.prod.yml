@@ -22,6 +22,14 @@ x-backend-env: &backend-env
   MOLIDO_MIN_QUALITY_SCORE: ${MOLIDO_MIN_QUALITY_SCORE:-0.80}
   MOLIDO_COLLECTOR_PROVIDER: ${MOLIDO_COLLECTOR_PROVIDER:-yfinance}
   MOLIDO_COLLECTOR_INTERVAL_SECONDS: ${MOLIDO_COLLECTOR_INTERVAL_SECONDS:-900}
+  # How hard the autopilot trades, and on which timeframes it decides. Listed
+  # here or they do not reach the process at all: the env-file feeds compose
+  # substitution, not the container environment, so a variable set there and
+  # not named here reads back as its default and looks unset rather than
+  # ignored. The defaults below are the conservative pair.
+  MOLIDO_AUTOTRADE_RISK_PERCENT: ${MOLIDO_AUTOTRADE_RISK_PERCENT:-0.25}
+  MOLIDO_AUTOTRADE_MAX_OPEN_POSITIONS: ${MOLIDO_AUTOTRADE_MAX_OPEN_POSITIONS:-8}
+  MOLIDO_FORWARD_TIMEFRAMES: ${MOLIDO_FORWARD_TIMEFRAMES:-H1}
   MOLIDO_WATCHLIST: ${MOLIDO_WATCHLIST}
 
   # Execution. Listed here because this block is an allow-list, not a
