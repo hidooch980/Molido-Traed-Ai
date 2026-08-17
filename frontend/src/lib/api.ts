@@ -821,7 +821,29 @@ export interface EquityView {
   note?: string;
 }
 
+export interface RealisedView {
+  available: boolean;
+  reason?: string | null;
+  net: number | null;
+  trades?: number;
+  gross?: number;
+  swap?: number;
+  commission?: number;
+  by_symbol: Array<{
+    symbol: string;
+    net: number;
+    trades: number;
+    wins: number;
+    /** null until there are enough trades to divide by. */
+    hit_rate: number | null;
+  }>;
+  window_days?: number;
+  note?: string;
+}
+
 export const api = {
+  realised: (days = 30) =>
+    request<RealisedView>(`/api/v1/execution/realised?days=${days}`),
   equity: (limit = 500) =>
     request<EquityView>(`/api/v1/execution/equity?limit=${limit}`),
   calendar: () => request<CalendarView>("/api/v1/instruments/tools/calendar"),

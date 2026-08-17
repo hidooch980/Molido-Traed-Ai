@@ -15,7 +15,7 @@ export const dynamic = "force-dynamic";
  */
 export default async function PositionsPage() {
   const { t } = await getT();
-  const view = await api.positions();
+  const [view, realised] = await Promise.all([api.positions(), api.realised(30)]);
   if (!view.ok) return <Offline error={view.error} />;
 
   const { available, reason, positions, account, note } = view.data;
@@ -99,6 +99,103 @@ export default async function PositionsPage() {
               hint={t("positions.floatingHint")}
             />
           </div>
+
+          {/* Closed trades. Reports why it is empty rather than showing a
+              zero: an account with nothing closed and a terminal that is not
+              publishing its history look identical in a zero, and only one of
+              them is about trading. */}
+          {realised.ok && (
+            <Panel
+              title={t("positions.realised")}
+              subtitle={t("positions.realisedHint")}
+            >
+              {!realised.data.available ? (
+                <div className="p-4 space-y-1">
+                  <StatusBadge status="info" label={t("positions.notPublished")} />
+                  <p className="text-xs ink-3 leading-relaxed">
+                    {realised.data.reason}
+                  </p>
+                </div>
+              ) : (
+                <div className="p-4 space-y-3">
+                  <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                    <Stat
+                      label={t("positions.net")}
+                      value={`${(realised.data.net ?? 0) > 0 ? "+" : ""}${(
+                        realised.data.net ?? 0
+                      ).toFixed(2)}`}
+                      tone={
+                        (realised.data.net ?? 0) === 0
+                          ? undefined
+                          : (realised.data.net ?? 0) > 0
+                            ? "good"
+                            : "warning"
+                      }
+                      hint={t("positions.netHint")}
+                    />
+                    <Stat
+                      label={t("positions.trades")}
+                      value={String(realised.data.trades ?? 0)}
+                    />
+                    <Stat
+                      label={t("positions.swap")}
+                      value={(realised.data.swap ?? 0).toFixed(2)}
+                    />
+                    <Stat
+                      label={t("positions.commission")}
+                      value={(realised.data.commission ?? 0).toFixed(2)}
+                    />
+                  </div>
+                  {realised.data.by_symbol.length > 0 && (
+                    <div className="scroll-x">
+                      <table className="data">
+                        <thead>
+                          <tr>
+                            <th>{t("positions.symbol")}</th>
+                            <th>{t("positions.trades")}</th>
+                            <th>{t("positions.net")}</th>
+                            <th>{t("positions.hitRate")}</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {realised.data.by_symbol.map((row) => (
+                            <tr key={row.symbol}>
+                              <td className="font-medium">{row.symbol}</td>
+                              <td className="num ink-3">{row.trades}</td>
+                              <td
+                                className="num"
+                                style={{
+                                  color:
+                                    row.net > 0
+                                      ? "var(--good)"
+                                      : row.net < 0
+                                        ? "var(--warning)"
+                                        : "var(--ink-2)",
+                                }}
+                              >
+                                {row.net > 0 ? "+" : ""}
+                                {row.net.toFixed(2)}
+                              </td>
+                              {/* Blank until five trades. A hit rate from two
+                                  is a coin flip wearing a percentage. */}
+                              <td className="num ink-3">
+                                {row.hit_rate != null
+                                  ? `${(row.hit_rate * 100).toFixed(0)}%`
+                                  : "—"}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                  <p className="text-xs ink-3 leading-relaxed">
+                    {realised.data.note}
+                  </p>
+                </div>
+              )}
+            </Panel>
+          )}
 
           {symbolRows.length > 0 && (
             <Panel
