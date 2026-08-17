@@ -74,6 +74,24 @@ class FakeBridge:
         }
 
 
+@pytest.fixture(autouse=True)
+def switch_released(monkeypatch):
+    """Every test below predates the kill switch and is about something else.
+
+    Released by default so those tests keep asking their own question. The
+    switch has its own tests, which set it deliberately.
+    """
+    from app.execution import killswitch_store
+    from app.execution.safety import KillSwitch
+
+    def open_switch(*args, **kwargs):
+        switch = KillSwitch()
+        switch.disengage(by="test")
+        return switch
+
+    monkeypatch.setattr(killswitch_store, "load", open_switch)
+
+
 class FakeBroker:
     """Records what it was asked to send, and answers however the test wants."""
 
@@ -705,3 +723,90 @@ class TestTheSpreadIsPricedFromTheBrokerAtSendTime:
         cost, _ = autotrade._spread_cost_r({"bid": 1.1, "ask": 1.1}, 0.002)
 
         assert cost == 0.0
+
+
+class TestTheKillSwitchIsTheFirstGate:
+    """This is the only path that sends live orders and it used to consult no
+    switch at all. The API reported one engaged while this traded, because the
+    switch lived in a per-request object that nothing here ever read."""
+
+    def test_an_engaged_switch_sends_nothing(self, session, live):
+        from app.execution.safety import KillSwitch
+
+        decide(session)
+        broker = FakeBroker()
+        report = autotrade.run_cycle(
+            session,
+            now=NOW,
+            broker=broker,
+            bridge=FakeBridge(),
+            kill_switch=KillSwitch(),
+        )
+
+        assert report["sent"] == []
+        assert broker.submitted == []
+
+    def test_the_refusal_names_the_switch_and_its_reason(self, session, live):
+        from app.execution.safety import KillSwitch
+
+        switch = KillSwitch()
+        switch.engage("daily loss limit hit", by="risk")
+
+        report = autotrade.run_cycle(
+            session, now=NOW, broker=FakeBroker(), bridge=FakeBridge(), kill_switch=switch
+        )
+
+        assert "kill switch" in report["refused"]
+        assert "daily loss limit hit" in report["refused"]
+
+    def test_a_released_switch_lets_the_cycle_proceed(self, session, live):
+        from app.execution.safety import KillSwitch
+
+        decide(session)
+        switch = KillSwitch()
+        switch.disengage(by="aziz")
+        broker = FakeBroker()
+
+        autotrade.run_cycle(
+            session, now=NOW, broker=broker, bridge=FakeBridge(), kill_switch=switch
+        )
+
+        assert broker.submitted != []
+
+    def test_it_is_read_before_the_autopilot_mode(self, session, live, monkeypatch):
+        """A halt reachable only after four other gates succeed is not a halt.
+        With the mode raising, an engaged switch must still return cleanly."""
+        from app.execution import autopilot
+        from app.execution.safety import KillSwitch
+
+        def explode():
+            raise AssertionError("the mode was consulted before the kill switch")
+
+        monkeypatch.setattr(autopilot, "mode_now", explode)
+
+        report = autotrade.run_cycle(
+            session,
+            now=NOW,
+            broker=FakeBroker(),
+            bridge=FakeBridge(),
+            kill_switch=KillSwitch(),
+        )
+
+        assert "kill switch" in report["refused"]
+
+    def test_with_no_switch_passed_it_reads_the_stored_one(self, session, live, monkeypatch):
+        """The default path is the one production uses, and it must not be a
+        path that trades because nobody passed an argument."""
+        from app.execution import killswitch_store
+        from app.execution.safety import KillSwitch
+
+        monkeypatch.setattr(killswitch_store, "load", lambda *a, **k: KillSwitch())
+        decide(session)
+        broker = FakeBroker()
+
+        report = autotrade.run_cycle(
+            session, now=NOW, broker=broker, bridge=FakeBridge()
+        )
+
+        assert broker.submitted == []
+        assert "kill switch" in report["refused"]

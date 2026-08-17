@@ -215,19 +215,31 @@ def run_cycle(
     now: datetime | None = None,
     broker: MetaTraderBroker | None = None,
     bridge: Any = None,
+    kill_switch: Any = None,
 ) -> dict[str, Any]:
     """Send an order for every fresh rule decision that has not had one.
 
     Every refusal is named and counted. A cycle that sends nothing because the
     gates are shut and one that sends nothing because there was nothing to send
     are different facts, and a single "0 orders" hides which.
+
+    The kill switch is read here rather than trusted from a caller. This
+    function is the only path that sends live orders and it used to consult no
+    switch at all - the API reported one engaged while this traded, because
+    the switch lived in a per-request object and this never asked.
     """
-    from app.execution import autopilot
+    from app.execution import autopilot, killswitch_store
     from app.providers.metatrader import MetaTraderBridge
 
     moment = (now or datetime.now(UTC)).astimezone(UTC)
     feed = bridge or MetaTraderBridge()
     sender = broker or MetaTraderBroker()
+
+    # First gate, before the mode, the account and the decisions. A halt that
+    # can be reached only after four other things succeed is not a halt.
+    switch = kill_switch if kill_switch is not None else killswitch_store.load()
+    if switch.engaged:
+        return _report(mode="halted", refused=f"kill switch: {switch.reason}")
 
     mode, why, _live = autopilot.mode_now()
     if mode != "live":
