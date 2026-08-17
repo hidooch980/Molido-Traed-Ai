@@ -397,6 +397,21 @@ export interface AccountsView {
   tradeable: string[];
   reason: string;
   note: string;
+  /**
+   * The account the terminal is actually signed into, read from the bridge
+   * rather than from a registry somebody has to remember to update.
+   * `is_demo` is true only when trade_mode reads exactly 0 - everywhere else
+   * in this system an absent trade_mode is treated as real money.
+   */
+  live_account: {
+    login: string | null;
+    server: string | null;
+    trade_mode: number | null;
+    is_demo: boolean;
+    balance: number | null;
+    equity: number | null;
+    currency: string | null;
+  };
 }
 
 export interface ChallengeVerdictView {

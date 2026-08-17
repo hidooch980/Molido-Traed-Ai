@@ -10,10 +10,11 @@ export const dynamic = "force-dynamic";
 export default async function HomePage() {
   const { t } = await getT();
   const locale = await getLocale();
-  const [health, instruments, clocks] = await Promise.all([
+  const [health, instruments, clocks, accounts] = await Promise.all([
     api.health(),
     api.instruments(),
     api.timezones(),
+    api.accounts(),
   ]);
 
   const primary = instruments.ok ? instruments.data[0] : undefined;
@@ -85,6 +86,58 @@ export default async function HomePage() {
       </header>
 
       {!health.ok && <Offline error={health.error} />}
+
+      {/* The connected account, on the page people actually open.
+          It lived only on /accounts, which meant the one fact that decides
+          whether anything can trade - is a broker signed in, and is it a demo
+          - was a click away from the dashboard that claims to show the state
+          of the system. */}
+      {accounts.ok && accounts.data.live_account.login && (
+        <Panel title={t("home.account")} subtitle={accounts.data.reason}>
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4 p-4">
+            <Stat
+              label={t("home.accountLogin")}
+              value={accounts.data.live_account.login}
+              hint={accounts.data.live_account.server ?? ""}
+            />
+            <Stat
+              label={t("home.accountKind")}
+              value={
+                accounts.data.live_account.is_demo
+                  ? t("home.demo")
+                  : t("home.realMoney")
+              }
+              /* Demo is the safe state here, so it reads as good. Anything
+                 that is not exactly trade_mode 0 is real money and warns. */
+              tone={accounts.data.live_account.is_demo ? "good" : "critical"}
+              hint={`trade_mode ${accounts.data.live_account.trade_mode ?? "?"}`}
+            />
+            <Stat
+              label={t("home.accountBalance")}
+              value={
+                accounts.data.live_account.balance != null
+                  ? `${accounts.data.live_account.balance.toLocaleString()} ${
+                      accounts.data.live_account.currency ?? ""
+                    }`
+                  : "—"
+              }
+            />
+            <Stat
+              label={t("home.accountEquity")}
+              value={
+                accounts.data.live_account.equity != null
+                  ? `${accounts.data.live_account.equity.toLocaleString()} ${
+                      accounts.data.live_account.currency ?? ""
+                    }`
+                  : "—"
+              }
+              /* Equity below balance is open positions carrying the entry
+                 spread, not a result. Neutral on purpose. */
+              hint={t("home.equityHint")}
+            />
+          </div>
+        </Panel>
+      )}
 
       {nowUtc && faces.length > 0 && (
         <Panel title={t("home.clocks")} subtitle={t("home.clocksHint")}>
