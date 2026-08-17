@@ -14,6 +14,8 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 
+import pytest
+
 from app.services import realised
 
 CLOSED = {
@@ -186,3 +188,36 @@ class TestTheBrokerClock:
         assert found["trades"] == 1
         assert found["deals"][0]["closed_at"] is None
         assert found["net"] == 10.0
+
+
+class TestWhoseDealsTheseAre:
+    """The deal file carries no account identity - it is just deals. The
+    directory is the only thing that says whose money they describe, so a P&L
+    read from the wrong one is a number that looks entirely real."""
+
+    def test_an_explicit_directory_still_wins(self, tmp_path):
+        """Callers that already resolved a path keep working unchanged."""
+        publish(tmp_path)
+
+        assert realised.read(directory=tmp_path)["net"] == 3.0
+
+    def test_no_arguments_reads_the_single_terminal(self):
+        """This deployment has run one terminal since the beginning, and
+        adding the map must not require configuring what already works."""
+        found = realised.read()
+
+        assert "available" in found
+
+    def test_an_unknown_account_raises_rather_than_reading_another(self):
+        from app.core.errors import ProviderError
+
+        with pytest.raises(ProviderError, match="Refusing to fall back"):
+            realised.read(account_key="ghost")
+
+    def test_an_explicit_directory_is_not_second_guessed(self, tmp_path):
+        """Passing both must not resolve the key and quietly disagree."""
+        publish(tmp_path)
+
+        found = realised.read(directory=tmp_path, account_key="ghost")
+
+        assert found["net"] == 3.0

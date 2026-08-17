@@ -29,7 +29,7 @@ from collections import defaultdict
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from app.providers.metatrader import DEFAULT_BRIDGE_DIR
+from app.providers.metatrader import DEFAULT_BRIDGE_DIR, bridge_dir_for
 
 DEALS_FILE = "molido_deals.json"
 
@@ -50,11 +50,25 @@ def _parse(stamp: str, *, offset_hours: float) -> datetime | None:
 def read(
     *,
     directory: pathlib.Path | str | None = None,
+    account_key: str | None = None,
     offset_hours: float = 0.0,
     since: datetime | None = None,
 ) -> dict[str, Any]:
-    """Every closed deal the bridge has published, and what they add up to."""
-    root = pathlib.Path(directory or DEFAULT_BRIDGE_DIR)
+    """Every closed deal the bridge has published, and what they add up to.
+
+    One of `directory` or `account_key` says whose deals these are. An explicit
+    directory wins, because a caller that already knows the path has usually
+    been handed it by something that resolved it once already.
+
+    With neither, this reads the single terminal this deployment has always
+    run. Once more than one account is configured `bridge_dir_for` raises
+    rather than picking, because a P&L attributed to the wrong account is a
+    number that looks entirely real.
+    """
+    if directory is not None:
+        root = pathlib.Path(directory)
+    else:
+        root = pathlib.Path(bridge_dir_for(account_key))
     path = root / DEALS_FILE
 
     if not path.exists():
