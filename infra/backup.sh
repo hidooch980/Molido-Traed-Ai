@@ -48,13 +48,25 @@ compose exec -T postgres createdb -U "$POSTGRES_USER" "$VERIFY_DB"
 
 # The restore is expected to emit warnings about the timescaledb extension
 # owner; those are noise. A non-zero exit is not.
-# --disable-triggers as well as --no-owner. Foreign keys that survive the
-# exclusions above still fire during a data load and reject rows whose
-# partner has not arrived yet, which is a restore failing on ordering rather
-# than on content.
-if compose exec -T postgres pg_restore -U "$POSTGRES_USER" -d "$VERIFY_DB" \
-  --no-owner --disable-triggers \
-  "/backups/${FILE}" 2>/dev/null; then
+# TimescaleDB has to be told a restore is happening. Its event triggers and
+# background machinery reject a bulk load otherwise, and two earlier attempts
+# proved it: excluding the extension's schemas restored an empty database,
+# and --disable-triggers alone still failed.
+#
+# post_restore runs whether or not the restore worked. Leaving a database in
+# restoring mode breaks every later attempt against it, and the failure then
+# looks like a bad dump rather than a dirty target.
+compose exec -T postgres psql -U "$POSTGRES_USER" -d "$VERIFY_DB" -tAc \
+  "SELECT timescaledb_pre_restore()" >/dev/null 2>&1 || true
+
+RESTORE_OK=1
+compose exec -T postgres pg_restore -U "$POSTGRES_USER" -d "$VERIFY_DB" \
+  --no-owner --disable-triggers "/backups/${FILE}" 2>/dev/null || RESTORE_OK=0
+
+compose exec -T postgres psql -U "$POSTGRES_USER" -d "$VERIFY_DB" -tAc \
+  "SELECT timescaledb_post_restore()" >/dev/null 2>&1 || true
+
+if [ "$RESTORE_OK" -eq 1 ]; then
   ROWS=$(compose exec -T postgres psql -U "$POSTGRES_USER" -d "$VERIFY_DB" -tAc \
     "SELECT count(*) FROM ohlcv" || echo "0")
   echo "[$(date -u +%FT%TZ)] restore OK — ohlcv rows: ${ROWS}"
