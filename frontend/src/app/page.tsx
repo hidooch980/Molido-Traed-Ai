@@ -1,14 +1,20 @@
 import Link from "next/link";
 
+import { AnalogClock } from "@/components/AnalogClock";
 import { Empty, Offline, Panel, Sparkline, Stat, StatusBadge } from "@/components/ui";
 import { api } from "@/lib/api";
-import { getT } from "@/lib/locale";
+import { getLocale, getT } from "@/lib/locale";
 
 export const dynamic = "force-dynamic";
 
 export default async function HomePage() {
   const { t } = await getT();
-  const [health, instruments] = await Promise.all([api.health(), api.instruments()]);
+  const locale = await getLocale();
+  const [health, instruments, clocks] = await Promise.all([
+    api.health(),
+    api.instruments(),
+    api.timezones(),
+  ]);
 
   const primary = instruments.ok ? instruments.data[0] : undefined;
   const [quality, session, bars] = await Promise.all([
@@ -23,6 +29,24 @@ export default async function HomePage() {
     (f) => f.severity === "error" || f.severity === "critical",
   ).length;
   const closes = bars?.ok ? bars.data.bars.map((b) => b.close) : [];
+
+  // The faces the reader actually plans around. Tehran first for the Persian
+  // reader because that is the clock they live on; London and New York because
+  // those two opens move the FX book more than anything else on the page.
+  //
+  // Every face is anchored to `clocks.data.utc` - the server's instant - rather
+  // than to the browser's. A machine four minutes fast would otherwise show a
+  // different time next to session states computed on the server, and nothing
+  // would say which of the two was wrong.
+  const nowUtc = clocks.ok ? clocks.data.utc : null;
+  const faceNames = locale === "fa"
+    ? ["Tehran", "London", "New York"]
+    : ["London", "New York", "Tokyo"];
+  const faces = clocks.ok
+    ? faceNames
+        .map((name) => clocks.data.places.find((place) => place.name === name))
+        .filter((place): place is NonNullable<typeof place> => Boolean(place))
+    : [];
 
   const liveItems: [string, string][] = [
     [t("live.ingestion"), t("live.ingestionBody")],
@@ -61,6 +85,21 @@ export default async function HomePage() {
       </header>
 
       {!health.ok && <Offline error={health.error} />}
+
+      {nowUtc && faces.length > 0 && (
+        <Panel title={t("home.clocks")} subtitle={t("home.clocksHint")}>
+          <div className="flex flex-wrap items-start justify-center gap-6 p-4">
+            {faces.map((place) => (
+              <AnalogClock
+                key={place.name}
+                utcIso={nowUtc}
+                offsetHours={place.offset}
+                label={t(`clock.${place.name.replace(" ", "")}`)}
+              />
+            ))}
+          </div>
+        </Panel>
+      )}
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <Stat
