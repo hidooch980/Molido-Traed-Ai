@@ -52,15 +52,19 @@ class FakeBridge:
     def symbols(self):
         if self._symbols is not None:
             return {"symbols": self._symbols}
+        # Several symbols, not one: a test about the count cap needs four
+        # distinct instruments to be sizable, and a single-symbol bridge made
+        # three of them skip for want of a contract specification instead.
         return {
             "symbols": [
                 {
-                    "name": "EURUSD",
+                    "name": name,
                     "tick_value": 1.0,
                     "tick_size": 0.00001,
                     "volume_min": 0.01,
                     "volume_step": 0.01,
                 }
+                for name in ("EURUSD", "GBPUSD", "USDCAD", "AUDUSD", "GBPNZD")
             ]
         }
 
@@ -305,8 +309,10 @@ class TestTheCap:
     def test_the_cap_counts_the_terminal_not_this_system(self, session, live):
         """They disagree exactly when it matters, and the broker's answer is
         the one the account is judged on."""
-        for i in range(4):
-            decide(session, symbol="EURUSD", at=NOW - timedelta(minutes=i + 1))
+        # Distinct symbols: the per-symbol cap would otherwise stop this at
+        # one, and the thing under test here is the count cap.
+        for i, symbol in enumerate(["EURUSD", "GBPUSD", "USDCAD", "AUDUSD"]):
+            decide(session, symbol=symbol, at=NOW - timedelta(minutes=i + 1))
 
         report = autotrade.run_cycle(
             session,
@@ -334,7 +340,8 @@ class TestSizing:
         assert report["skipped"]
 
     def test_an_unpublished_symbol_is_named(self, session, live):
-        decide(session, symbol="GBPNZD")
+        # A symbol the bridge deliberately does not publish.
+        decide(session, symbol="USDTRY")
 
         report = autotrade.run_cycle(
             session, now=NOW, broker=FakeBroker(), bridge=FakeBridge()
@@ -465,3 +472,60 @@ class TestOnlyANeverSentRequestIsRetried:
         )
 
         assert report["orders"] == 0
+
+
+class TestOneSymbolIsOnePosition:
+    """Eight live positions held only five symbols, with 0.48 lots of USDCAD
+    across two of them. Each was a separate decision, so nothing was traded
+    twice - but the account carried double the exposure the sizing computed for
+    one decision, and a cap on count cannot see that."""
+
+    def test_a_symbol_already_held_is_not_opened_again(self, session, live):
+        decide(session)
+
+        report = autotrade.run_cycle(
+            session,
+            now=NOW,
+            broker=FakeBroker(),
+            bridge=FakeBridgeHolding("EURUSD"),
+        )
+
+        assert report["orders"] == 0
+        assert any("already holds a position" in n for n in report["skipped"])
+
+    def test_two_decisions_on_one_symbol_in_one_cycle_send_once(
+        self, session, live
+    ):
+        decide(session, at=NOW - timedelta(minutes=5))
+        decide(session, at=NOW - timedelta(minutes=4))
+        broker = FakeBroker()
+
+        report = autotrade.run_cycle(
+            session, now=NOW, broker=broker, bridge=FakeBridge()
+        )
+
+        assert report["orders"] == 1
+        assert len(broker.submitted) == 1
+
+    def test_a_different_symbol_is_unaffected(self, session, live):
+        decide(session, symbol="EURUSD")
+
+        report = autotrade.run_cycle(
+            session,
+            now=NOW,
+            broker=FakeBroker(),
+            bridge=FakeBridgeHolding("GBPUSD"),
+        )
+
+        assert report["orders"] == 1
+
+
+class FakeBridgeHolding(FakeBridge):
+    """A terminal already carrying a position in one symbol."""
+
+    def __init__(self, symbol: str):
+        super().__init__(positions=0)
+        self.symbol = symbol
+
+    def positions(self):
+        return {"positions": [{"ticket": 1, "symbol": self.symbol}]}

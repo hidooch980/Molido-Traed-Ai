@@ -29,11 +29,16 @@ by trading twice.
 distance, using the broker's own tick value. No tick value means no order -
 never a default size, because a default is a position whose risk nobody chose.
 
-**Capped.** The cross-section opens both tails at every instant, so a day of
-hourly bars proposes far more positions than a 10k account should hold at once.
-The cap is on open positions at the broker, counted from the terminal rather
-than from this system's own record, because those disagree exactly when it
-matters.
+**Capped twice: on count, and per symbol.** The cross-section opens both tails
+at every instant, so a day of hourly bars proposes far more positions than a
+10k account should hold. Both caps read the terminal rather than this system's
+own record, because those disagree exactly when it matters.
+
+The per-symbol cap was added after watching it happen: eight live positions
+held only five symbols, with 0.48 lots of USDCAD across two of them. Each was a
+separate decision, so nothing was traded twice - but the account carried double
+the exposure the sizing computed for one, and a count-based limit cannot see
+that.
 """
 
 from __future__ import annotations
@@ -154,7 +159,14 @@ def run_cycle(
     # Counted from the terminal, never from this system's own record. They
     # disagree exactly when it matters, and the broker's answer is the one the
     # account is judged on.
-    open_now = len(feed.positions().get("positions") or [])
+    live_positions = feed.positions().get("positions") or []
+    open_now = len(live_positions)
+    # Which symbols the account already carries. The cap on count alone let
+    # the cross-section re-pick the same instrument on consecutive instants:
+    # eight live positions held only five symbols, with 0.48 lots of USDCAD
+    # across two of them - twice the risk the sizing computed for one
+    # decision, and invisible in any count-based limit.
+    held = {str(p.get("symbol")) for p in live_positions if p.get("symbol")}
     room = MAX_OPEN_POSITIONS - open_now
     if room <= 0:
         return _report(
@@ -175,6 +187,13 @@ def run_cycle(
     skipped: list[str] = []
 
     for entry in candidates:
+        if entry.symbol in held:
+            skipped.append(
+                f"{entry.symbol}: the account already holds a position in it, "
+                "and a second one doubles an exposure that was sized for one"
+            )
+            continue
+
         if len(sent) >= room:
             skipped.append(
                 f"{entry.symbol}: the open-position cap was reached in this cycle"
@@ -288,6 +307,9 @@ def run_cycle(
                 ),
             }
         )
+        # Held from this cycle on, so two decisions on one symbol inside a
+        # single pass cannot both go through either.
+        held.add(entry.symbol)
 
     return _report(
         mode=mode,
