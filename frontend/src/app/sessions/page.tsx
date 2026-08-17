@@ -1,6 +1,6 @@
 import { Empty, Offline, Panel, Pill, StatusBadge } from "@/components/ui";
 import { api } from "@/lib/api";
-import { getT } from "@/lib/locale";
+import { getLocale, getT } from "@/lib/locale";
 
 export const dynamic = "force-dynamic";
 
@@ -9,6 +9,7 @@ const SESSION_ORDER = ["sydney", "tokyo", "london", "new_york"] as const;
 export default async function SessionsPage() {
   const instruments = await api.instruments();
   const { t } = await getT();
+  const locale = await getLocale();
   if (!instruments.ok) return <Offline error={instruments.error} />;
 
   const primary = instruments.data[0];
@@ -19,13 +20,39 @@ export default async function SessionsPage() {
 
   const active = status?.ok ? new Set(status.data.active_sessions) : new Set<string>();
 
+  // Every session boundary on this page is UTC, which is the right reference
+  // and the wrong one to plan a day around when you live in Tehran. Shown only
+  // for the Persian reader: an extra clock is help for whoever needs it and
+  // clutter for whoever does not.
+  //
+  // Read from the server's own clock rather than the browser's, so it says the
+  // same thing on every device and cannot disagree with the session states
+  // beside it - those come from the API, and a locally-guessed clock next to
+  // server-computed sessions is how two numbers on one page contradict.
+  const clocks = locale === "fa" ? await api.timezones() : null;
+  const nowUtc = clocks?.ok ? clocks.data.utc : null;
+  const tehran = clocks?.ok
+    ? clocks.data.places.find((place) => place.name === "Tehran")
+    : null;
+
   return (
     <div className="space-y-4">
-      <header>
-        <h1 className="text-xl font-bold">{t("sessions.title")}</h1>
-        <p className="text-xs ink-3 mt-0.5">
-{t("sessions.subtitle")}
-        </p>
+      <header className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-xl font-bold">{t("sessions.title")}</h1>
+          <p className="text-xs ink-3 mt-0.5">{t("sessions.subtitle")}</p>
+        </div>
+        {tehran && (
+          <div className="text-end shrink-0">
+            <div className="text-xs ink-3">{t("sessions.tehranNow")}</div>
+            <div className="text-lg font-bold tabular-nums leading-tight">
+              {tehran.local.slice(11)}
+            </div>
+            <div className="text-xs ink-3 tabular-nums">
+              {t("sessions.utcNow")} {nowUtc?.slice(11, 16)}
+            </div>
+          </div>
+        )}
       </header>
 
       <Panel
