@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import csv
 import json
+import os
 import pathlib
 import re
 from dataclasses import dataclass
@@ -46,6 +47,82 @@ from app.providers.base import RawBar
 DEFAULT_BRIDGE_DIR = pathlib.Path(
     "/home/ubuntu/.mt5/drive_c/users/ubuntu/AppData/Roaming/MetaQuotes/Terminal/Common/Files"
 )
+
+#: One bridge directory per account, read from the environment as
+#: `MOLIDO_MT5_BRIDGE_DIRS="main=/path/one,challenge=/path/two"`. Unset means
+#: the single terminal this deployment has always had, under the key `main`.
+#:
+#: Each terminal owns exactly one account and writes to its own directory. The
+#: files carry no account identity - `molido_positions.json` is just positions -
+#: so the directory *is* the account, and picking the wrong one sends an order
+#: to the wrong money.
+BRIDGE_DIRS_VAR = "MOLIDO_MT5_BRIDGE_DIRS"
+
+DEFAULT_ACCOUNT_KEY = "main"
+
+
+def bridge_dirs(raw: str | None = None) -> dict[str, pathlib.Path]:
+    """Parse the account-to-directory map, or return the single default.
+
+    Malformed entries raise rather than being skipped. A silently dropped
+    account reads downstream as "that terminal is not publishing", which is a
+    real and different condition this codebase already reports honestly - and
+    it would be reported about an account that is running fine.
+    """
+    if raw is None:
+        raw = os.environ.get(BRIDGE_DIRS_VAR) or ""
+    raw = raw.strip()
+    if not raw:
+        return {DEFAULT_ACCOUNT_KEY: DEFAULT_BRIDGE_DIR}
+
+    found: dict[str, pathlib.Path] = {}
+    for chunk in raw.split(","):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        key, sep, where = chunk.partition("=")
+        key, where = key.strip(), where.strip()
+        if not sep or not key or not where:
+            raise ProviderError(
+                f"{BRIDGE_DIRS_VAR} entry {chunk!r} is not `key=/path`. "
+                "Refusing to guess which account it meant"
+            )
+        if key in found:
+            raise ProviderError(
+                f"{BRIDGE_DIRS_VAR} names {key!r} twice. One account cannot "
+                "have two terminals, and the later one would silently win"
+            )
+        found[key] = pathlib.Path(where)
+
+    if not found:
+        return {DEFAULT_ACCOUNT_KEY: DEFAULT_BRIDGE_DIR}
+    return found
+
+
+def bridge_dir_for(account_key: str | None = None, raw: str | None = None) -> pathlib.Path:
+    """The directory for one account. Raises on an account it does not know.
+
+    **Never falls back.** A default here would route one account's orders to
+    another account's terminal, and every file involved would look correct
+    while it happened. An exception stops a wrong trade; a fallback places one.
+    """
+    known = bridge_dirs(raw)
+    if account_key is None:
+        if len(known) == 1:
+            return next(iter(known.values()))
+        raise ProviderError(
+            f"{len(known)} accounts are configured, so an account key is "
+            "required. Guessing which terminal to use would guess whose money"
+        )
+    try:
+        return known[account_key]
+    except KeyError:
+        raise ProviderError(
+            f"no bridge directory is configured for account {account_key!r}. "
+            f"Known: {', '.join(sorted(known)) or '(none)'}. Refusing to fall "
+            "back to another account's terminal"
+        ) from None
+
 
 #: Where the terminal writes its own log. Mounted read-only, and read only to
 #: answer one question: when a login fails, MetaTrader already knows exactly
