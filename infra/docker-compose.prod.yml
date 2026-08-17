@@ -128,6 +128,13 @@ services:
       # this feed and must never be able to write into MetaTrader's own folder,
       # where a stray file would be picked up as terminal data.
       - ${MOLIDO_MT5_BRIDGE_HOST:-/home/ubuntu/.mt5/drive_c/users/ubuntu/AppData/Roaming/MetaQuotes/Terminal/Common/Files}:/home/ubuntu/.mt5/drive_c/users/ubuntu/AppData/Roaming/MetaQuotes/Terminal/Common/Files:ro
+      # The kill switch, on the host so it survives a redeploy. A halt that a
+      # rebuild clears is not a halt, and a rebuild is exactly when somebody is
+      # changing things and not thinking about the stop they set yesterday.
+      #
+      # Writable on the collector and read-only here, for the same reason as
+      # the bridge: one process decides, the rest report.
+      - ${MOLIDO_KILL_SWITCH_HOST:-/var/lib/molido}:/var/lib/molido:ro
       # MetaTrader's own log, read-only. One reason to mount it: when a login
       # fails the terminal writes exactly why - `(Invalid account)` needs a
       # different account, `(Invalid password)` needs a different password -
@@ -166,6 +173,13 @@ services:
       # The API keeps its read-only mount. Exactly one process can write an
       # order, and it is the one behind the autopilot's gates.
       - ${MOLIDO_MT5_BRIDGE_HOST:-/home/ubuntu/.mt5/drive_c/users/ubuntu/AppData/Roaming/MetaQuotes/Terminal/Common/Files}:/home/ubuntu/.mt5/drive_c/users/ubuntu/AppData/Roaming/MetaQuotes/Terminal/Common/Files
+      # The kill switch, on the host so it survives a redeploy. A halt that a
+      # rebuild clears is not a halt, and a rebuild is exactly when somebody is
+      # changing things and not thinking about the stop they set yesterday.
+      #
+      # Writable here alone - this is the process that halts itself when a
+      # limit is hit. Releasing it stays a human act on the host file.
+      - ${MOLIDO_KILL_SWITCH_HOST:-/var/lib/molido}:/var/lib/molido
     depends_on:
       postgres:
         condition: service_healthy
