@@ -345,3 +345,53 @@ class TestBothPriceSeriesAreMeasured:
         """An empty measurement is not a measurement of zero, and a gap
         computed from one arm is not a gap."""
         assert journal_log.summary(session)["edge_lost_to_real_prices"] is None
+
+
+class TestTheControlCarriesWhateverTheRuleIsGroupedBy:
+    """The control is the only benchmark the rule has. Any field the analysis
+    groups on has to be on both rows, or the grouped comparison comes back
+    empty and empty reads as 'no result' rather than as 'broken join'."""
+
+    def test_the_timeframe_reaches_the_control(self, session):
+        from app.services import journal_log
+
+        written = journal_log.record_with_control(
+            session,
+            symbol="EURUSD",
+            decision="long",
+            at=datetime(2026, 8, 17, 15, tzinfo=UTC),
+            price=1.1580,
+            stop_distance=0.0050,
+            before={"rule": "cross-sectional-stretch", "timeframe": "M5"},
+        )
+
+        assert written["control"] is not None
+        stored = {
+            row.arm: row.before
+            for row in session.query(JournalEntry).filter_by(symbol="EURUSD").all()
+        }
+        assert stored[ARM_RULE]["timeframe"] == "M5"
+        assert stored[ARM_CONTROL]["timeframe"] == "M5"
+
+    def test_an_entry_without_a_timeframe_does_not_invent_one(self, session):
+        """Older callers pass none. A fabricated default would put rows into a
+        bucket they were never decided in."""
+        from app.services import journal_log
+
+        written = journal_log.record_with_control(
+            session,
+            symbol="GBPUSD",
+            decision="short",
+            at=datetime(2026, 8, 17, 16, tzinfo=UTC),
+            price=1.3550,
+            stop_distance=0.0040,
+            before={"rule": "cross-sectional-stretch"},
+        )
+
+        assert written["control"] is not None
+        control = (
+            session.query(JournalEntry)
+            .filter_by(symbol="GBPUSD", arm=ARM_CONTROL)
+            .one()
+        )
+        assert "timeframe" not in control.before

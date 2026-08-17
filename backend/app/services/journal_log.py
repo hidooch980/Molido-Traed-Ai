@@ -180,7 +180,22 @@ def record_with_control(
         # rule's. The control is a decision on a price series too, and one
         # whose row says which series it came from beside a partner whose row
         # does not is a pair that cannot be checked afterwards.
-        before={**entry.as_dict(), "price_source": price_source},
+        #
+        # The timeframe rides along for the same reason and a sharper one. The
+        # control is the only benchmark the rule is measured against, so any
+        # grouping applied to one has to reach the other: group the rule by
+        # timeframe while its control carries none and every bucket compares
+        # against an empty set - which does not read as an error, it reads as
+        # a rule with no control, and the honest-looking answer is silence.
+        before={
+            **entry.as_dict(),
+            "price_source": price_source,
+            **(
+                {"timeframe": (before or {}).get("timeframe")}
+                if (before or {}).get("timeframe")
+                else {}
+            ),
+        },
     )
     return {"rule": rule.as_dict(), "control": control_row.as_dict()}
 
