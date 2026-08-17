@@ -24,6 +24,7 @@ it is a separate decision somebody has to make deliberately.
 
 from __future__ import annotations
 
+import pathlib
 from datetime import UTC, datetime
 from typing import Any
 
@@ -365,10 +366,23 @@ def read_realised(
     """
     from datetime import timedelta
 
+    from app.core.enums import Timeframe
+    from app.providers.metatrader import DEFAULT_BRIDGE_DIR
     from app.services import realised as realised_service
-    from app.workers import broker_offset
+    from app.workers import broker_bars
 
-    measured = broker_offset.measure(session)
+    # Measured from the *files* the bridge publishes, not from the stored
+    # series. Those two answer different questions and the difference is not
+    # cosmetic: stored broker bars have already had the offset applied, so
+    # aligning them against the public feed now correctly returns 0 - while
+    # the deal file still carries raw terminal stamps at +3.
+    #
+    # Using the stored-series figure here would have put every close three
+    # hours in the future. That is the identical bug that shifted the whole
+    # bar series, in a new file, and it read as a healthy zero.
+    measured = broker_bars._measure_offset(
+        session, pathlib.Path(DEFAULT_BRIDGE_DIR), Timeframe.H1
+    )
     since = datetime.now(UTC) - timedelta(days=days)
 
     payload = realised_service.read(
