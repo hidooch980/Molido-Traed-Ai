@@ -20,6 +20,16 @@ export default async function PositionsPage() {
 
   const { available, reason, positions, account, note } = view.data;
 
+  // Summed from the positions rather than read as `equity - balance`: those
+  // two agree only while nothing else moves equity, and a number that agrees
+  // by coincidence stops agreeing without warning.
+  const floating = positions.length
+    ? positions.reduce(
+        (total, row) => total + (typeof row.profit === "number" ? row.profit : 0),
+        0,
+      )
+    : null;
+
   return (
     <div className="space-y-4">
       <header>
@@ -47,6 +57,27 @@ export default async function PositionsPage() {
                   ? `${t("positions.balance")} ${account.balance.toLocaleString()}`
                   : undefined
               }
+            />
+            {/* Floating profit, which nothing showed before - the numbers were
+                in the payload and the reader had to subtract balance from
+                equity by hand. Summed from the positions rather than derived
+                from the two account figures, because the terminal is the thing
+                being asked and a subtraction is a second opinion. */}
+            <Stat
+              label={t("positions.floating")}
+              value={
+                floating != null
+                  ? `${floating > 0 ? "+" : ""}${floating.toFixed(2)}`
+                  : "—"
+              }
+              tone={
+                floating == null || floating === 0
+                  ? undefined
+                  : floating > 0
+                    ? "good"
+                    : "warning"
+              }
+              hint={t("positions.floatingHint")}
             />
           </div>
 
