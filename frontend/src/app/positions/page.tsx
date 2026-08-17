@@ -23,6 +23,25 @@ export default async function PositionsPage() {
   // Summed from the positions rather than read as `equity - balance`: those
   // two agree only while nothing else moves equity, and a number that agrees
   // by coincidence stops agreeing without warning.
+  // Grouped from the positions already on screen. No new endpoint and no
+  // change to anything the trading path touches - the symbol and the profit
+  // are both in the payload, and nothing was reading them together.
+  const bySymbol = positions.reduce<Record<string, { profit: number; count: number }>>(
+    (grouped, row) => {
+      const symbol = typeof row.symbol === "string" ? row.symbol : "?";
+      const profit = typeof row.profit === "number" ? row.profit : 0;
+      const seen = grouped[symbol] ?? { profit: 0, count: 0 };
+      grouped[symbol] = { profit: seen.profit + profit, count: seen.count + 1 };
+      return grouped;
+    },
+    {},
+  );
+  // Worst first: the losers are what a reader needs to find, and sorting by
+  // name buries them among instruments that are behaving.
+  const symbolRows = Object.entries(bySymbol).sort(
+    (a, b) => a[1].profit - b[1].profit,
+  );
+
   const floating = positions.length
     ? positions.reduce(
         (total, row) => total + (typeof row.profit === "number" ? row.profit : 0),
@@ -80,6 +99,47 @@ export default async function PositionsPage() {
               hint={t("positions.floatingHint")}
             />
           </div>
+
+          {symbolRows.length > 0 && (
+            <Panel
+              title={t("positions.bySymbol")}
+              subtitle={t("positions.bySymbolHint")}
+            >
+              <div className="scroll-x">
+                <table className="data">
+                  <thead>
+                    <tr>
+                      <th>{t("positions.symbol")}</th>
+                      <th>{t("positions.count")}</th>
+                      <th>{t("positions.floating")}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {symbolRows.map(([symbol, totals]) => (
+                      <tr key={symbol}>
+                        <td className="font-medium">{symbol}</td>
+                        <td className="num ink-3">{totals.count}</td>
+                        <td
+                          className="num"
+                          style={{
+                            color:
+                              totals.profit > 0
+                                ? "var(--good)"
+                                : totals.profit < 0
+                                  ? "var(--warning)"
+                                  : "var(--ink-2)",
+                          }}
+                        >
+                          {totals.profit > 0 ? "+" : ""}
+                          {totals.profit.toFixed(2)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </Panel>
+          )}
 
           <Panel title={t("positions.open")}>
             {positions.length === 0 ? (
