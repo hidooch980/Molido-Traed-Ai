@@ -365,3 +365,37 @@ class TestOneBadDecisionDoesNotEndTheCycle:
 
         assert report["orders"] == 1
         assert any("is not a stop" in note for note in report["skipped"])
+
+
+class TestTheAgeIsMeasuredFromTheClose:
+    """A journal entry is stamped with the bar's instant - 04:00 for the bar
+    labelled 04:00 - but that bar spans 04:00 to 05:00 and the rule decided on
+    its close. Charging the decision that hour left a usable window of about
+    fifteen minutes against a collector that runs every fifteen: the first live
+    cycle found four decisions and traded none, missing by nine minutes."""
+
+    def test_a_decision_from_the_previous_bar_is_still_traded(self, session, live):
+        decide(session, at=NOW - timedelta(minutes=95))
+
+        report = autotrade.run_cycle(
+            session, now=NOW, broker=FakeBroker(), bridge=FakeBridge()
+        )
+
+        assert report["orders"] == 1
+
+    def test_a_genuinely_old_decision_is_still_refused(self, session, live):
+        """The guard has to keep working. Widening it until nothing is stale
+        would be the other way to get this wrong."""
+        decide(session, at=NOW - timedelta(hours=4))
+
+        report = autotrade.run_cycle(
+            session, now=NOW, broker=FakeBroker(), bridge=FakeBridge()
+        )
+
+        assert report["orders"] == 0
+
+    def test_the_bar_length_is_stated_not_folded_into_the_limit(self):
+        """Two different facts: how long a bar is, and how stale is too stale.
+        Folding them into one number hides which was chosen."""
+        assert autotrade.DECISION_BAR_MINUTES == 60
+        assert autotrade.MAX_DECISION_AGE_MINUTES == 90

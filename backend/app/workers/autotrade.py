@@ -68,10 +68,21 @@ RISK_PERCENT = 0.25
 #: correlated FX positions is one market move away from its own drawdown limit.
 MAX_OPEN_POSITIONS = 8
 
-#: Only decisions this fresh are traded. An hour-old decision is a decision
-#: about a price that has moved; filling it now is trading the delay rather
-#: than the rule.
+#: Only decisions this fresh are traded. An hour-old decision is about a price
+#: that has moved, and filling it now trades the delay rather than the rule.
+#:
+#: Measured from when the decision was *taken*, which is not what its timestamp
+#: says. A journal entry is stamped with the bar's instant - 04:00 for the bar
+#: labelled 04:00 - but that bar spans 04:00 to 05:00 and the rule decided on
+#: its close. So the decision is an hour younger than its own timestamp, and
+#: charging it that hour left a usable window of about fifteen minutes against
+#: a collector that runs every fifteen. The first live cycle found four
+#: decisions and traded none of them, missing by nine minutes.
 MAX_DECISION_AGE_MINUTES = 90
+
+#: How long the bar the decision was taken on lasts. The decision happened at
+#: its close, not at its label.
+DECISION_BAR_MINUTES = 60
 
 
 def _lots(
@@ -296,7 +307,11 @@ def _pending(session: Session, moment: datetime) -> list[JournalEntry]:
     """
     from datetime import timedelta
 
-    cutoff = moment - timedelta(minutes=MAX_DECISION_AGE_MINUTES)
+    # The bar's length is added back, because a decision stamped 04:00 was
+    # taken on that bar's close at 05:00.
+    cutoff = moment - timedelta(
+        minutes=MAX_DECISION_AGE_MINUTES + DECISION_BAR_MINUTES
+    )
     rows = session.scalars(
         select(JournalEntry)
         .where(
