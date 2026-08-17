@@ -63,6 +63,11 @@ class FakeBridge:
                     "tick_size": 0.00001,
                     "volume_min": 0.01,
                     "volume_step": 0.01,
+                    # The real terminal publishes these on every symbol and the
+                    # spread guard prices the trade from them. A fixture without
+                    # them is not a cheaper market, it is an unpriceable one.
+                    "bid": 1.15890,
+                    "ask": 1.15904,
                 }
                 for name in ("EURUSD", "GBPUSD", "USDCAD", "AUDUSD", "GBPNZD")
             ]
@@ -640,3 +645,63 @@ class FakeBridgeHolding(FakeBridge):
 
     def positions(self):
         return {"positions": [{"ticket": 1, "symbol": self.symbol}]}
+
+
+class TestTheSpreadIsPricedFromTheBrokerAtSendTime:
+    """R is the stop distance, so what crossing the spread costs in R is the
+    broker's own bid-ask measured against it. Read per send: the spread widens
+    on news and at rollover, which is when a rule most wants to trade and when
+    a stale number is most wrong."""
+
+    SPEC = {"bid": 1.15890, "ask": 1.15904}  # live EURUSD, 1.4 pips
+
+    def test_a_tighter_stop_costs_more_of_its_own_r(self):
+        wide, _ = autotrade._spread_cost_r(self.SPEC, 0.00225)   # H1 geometry
+        tight, _ = autotrade._spread_cost_r(self.SPEC, 0.00027)  # M1 geometry
+
+        assert round(wide, 3) == 0.062
+        assert round(tight, 3) == 0.519
+        assert tight > wide
+
+    def test_the_ceiling_lets_the_hourly_geometry_through(self):
+        cost, _ = autotrade._spread_cost_r(self.SPEC, 0.00225)
+
+        assert cost <= autotrade.MAX_SPREAD_COST_R
+
+    def test_the_ceiling_stops_a_one_minute_scalp(self):
+        """Half the risk paid before the trade has an opinion."""
+        cost, _ = autotrade._spread_cost_r(self.SPEC, 0.00027)
+
+        assert cost > autotrade.MAX_SPREAD_COST_R
+
+    def test_a_missing_quote_is_not_a_free_one(self):
+        """Treating an unpublished spread as zero would let the one trade
+        nobody could price through the one check meant to stop it."""
+        cost, why = autotrade._spread_cost_r({"bid": 1.1}, 0.002)
+
+        assert cost is None
+        assert "not a free one" in why
+
+    def test_an_unreadable_quote_refuses_rather_than_guessing(self):
+        cost, why = autotrade._spread_cost_r({"bid": "x", "ask": "y"}, 0.002)
+
+        assert cost is None
+        assert "could not be read" in why
+
+    def test_a_crossed_book_is_refused(self):
+        """Bid above ask is not a market to trade into."""
+        cost, why = autotrade._spread_cost_r({"bid": 1.2, "ask": 1.1}, 0.002)
+
+        assert cost is None
+        assert "not a market" in why
+
+    def test_a_zero_stop_leaves_r_undefined(self):
+        cost, why = autotrade._spread_cost_r(self.SPEC, 0.0)
+
+        assert cost is None
+        assert "R is undefined" in why
+
+    def test_a_zero_spread_is_free_rather_than_an_error(self):
+        cost, _ = autotrade._spread_cost_r({"bid": 1.1, "ask": 1.1}, 0.002)
+
+        assert cost == 0.0

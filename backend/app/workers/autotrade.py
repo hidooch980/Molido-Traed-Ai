@@ -89,6 +89,19 @@ MAX_OPEN_POSITIONS = 8
 #: decisions and traded none of them, missing by nine minutes.
 MAX_DECISION_AGE_MINUTES = 90
 
+#: The most of one R a decision may spend just crossing the spread. Read from
+#: the broker's own bid and ask at send time, not from a table: the number that
+#: matters is the one being charged now, and it widens on news and at rollover
+#: exactly when a rule is most likely to want to trade.
+#:
+#: R is the stop distance, so this ratio is what makes a shorter timeframe
+#: dearer without anybody re-estimating anything. Measured on this deployment
+#: against a 1.4 pip EURUSD spread and a 2.5x ATR stop, the round trip costs
+#: about 0.06 R at H1, 0.13 at M15, 0.23 at M5 and 0.52 at M1 - so this ceiling
+#: is what stands between the rule and a one-minute scalp that pays half its
+#: risk before the trade has an opinion.
+MAX_SPREAD_COST_R = 0.25
+
 #: How long the bar the decision was taken on lasts. The decision happened at
 #: its close, not at its label.
 #:
@@ -98,6 +111,41 @@ MAX_DECISION_AGE_MINUTES = 90
 #: not: an M5 decision charged an hour would stay tradeable for two and a half
 #: hours, which is the delay being traded rather than the rule.
 DECISION_BAR_MINUTES = 60
+
+
+def _spread_cost_r(
+    specification: dict[str, Any], stop_distance: float
+) -> tuple[float | None, str]:
+    """What crossing this symbol's spread costs, in R, right now.
+
+    R is defined by the stop distance, so the cost in R is the broker's live
+    bid-ask measured against that distance. Read per send rather than cached:
+    the spread widens on news and at rollover, which is exactly when a rule is
+    most likely to want to trade and exactly when a stale number is most wrong.
+
+    Returns None rather than a default when the terminal has not published a
+    usable quote. A missing spread is not a free one, and treating it as zero
+    would let the one trade nobody could price through the one check meant to
+    stop it.
+    """
+    bid, ask = specification.get("bid"), specification.get("ask")
+    if bid is None or ask is None:
+        return None, (
+            "the terminal publishes no bid/ask for it, so the spread cannot be "
+            "priced - and an unpriced spread is not a free one"
+        )
+    try:
+        spread = float(ask) - float(bid)
+    except (TypeError, ValueError):
+        return None, "the published bid/ask could not be read as numbers"
+    if spread < 0:
+        return None, (
+            f"the published bid {bid} is above the ask {ask}, which is not a "
+            "market this should trade into"
+        )
+    if stop_distance <= 0:
+        return None, "the decision recorded a zero stop, so R is undefined"
+    return spread / stop_distance, ""
 
 
 def _bar_minutes(entry: JournalEntry) -> int:
@@ -262,6 +310,19 @@ def run_cycle(
         )
         if lots is None:
             skipped.append(f"{entry.symbol}: {problem}")
+            continue
+
+        stop_distance = abs(float(price) - float(stop))
+        spread_cost, spread_reason = _spread_cost_r(specification, stop_distance)
+        if spread_cost is None:
+            skipped.append(f"{entry.symbol}: {spread_reason}")
+            continue
+        if spread_cost > MAX_SPREAD_COST_R:
+            skipped.append(
+                f"{entry.symbol}: crossing the spread costs {spread_cost:.3f} R, "
+                f"over the {MAX_SPREAD_COST_R} R ceiling. The trade starts that "
+                "far behind before it has an opinion"
+            )
             continue
 
         try:
