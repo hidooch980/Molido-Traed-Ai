@@ -157,6 +157,95 @@ def _authorise(state: Any, *, feed_age_bars: float | None) -> Any:
     )
 
 
+def _challenge_gate(
+    session: Session,
+    published: dict[str, Any],
+    open_positions: int,
+    proposed_risk_r: float,
+    *,
+    today: date,
+) -> tuple[bool, str, float | None]:
+    """Check the account against its prop rulebook, if it has one.
+
+    `brain/challenge.py` holds ten sourced rulebooks and had no caller in the
+    live path. It answers the question the risk brain does not: *if this trade
+    loses everything it risks, is the challenge still alive?* A daily drawdown
+    rule counts money once, at the moment the equity prints, and there is no
+    appeal - so it has to be asked before the order, not after.
+
+    An account with no rulebook registered is not a challenge account, and
+    this passes rather than inventing limits it was never given. Returns
+    `(allowed, reason, max_additional_risk_r)`.
+
+    More than one active registration refuses instead of picking. The registry
+    carries no broker login to match on, so with two accounts there is no
+    honest way to know which rulebook governs the money about to be risked -
+    and applying the wrong one is applying limits from another account.
+    """
+    from app.brain import challenge as challenge_brain
+    from app.brain import rulebooks
+    from app.services import challenge_accounts
+
+    try:
+        registered = [
+            a
+            for a in challenge_accounts.listing(
+                session, tenant_id=challenge_accounts.default_tenant(session)
+            )
+            if getattr(a, "is_active", True)
+        ]
+    except Exception as problem:  # noqa: BLE001 - reported, never fatal
+        return False, f"the challenge registry could not be read: {type(problem).__name__}", None
+
+    if not registered:
+        return True, "", None
+    if len(registered) > 1:
+        return (
+            False,
+            f"{len(registered)} challenge accounts are registered and none names a "
+            "broker login, so which rulebook governs this money cannot be known",
+            None,
+        )
+
+    account = registered[0]
+    book = rulebooks.get(str(getattr(account, "rulebook_key", "") or ""))
+    if book is None:
+        return (
+            False,
+            f"the registered rulebook {getattr(account, 'rulebook_key', '?')!r} is not "
+            "one this build knows, so its limits cannot be applied",
+            None,
+        )
+
+    equity = float(published.get("equity") or 0.0)
+    state = challenge_brain.ChallengeState(
+        starting_balance=float(getattr(account, "starting_balance", 0.0) or 0.0),
+        current_equity=equity,
+        peak_equity=max(equity, float(getattr(account, "starting_balance", 0.0) or 0.0)),
+        daily_starting_equity=equity,
+        days_traded=0,
+        open_positions=open_positions,
+        current_date=today,
+        current_balance=float(published.get("balance") or 0.0),
+    )
+    verdict = challenge_brain.check(book.rules, state, proposed_risk_r)
+    if not verdict.allowed:
+        if verdict.breaches:
+            return False, "challenge rules: " + "; ".join(verdict.breaches), None
+        # Blocked without a breach means the rulebook was never fully entered.
+        # The engine refuses to approve against a limit nobody told it, which
+        # is the right answer and a useless message unless it says so - the
+        # fix is confirming the rulebook, not finding a trade that passes.
+        unverified = "; ".join(getattr(verdict, "unverified", []) or [])
+        return (
+            False,
+            "the registered rulebook is incomplete, so no trade can be checked "
+            f"against it: {unverified or 'unspecified'}",
+            None,
+        )
+    return True, "", verdict.max_additional_risk_r
+
+
 def _account_state(
     session: Session, published: dict[str, Any], open_positions: int
 ) -> tuple[Any, str]:
@@ -391,6 +480,24 @@ def run_cycle(
             mode=mode,
             refused="risk brain: " + "; ".join(verdict.hard_breaches or verdict.reasons),
         )
+
+    # The prop rulebook, if this account has one. It answers what the risk
+    # brain does not: whether the challenge survives this trade losing. An
+    # account with none registered passes - inventing limits it was never
+    # given would be a rule nobody agreed to.
+    passes, why, headroom_r = _challenge_gate(
+        session,
+        published,
+        open_now,
+        verdict.permitted_risk_r,
+        today=moment.date(),
+    )
+    if not passes:
+        return _report(mode=mode, refused=why)
+    if headroom_r is not None and headroom_r < verdict.permitted_risk_r:
+        # The tighter of the two governs. Two limits consulted and the looser
+        # obeyed is one limit consulted.
+        verdict.permitted_risk_r = headroom_r
 
     cap = _max_open_positions()
     room = cap - open_now

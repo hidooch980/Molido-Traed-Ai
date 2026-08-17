@@ -945,3 +945,97 @@ class TestTheAccountStateRefusesToBeGuessed:
 
     def test_a_flat_payload_still_works(self):
         assert autotrade._feed_age_bars({"age_seconds": 60.0}, NOW) == 1.0 / 60
+
+
+class TestThePropRulebookGovernsWhenThereIsOne:
+    """`brain/challenge.py` holds ten sourced rulebooks and had no caller in
+    the live path. It answers what the risk brain does not: if this trade
+    loses everything it risks, is the challenge still alive?"""
+
+    @staticmethod
+    def account(**over):
+        from types import SimpleNamespace
+
+        base = dict(
+            is_active=True,
+            rulebook_key="ftmo-challenge-2step-phase1",
+            starting_balance=10_000.0,
+            label="test",
+        )
+        base.update(over)
+        return SimpleNamespace(**base)
+
+    def registry(self, monkeypatch, rows):
+        from app.services import challenge_accounts
+
+        monkeypatch.setattr(challenge_accounts, "listing", lambda *a, **k: rows)
+        monkeypatch.setattr(challenge_accounts, "default_tenant", lambda *a, **k: None)
+
+    def gate(self, session, **over):
+        from datetime import date
+
+        return autotrade._challenge_gate(
+            session,
+            {"equity": 10_000.0, "balance": 10_000.0},
+            over.pop("open_positions", 1),
+            over.pop("risk", 0.002),
+            today=date(2026, 8, 18),
+        )
+
+    def test_no_registered_account_passes_rather_than_inventing_limits(
+        self, session, monkeypatch
+    ):
+        """An account with no rulebook is not a challenge account."""
+        self.registry(monkeypatch, [])
+
+        allowed, why, headroom = self.gate(session)
+
+        assert allowed is True
+        assert why == ""
+        assert headroom is None
+
+    def test_two_registrations_refuse_rather_than_pick(self, session, monkeypatch):
+        """The registry carries no broker login, so with two accounts there is
+        no honest way to know which rulebook governs this money."""
+        self.registry(monkeypatch, [self.account(), self.account(label="second")])
+
+        allowed, why, _ = self.gate(session)
+
+        assert allowed is False
+        assert "cannot be known" in why
+
+    def test_an_unknown_rulebook_refuses(self, session, monkeypatch):
+        self.registry(monkeypatch, [self.account(rulebook_key="not-a-real-book")])
+
+        allowed, why, _ = self.gate(session)
+
+        assert allowed is False
+        assert "not one this build knows" in why
+
+    def test_an_incomplete_rulebook_says_what_is_missing(self, session, monkeypatch):
+        """Blocked with no breach means the engine was never told a limit. The
+        fix is confirming the rulebook, not finding a trade that passes."""
+        self.registry(monkeypatch, [self.account()])
+
+        allowed, why, _ = self.gate(session)
+
+        assert allowed is False
+        assert "rulebook is incomplete" in why
+        assert "leverage" in why or "position cap" in why
+
+    def test_an_unreadable_registry_refuses_rather_than_passing(
+        self, session, monkeypatch
+    ):
+        """A registry that cannot be read is not an empty one."""
+        from app.services import challenge_accounts
+
+        def broken(*a, **k):
+            raise RuntimeError("db gone")
+
+        monkeypatch.setattr(challenge_accounts, "listing", broken)
+        monkeypatch.setattr(challenge_accounts, "default_tenant", lambda *a, **k: None)
+
+        allowed, why, _ = self.gate(session)
+
+        assert allowed is False
+        assert "could not be read" in why
