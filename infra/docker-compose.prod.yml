@@ -186,6 +186,13 @@ services:
         # Server-side rendering calls the API over the compose network; the
         # browser never talks to it directly, so this stays internal.
         NEXT_PUBLIC_API_URL: http://api:8000
+    environment:
+      # Read at runtime, not baked into the build, and without the
+      # NEXT_PUBLIC_ prefix - anything carrying that prefix is inlined into the
+      # browser bundle, and a credential shipped to every visitor is not one.
+      # Every page is a server component, so this header never leaves the
+      # compose network.
+      MOLIDO_INTERNAL_API_KEY: ${MOLIDO_INTERNAL_API_KEY:-}
     restart: unless-stopped
     depends_on:
       - api

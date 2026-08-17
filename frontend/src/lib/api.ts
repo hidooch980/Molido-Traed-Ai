@@ -71,11 +71,27 @@ export interface Health {
   dependencies: DependencyHealth[];
 }
 
+/**
+ * The key this container uses to call the API, server-side only.
+ *
+ * Deliberately not NEXT_PUBLIC_: anything with that prefix is inlined into the
+ * browser bundle, and a credential shipped to every visitor is not a
+ * credential. Every page here is a server component with `force-dynamic`, so
+ * the fetch happens in this container and the header never reaches a browser.
+ *
+ * Absent means no header, which is correct while the API allows anonymous
+ * reads. The moment MOLIDO_REQUIRE_AUTH is turned on without this being set,
+ * every page returns an error - which is why the two have to move together.
+ */
+const INTERNAL_KEY = process.env.MOLIDO_INTERNAL_API_KEY ?? "";
+
 async function request<T>(path: string): Promise<ApiResult<T>> {
   try {
     const response = await fetch(`${BASE_URL}${path}`, {
       cache: "no-store",
-      headers: { accept: "application/json" },
+      headers: INTERNAL_KEY
+        ? { accept: "application/json", "X-API-Key": INTERNAL_KEY }
+        : { accept: "application/json" },
     });
     if (!response.ok) {
       const body = await response.json().catch(() => ({}));
