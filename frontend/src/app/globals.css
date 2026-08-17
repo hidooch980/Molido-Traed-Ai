@@ -336,3 +336,15 @@ textarea:focus {
   border: 3px solid transparent;
   background-clip: content-box;
 }
+
+
+/* Installed on a phone the page paints edge to edge under the notch and the
+   home indicator - that is what `viewport-fit: cover` in the layout asks for.
+   These insets are what keep content from sitting underneath them. They are
+   zero in a browser and on desktop, so this costs nothing anywhere else. */
+body {
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+}
