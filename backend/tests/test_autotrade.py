@@ -399,3 +399,69 @@ class TestTheAgeIsMeasuredFromTheClose:
         Folding them into one number hides which was chosen."""
         assert autotrade.DECISION_BAR_MINUTES == 60
         assert autotrade.MAX_DECISION_AGE_MINUTES == 90
+
+
+class TestOnlyANeverSentRequestIsRetried:
+    """Four orders were lost on the first live cycle to a read-only mount. The
+    decisions were still sitting there, which is what a decision-first design
+    is for - but retrying the wrong kind of rejection turns one refusal into
+    two positions."""
+
+    def test_a_request_that_was_never_written_is_retried(self, session, live):
+        decide(
+            session,
+            during={
+                "order": {
+                    "state": str(OrderState.REJECTED),
+                    "reason": (
+                        "the request could not be written: [Errno 30] "
+                        "Read-only file system"
+                    ),
+                }
+            },
+        )
+
+        report = autotrade.run_cycle(
+            session, now=NOW, broker=FakeBroker(), bridge=FakeBridge()
+        )
+
+        assert report["orders"] == 1
+
+    def test_a_broker_rejection_is_not_retried(self, session, live):
+        """The broker saw it and said no. Resending is how a transient refusal
+        becomes two positions."""
+        decide(
+            session,
+            during={
+                "order": {
+                    "state": str(OrderState.REJECTED),
+                    "reason": "retcode 10019 not enough money",
+                }
+            },
+        )
+
+        report = autotrade.run_cycle(
+            session, now=NOW, broker=FakeBroker(), bridge=FakeBridge()
+        )
+
+        assert report["orders"] == 0
+
+    def test_an_unknown_is_never_retried(self, session, live):
+        """UNKNOWN means the order may be live. It is the one state where
+        retrying is most tempting and most dangerous."""
+        decide(session, during={"order": {"state": str(OrderState.UNKNOWN)}})
+
+        report = autotrade.run_cycle(
+            session, now=NOW, broker=FakeBroker(), bridge=FakeBridge()
+        )
+
+        assert report["orders"] == 0
+
+    def test_a_fill_is_never_retried(self, session, live):
+        decide(session, during={"order": {"state": str(OrderState.FILLED)}})
+
+        report = autotrade.run_cycle(
+            session, now=NOW, broker=FakeBroker(), bridge=FakeBridge()
+        )
+
+        assert report["orders"] == 0

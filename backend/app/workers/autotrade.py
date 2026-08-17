@@ -323,7 +323,37 @@ def _pending(session: Session, moment: datetime) -> list[JournalEntry]:
         .order_by(JournalEntry.opened_at)
     ).all()
 
-    return [row for row in rows if not (row.during or {}).get("order")]
+    return [row for row in rows if _needs_an_order(row)]
+
+
+#: The one rejection reason that proves nothing reached the broker.
+#:
+#: Written by the adapter when the request file itself could not be created,
+#: which is the case where retrying is provably safe: no file means the expert
+#: never saw it and no position exists. Matching on the reason is narrow on
+#: purpose - any broader rule risks resending an order that was placed.
+NEVER_SENT = "the request could not be written"
+
+
+def _needs_an_order(entry: JournalEntry) -> bool:
+    """Whether this decision still has an order owing.
+
+    A decision that already carries one is left alone, including a rejected
+    one: a rejection from the broker means it saw the request and said no, and
+    resending it is how one refusal becomes two positions when the refusal was
+    transient.
+
+    The single exception is a request that was never written at all. Four
+    orders were lost that way on the first live cycle, to a read-only mount,
+    and re-deriving them from the decisions that are still sitting there is
+    exactly what a decision-first design is for.
+    """
+    order = (entry.during or {}).get("order")
+    if not order:
+        return True
+    if order.get("state") != str(OrderState.REJECTED):
+        return False
+    return NEVER_SENT in str(order.get("reason") or "")
 
 
 def _report(
