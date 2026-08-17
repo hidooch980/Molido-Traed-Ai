@@ -222,11 +222,37 @@ class TestGuardian:
 
 class TestAccounts:
     def test_an_empty_book_explains_itself(self, client):
-        """An empty list on its own reads as a system with nothing wrong."""
+        """An empty list on its own reads as a system with nothing wrong.
+
+        The old wording said registering an account "requires a broker adapter,
+        and the only adapter here is a simulator". That was true when written
+        and stopped being true the day a MetaTrader adapter existed and a
+        connected account filled an order - at which point it was a false
+        statement the site made about itself.
+
+        So the reason now distinguishes "nothing is connected" from "nothing
+        can be", and this test holds that distinction rather than the sentence.
+        """
         payload = client.get("/api/v1/execution/accounts").json()
 
         assert payload["accounts"] == []
-        assert "simulator" in payload["reason"]
+        assert "not that this deployment cannot hold one" in payload["reason"]
+
+    def test_the_live_account_is_reported_even_when_absent(self, client):
+        """Read from the terminal rather than from a list somebody has to
+        remember to update - which is how the old sentence went stale."""
+        payload = client.get("/api/v1/execution/accounts").json()
+
+        assert "live_account" in payload
+        assert payload["live_account"]["login"] is None
+
+    def test_an_unknown_trade_mode_is_not_reported_as_a_demo(self, client):
+        """Everywhere else in this system an absent trade_mode is treated as
+        real money. Reporting it as a demo here would be the one place that
+        disagrees."""
+        payload = client.get("/api/v1/execution/accounts").json()
+
+        assert payload["live_account"]["is_demo"] is False
 
     def test_the_global_switch_defaults_engaged(self, client):
         payload = client.get("/api/v1/execution/accounts").json()

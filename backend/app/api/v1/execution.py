@@ -227,16 +227,60 @@ def read_guardian(
 def read_accounts(_: Principal = READ) -> dict[str, Any]:
     """Which accounts exist, and the switch above all of them.
 
-    Empty here, because no account has been registered on this deployment. The
-    response says so rather than returning an empty list, which on its own
-    reads as a system with nothing wrong.
+    This used to return an empty list with the sentence "registering one
+    requires a broker adapter, and the only adapter here is a simulator". That
+    was true when it was written and stopped being true the day a MetaTrader
+    adapter existed and a connected account filled an order - at which point it
+    became a false statement the site made about itself, which is the exact
+    failure this project has already been caught by once.
+
+    So the account is read from the terminal rather than from a list somebody
+    has to remember to update. If the bridge reports a login, it appears here.
+    If it does not, the response says nothing is connected rather than implying
+    nothing can be.
     """
+    from app.execution.metatrader_broker import MetaTraderBroker
+    from app.providers.metatrader import MetaTraderBridge
+
     book = routing_module.AccountBook()
+    published = MetaTraderBridge().account()
+    login = str(published.get("login") or "") if published.get("available") else ""
+
+    if login:
+        # The same policy every other route here uses, not a second one
+        # built beside it - two policies that agree today do not stay agreeing.
+        policy = _policy()
+        book.add(
+            routing_module.Account(
+                account_id=login,
+                broker=MetaTraderBroker(),
+                policy=policy,
+                label=str(published.get("server") or "broker"),
+            )
+        )
+
     payload = book.as_dict()
     payload["reason"] = (
-        "no trading account is registered on this deployment; registering one "
-        "requires a broker adapter, and the only adapter here is a simulator"
+        f"account {login} is connected through the MetaTrader bridge"
+        if login
+        else (
+            "no account is connected. The bridge publishes no login, which "
+            "means the terminal is down or not signed in - not that this "
+            "deployment cannot hold one"
+        )
     )
+    # Read from the terminal, never inferred from the server name. An absent
+    # field is treated as real money everywhere else in this system and is
+    # reported as unknown here rather than as a demo.
+    payload["live_account"] = {
+        "login": login or None,
+        "server": published.get("server"),
+        "trade_mode": published.get("trade_mode"),
+        "is_demo": published.get("trade_mode") == 0,
+        "balance": published.get("balance"),
+        "equity": published.get("equity"),
+        "currency": published.get("currency"),
+    }
     payload["global_kill_switch_defaults_engaged"] = True
     payload["note"] = (
         "exposure is tracked per account and never as a single total: 4 R on a "
