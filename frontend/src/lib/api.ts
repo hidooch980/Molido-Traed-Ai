@@ -797,7 +797,33 @@ export interface TimezoneView {
   note: string;
 }
 
+export interface EquityPoint {
+  at: string;
+  equity: number;
+  balance: number;
+  /** equity - balance: open positions carrying their entry spread. */
+  floating: number;
+}
+
+export interface EquityView {
+  available: boolean;
+  account?: string;
+  points: EquityPoint[];
+  summary?: {
+    samples: number;
+    first_at: string | null;
+    last_at: string | null;
+    peak_equity: number | null;
+    peak_day_open_balance: number | null;
+    note: string;
+  };
+  reason?: string | null;
+  note?: string;
+}
+
 export const api = {
+  equity: (limit = 500) =>
+    request<EquityView>(`/api/v1/execution/equity?limit=${limit}`),
   calendar: () => request<CalendarView>("/api/v1/instruments/tools/calendar"),
   timezones: () => request<TimezoneView>("/api/v1/instruments/tools/timezones"),
   journal: () => request<JournalView>("/api/v1/learning/journal"),

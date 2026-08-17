@@ -10,11 +10,12 @@ export const dynamic = "force-dynamic";
 export default async function HomePage() {
   const { t } = await getT();
   const locale = await getLocale();
-  const [health, instruments, clocks, accounts] = await Promise.all([
+  const [health, instruments, clocks, accounts, equity] = await Promise.all([
     api.health(),
     api.instruments(),
     api.timezones(),
     api.accounts(),
+    api.equity(200),
   ]);
 
   const primary = instruments.ok ? instruments.data[0] : undefined;
@@ -136,6 +137,38 @@ export default async function HomePage() {
               hint={t("home.equityHint")}
             />
           </div>
+
+          {/* The curve these samples describe. One has been written every
+              fifteen minutes since the collector started and nothing had ever
+              read them back - the data existed, so the feature looked
+              present. */}
+          {equity.ok && equity.data.points.length > 1 && (
+            <div className="px-4 pb-4 space-y-1">
+              <Sparkline
+                values={equity.data.points.map((point) => point.equity)}
+                width={640}
+                height={56}
+              />
+              <div className="flex flex-wrap gap-x-4 text-[0.6875rem] ink-3">
+                <span>
+                  {equity.data.summary?.samples ?? 0} {t("home.samples")}
+                </span>
+                <span className="num">
+                  {equity.data.points[0].at.slice(5, 16).replace("T", " ")}
+                  {" → "}
+                  {equity.data.points[equity.data.points.length - 1].at
+                    .slice(5, 16)
+                    .replace("T", " ")}
+                </span>
+                {equity.data.summary?.peak_equity != null && (
+                  <span>
+                    {t("home.peak")}{" "}
+                    {equity.data.summary.peak_equity.toLocaleString()}
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
         </Panel>
       )}
 
