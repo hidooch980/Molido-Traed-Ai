@@ -531,6 +531,81 @@ def _account_state(
     )
 
 
+#: Sources whose decisions may be sent, and how their levels are read.
+#:
+#: The terminal's own series is sent as recorded: its prices are the prices the
+#: order will meet. Any other series has to be re-anchored, because a level
+#: from a different feed is a different number for the same moment - the public
+#: feed and the broker sit about four pips apart on EURUSD here.
+#:
+#: The daily series is the only other one admitted, and only because its
+#: geometry is wide enough to survive the gap: a 2.5x ATR stop on D1 is around
+#: eighty-five pips, so four pips of feed difference is under five percent of
+#: it. The same reasoning fails at H1, where the stop is twenty-odd pips and
+#: the gap is a fifth of it - which is why H1 stays broker-only.
+REANCHORED_SOURCES = frozenset({"dukascopy"})
+
+
+def _levels_from_broker(
+    geometry: dict[str, Any], specification: dict[str, Any], side: str
+) -> tuple[float, float, float | None] | None:
+    """Re-anchor a decision's shape onto the broker's own price.
+
+    The *distances* are what the analysis produced - they are volatility, and
+    volatility transfers between feeds. The *price* has to come from the venue
+    the order will actually meet, or the stop sits at a level that meant
+    something on another chart.
+
+    Distances are taken from the recorded levels rather than recomputed from
+    the multiples, so a decision keeps whatever geometry it was actually
+    written with. Re-deriving them from today's constants would silently
+    re-shape an old decision if a multiple ever moved.
+
+    Returns None when the terminal has published no usable quote, because a
+    re-anchoring without a price is a guess about where the market is.
+    """
+    try:
+        recorded_entry = float(geometry["entry"])
+        recorded_stop = float(geometry["stop"])
+    except (KeyError, TypeError, ValueError):
+        return None
+
+    stop_distance = abs(recorded_entry - recorded_stop)
+    if stop_distance <= 0:
+        return None
+
+    target_distance: float | None = None
+    raw_target = geometry.get("target")
+    if raw_target is not None:
+        try:
+            target_distance = abs(float(raw_target) - recorded_entry)
+        except (TypeError, ValueError):
+            target_distance = None
+        if target_distance is not None and target_distance <= 0:
+            target_distance = None
+
+    bid, ask = specification.get("bid"), specification.get("ask")
+    try:
+        # Entered at the side of the book the order will actually cross, not
+        # at a mid nobody trades: a buy lifts the ask.
+        entry = float(ask) if side == "long" else float(bid)
+    except (TypeError, ValueError):
+        return None
+    if entry <= 0:
+        return None
+
+    if side == "long":
+        stop = entry - stop_distance
+        target = entry + target_distance if target_distance is not None else None
+    else:
+        stop = entry + stop_distance
+        target = entry - target_distance if target_distance is not None else None
+
+    if stop <= 0 or (target is not None and target <= 0):
+        return None
+    return entry, stop, target
+
+
 def _spread_cost_r(
     specification: dict[str, Any], stop_distance: float
 ) -> tuple[float | None, str]:

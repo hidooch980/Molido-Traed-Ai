@@ -21,11 +21,11 @@ from fastapi import APIRouter, Cookie, Depends, Response
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from app.api.deps import Principal, require
+from app.api.deps import AuthenticationError, Principal, require
 from app.api.guard import public_mutation
 from app.core.enums import Permission
 from app.db.session import get_db
-from app.services import sessions_auth
+from app.services import sessions_auth, signin_throttle
 
 router = APIRouter(prefix="/session", tags=["session"])
 
@@ -55,9 +55,27 @@ def sign_in(
     disabled account, and it is raised by the service rather than shaped here -
     telling them apart tells an attacker which half of the guess was right.
     """
-    result = sessions_auth.sign_in(
-        session, email=credentials.email, password=credentials.password
-    )
+    # Checked before the password is hashed, not after the verdict. PBKDF2 at
+    # 480,000 iterations is expensive by design, and that cost is paid by this
+    # server on its four cores before it can answer - so a throttled attempt
+    # that still paid for the hash would be the attack rather than the defence.
+    refusal = signin_throttle.throttle.check(credentials.email)
+    if refusal:
+        raise AuthenticationError(refusal)
+
+    try:
+        result = sessions_auth.sign_in(
+            session, email=credentials.email, password=credentials.password
+        )
+    except AuthenticationError:
+        # Counted here rather than inside the service, so the service keeps
+        # being a pure question about one credential and this route stays the
+        # only place that knows about volume.
+        signin_throttle.throttle.failed(credentials.email)
+        raise
+
+    # Someone who mistyped twice and then got it right is not an attacker.
+    signin_throttle.throttle.succeeded(credentials.email)
 
     response.set_cookie(
         key=sessions_auth.COOKIE_NAME,
