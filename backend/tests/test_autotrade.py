@@ -1594,3 +1594,58 @@ class TestTheFleetLetsEachAccountFailAlone:
 
         assert len({p[0] for p in pairs}) == 2
         assert all(bridge == broker for bridge, broker in pairs)
+
+
+class TestOneAccountCanBePausedWithoutTheOthers:
+    """The global kill switch is a fleet-wide halt. This is the other thing:
+    one account paused while the rest carry on, because a terminal is being
+    reconnected or a challenge has been failed."""
+
+    def dirs(self, monkeypatch, mapping):
+        from app.providers import metatrader
+
+        monkeypatch.setattr(metatrader, "bridge_dirs", lambda *a, **k: mapping)
+
+    def test_a_paused_account_is_skipped_and_the_others_run(
+        self, session, monkeypatch, live, tmp_path
+    ):
+        import pathlib
+
+        from app.execution import account_switch
+        from app.workers import autotrade as mod
+
+        self.dirs(monkeypatch, {"one": pathlib.Path("/a"), "two": pathlib.Path("/b")})
+        account_switch.write("one", active=False, by="aziz", directory=tmp_path)
+        original = account_switch.state
+        monkeypatch.setattr(
+            account_switch, "state", lambda key: original(key, tmp_path)
+        )
+        monkeypatch.setattr(mod, "run_cycle", lambda *a, **k: {"orders": 2})
+
+        report = mod.run_all_accounts(session)
+
+        assert report["by_account"]["one"]["orders"] == 0
+        assert "paused" in report["by_account"]["one"]["skipped"]
+        assert report["by_account"]["two"]["orders"] == 2
+
+    def test_a_pause_is_told_apart_from_a_failure(
+        self, session, monkeypatch, live, tmp_path
+    ):
+        """Both are zero orders, and only one of them wants somebody to go
+        and look at it."""
+        import pathlib
+
+        from app.execution import account_switch
+        from app.workers import autotrade as mod
+
+        self.dirs(monkeypatch, {"one": pathlib.Path("/a")})
+        account_switch.write("one", active=False, by="aziz", directory=tmp_path)
+        original = account_switch.state
+        monkeypatch.setattr(
+            account_switch, "state", lambda key: original(key, tmp_path)
+        )
+
+        report = mod.run_all_accounts(session)
+
+        assert "skipped" in report["by_account"]["one"]
+        assert "refused" not in report["by_account"]["one"]

@@ -761,9 +761,18 @@ def run_all_accounts(
     moment = (now or datetime.now(UTC)).astimezone(UTC)
     accounts = bridge_dirs()
 
+    from app.execution import account_switch
+
     reports: dict[str, Any] = {}
     sent = 0
     for key, directory in sorted(accounts.items()):
+        allowed, why = account_switch.state(key)
+        if not allowed:
+            # Skipped, not failed. A paused account and a broken one look the
+            # same in a count of zero orders, and only one of them wants
+            # somebody to go and look at it.
+            reports[key] = {"orders": 0, "skipped": why}
+            continue
         try:
             report = run_cycle(
                 session,
