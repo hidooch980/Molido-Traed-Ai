@@ -1435,12 +1435,18 @@ class TestADecisionFromAnotherFeedIsReanchored:
 
         assert SOURCE_BROKER not in autotrade.REANCHORED_SOURCES
 
-    def test_nothing_is_admitted_while_no_series_is_current(self):
-        """The daily series this was written for ends on 2025-12-31. Measured
-        against the live book its gap was 146.7 pips - not feed difference but
-        a stale market - and re-anchoring would have carried last December's
-        signal onto today's quote."""
-        assert autotrade.REANCHORED_SOURCES == frozenset()
+    def test_only_a_current_series_is_admitted(self):
+        """This set was empty while the only daily series ended on 2025-12-31.
+        Measured against the live book its gap was 146.7 pips - not feed
+        difference but a stale market - and re-anchoring would have carried
+        last December's signal onto today's quote. The fold replaced it with
+        one that reaches yesterday, and that is what is admitted."""
+        assert autotrade.REANCHORED_SOURCES == frozenset({"aggregated"})
+
+    def test_the_stale_provider_is_not_admitted(self):
+        """It still holds the twenty-one years the edge was measured on, and
+        it still cannot say anything about today."""
+        assert "dukascopy" not in autotrade.REANCHORED_SOURCES
 
     def test_the_mechanism_is_kept_for_a_series_that_is_current(self):
         """The admission was wrong; the arithmetic was not. Sending the one
@@ -1451,3 +1457,41 @@ class TestADecisionFromAnotherFeedIsReanchored:
         )
 
         assert (entry - stop) * 10000 == pytest.approx(84.9, abs=0.1)
+
+
+class TestTheDailySeriesIsAdmittedAndReAnchored:
+    """The daily series is the one timeframe with a measured edge, and it
+    comes from a fold of hourly bars rather than from the terminal. Its levels
+    are another feed's numbers, so they are re-anchored onto the broker's own
+    price before anything is sent."""
+
+    def test_the_folded_series_is_admitted(self):
+        assert "aggregated" in autotrade.REANCHORED_SOURCES
+
+    def test_the_terminal_series_is_not_in_the_re_anchored_set(self):
+        """Its prices are the prices the order will meet, so re-anchoring them
+        onto themselves would be a rounding error looking for a purpose."""
+        from app.models.journal import SOURCE_BROKER
+
+        assert SOURCE_BROKER not in autotrade.REANCHORED_SOURCES
+
+    def test_the_hourly_public_series_is_still_refused(self):
+        """A 2.5x ATR stop on H1 is around twenty pips and the feeds sit four
+        apart - a fifth of the stop. The same reasoning that admits D1
+        excludes this."""
+        assert "yfinance" not in autotrade.REANCHORED_SOURCES
+
+    def test_a_daily_decision_keeps_its_distances(self):
+        """Volatility transfers between feeds; absolute price does not."""
+        geometry = {"entry": 1.37241, "stop": 1.36392, "target": 1.38090}
+        quote = {"bid": 1.37500, "ask": 1.37514}
+
+        entry, stop, target = autotrade._levels_from_broker(geometry, quote, "long")
+
+        assert entry == quote["ask"]
+        assert round(entry - stop, 5) == round(
+            geometry["entry"] - geometry["stop"], 5
+        )
+        assert round(target - entry, 5) == round(
+            geometry["target"] - geometry["entry"], 5
+        )

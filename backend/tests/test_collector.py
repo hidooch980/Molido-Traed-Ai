@@ -640,8 +640,30 @@ class TestTheDailySeriesComesFromWhatCanReachToday:
 
         assert "aggregate_daily_job" in names
 
-    def test_it_folds_after_every_venue_has_closed_the_day(self):
-        """A day that is finished in London is still trading in New York."""
+    def test_it_folds_just_after_the_day_it_folds_has_ended(self):
+        """The window matters more than the tidiness. At 23:10 the current day
+        is unfinished, so the fold reaches only the previous one - whose bar
+        closed twenty-three hours earlier, outside the freshness window, so
+        the decision could never be traded. A UTC day ending at 00:00 UTC is
+        complete by definition: the session spanning midnight belongs to the
+        next one."""
         from app.workers.collector import AGGREGATE_HOUR
 
-        assert AGGREGATE_HOUR >= 22
+        assert AGGREGATE_HOUR == 0
+
+    def test_the_fold_lands_inside_the_freshness_window(self):
+        """The property the hour exists for, checked rather than asserted."""
+        from datetime import UTC, datetime, timedelta
+
+        from app.workers.autotrade import MAX_DECISION_AGE_MINUTES
+        from app.workers.collector import AGGREGATE_HOUR
+
+        run = datetime(2026, 8, 18, AGGREGATE_HOUR, 10, tzinfo=UTC)
+        # daily_from_hourly drops any day at or after `today`, so the newest
+        # bar it can build opened the day before the run.
+        newest = run.date() - timedelta(days=1)
+        closed = datetime(newest.year, newest.month, newest.day, tzinfo=UTC) + timedelta(
+            days=1
+        )
+
+        assert run <= closed + timedelta(minutes=MAX_DECISION_AGE_MINUTES)

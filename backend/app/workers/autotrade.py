@@ -562,7 +562,7 @@ def _account_state(
 #:
 #: Put "dukascopy" back when the series reaches the current day, and not
 #: before. Everything below is written and tested against it.
-REANCHORED_SOURCES: frozenset[str] = frozenset()
+REANCHORED_SOURCES: frozenset[str] = frozenset({"aggregated"})
 
 
 def _levels_from_broker(

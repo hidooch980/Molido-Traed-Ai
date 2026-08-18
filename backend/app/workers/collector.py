@@ -850,10 +850,17 @@ async def refresh_dna_job(ctx: dict) -> dict[str, Any]:
 DEEP_HISTORY_HOURS = {1, 5, 9, 13, 17, 21}
 
 
-#: When the daily fold runs. After the FX week's last hour has closed
-#: everywhere, so the day being folded is finished in every venue rather than
-#: only in UTC.
-AGGREGATE_HOUR = 23
+#: When the daily fold runs: ten minutes after the UTC day it folds has ended.
+#:
+#: This was 23:10 on the reasoning that a day finished in London is still
+#: trading in New York. That reasoning was wrong for a UTC-bounded bar - the
+#: session spanning midnight belongs to the *next* UTC day, so a day ending at
+#: 00:00 UTC is complete by definition - and the timing it produced was worse
+#: than untidy. At 23:10 the current day is unfinished, so the fold reaches
+#: only the previous one, whose bar closed twenty-three hours earlier. A
+#: decision recorded on it arrives already outside its freshness window and
+#: can never be traded. Measured: 23.2 hours stale at 23:10, 0.2 at 00:10.
+AGGREGATE_HOUR = 0
 
 
 async def aggregate_daily_job(ctx: dict) -> dict[str, Any]:
@@ -934,9 +941,8 @@ def _cron_jobs() -> list:
         # collection cycle that has to land on the minute.
         cron(build_episodes_job, hour={EPISODE_BUILD_HOUR}, minute={0}, max_tries=1),
         cron(compare_providers_job, hour={CONFLICT_CHECK_HOUR}, minute={0}, max_tries=1),
-        # After the last venue has closed the day this folds, not merely after
-        # UTC midnight - a day that is finished in London is still trading in
-        # New York.
+        # Ten minutes after the day it folds has ended, so the decision it
+        # produces is inside its freshness window rather than a day past it.
         cron(aggregate_daily_job, hour={AGGREGATE_HOUR}, minute={10}, max_tries=1),
         # Retries itself until the history is in, then reports that it skipped.
         # max_tries=1 on purpose: a failed attempt means the feed is closed,
