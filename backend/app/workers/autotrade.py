@@ -171,6 +171,33 @@ NEWS_WINDOW_MINUTES = 5
 NEWS_IMPACTS = frozenset({"High"})
 
 
+#: Hours before the Friday close at which the weekend counts as "ahead". The
+#: FX week ends around 21:00 UTC on Friday, so this starts warning in the
+#: early afternoon - enough of a session left to close what is open rather
+#: than discovering the rule at the last quote.
+WEEKEND_WARNING_HOUR_UTC = 16
+
+#: Friday, as `weekday()` counts.
+_FRIDAY = 4
+
+
+def _weekend_ahead(moment: datetime) -> bool:
+    """Whether this is the last session before the break.
+
+    Prop rulebooks that forbid weekend holding are asking about the gap: a
+    position carried over Sunday's open can pass its stop without ever being
+    offered the price. So the answer is about the *session*, not the clock -
+    Friday afternoon onwards, and the whole of Saturday and Sunday, which is
+    when a position can only have been carried in.
+    """
+    weekday = moment.weekday()
+    if weekday > _FRIDAY:
+        return True
+    if weekday == _FRIDAY and moment.hour >= WEEKEND_WARNING_HOUR_UTC:
+        return True
+    return False
+
+
 def _currencies_of(symbol: str) -> set[str]:
     """The two currencies a pair is exposed to.
 
@@ -233,6 +260,22 @@ def _news_gate(
                 "minutes, and both rulebooks restrict trading around it"
             )
     return True, ""
+
+
+def _any_high_impact_now(
+    moment: datetime, releases: list[dict[str, Any]] | None
+) -> bool | None:
+    """Whether any high-impact release is inside the window, for any currency.
+
+    None when the calendar could not be read. The challenge engine treats an
+    unknown restriction as a gate rather than a pass, which is the same
+    position the per-symbol check takes and for the same reason.
+    """
+    if releases is None:
+        return None
+    return any(not _news_gate(f"{r.get('currency') or 'XXX'}USD", moment, [r])[0]
+               for r in releases
+               if str(r.get("impact") or "") in NEWS_IMPACTS)
 
 
 def _this_week(moment: datetime) -> list[dict[str, Any]] | None:
@@ -339,6 +382,8 @@ def _challenge_gate(
     proposed_risk_r: float,
     *,
     today: date,
+    moment: datetime,
+    in_news_window: bool | None = None,
 ) -> tuple[bool, str, float | None]:
     """Check the account against its prop rulebook, if it has one.
 
@@ -402,6 +447,11 @@ def _challenge_gate(
         open_positions=open_positions,
         current_date=today,
         current_balance=float(published.get("balance") or 0.0),
+        # Both supplied rather than left None. The engine gates on an unknown
+        # restriction, which is right, and answering the question is better
+        # than being gated by it.
+        in_news_window=in_news_window,
+        weekend_ahead=_weekend_ahead(moment),
     )
     verdict = challenge_brain.check(book.rules, state, proposed_risk_r)
     if not verdict.allowed:
@@ -656,6 +706,10 @@ def run_cycle(
             refused="risk brain: " + "; ".join(verdict.hard_breaches or verdict.reasons),
         )
 
+    # Read once for the cycle. Both the account-wide question the rulebook
+    # asks and the per-symbol gate below draw on the same week.
+    releases = _this_week(moment)
+
     # The prop rulebook, if this account has one. It answers what the risk
     # brain does not: whether the challenge survives this trade losing. An
     # account with none registered passes - inventing limits it was never
@@ -666,6 +720,11 @@ def run_cycle(
         open_now,
         verdict.permitted_risk_r,
         today=moment.date(),
+        moment=moment,
+        # Computed once for the account rather than per symbol: the rulebook's
+        # question is whether trading is restricted right now, not whether one
+        # instrument happens to be exposed.
+        in_news_window=_any_high_impact_now(moment, releases),
     )
     if not passes:
         return _report(mode=mode, refused=why)
@@ -673,8 +732,6 @@ def run_cycle(
         # The tighter of the two governs. Two limits consulted and the looser
         # obeyed is one limit consulted.
         verdict.permitted_risk_r = headroom_r
-
-    releases = _this_week(moment)
 
     cap = _max_open_positions()
     room = cap - open_now

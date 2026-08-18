@@ -1015,6 +1015,8 @@ class TestThePropRulebookGovernsWhenThereIsOne:
             over.pop("open_positions", 1),
             over.pop("risk", 0.002),
             today=date(2026, 8, 18),
+            moment=NEWS_NOW,
+            in_news_window=over.pop("in_news_window", False),
         )
 
     def test_no_registered_account_passes_rather_than_inventing_limits(
@@ -1241,3 +1243,69 @@ class TestNewsClosesTheWindow:
         """Sitting exactly on a rule's edge lets a clock difference of seconds
         decide whether the challenge survives."""
         assert autotrade.NEWS_WINDOW_MINUTES >= 5
+
+
+class TestTheWeekendIsAheadBeforeItArrives:
+    """Rulebooks that forbid weekend holding are asking about the gap: a
+    position carried over Sunday's open can pass its stop without ever being
+    offered the price. The engine gated on this as unknown until now."""
+
+    @staticmethod
+    def at(day: int, hour: int):
+        return datetime(2026, 8, day, hour, tzinfo=UTC)
+
+    def test_midweek_is_not_the_weekend(self):
+        assert autotrade._weekend_ahead(self.at(17, 12)) is False  # Monday
+        assert autotrade._weekend_ahead(self.at(20, 23)) is False  # Thursday
+
+    def test_friday_morning_is_not_yet(self):
+        """Warning at the first quote on Friday would shut two thirds of a
+        normal session for a break that is nine hours off."""
+        assert autotrade._weekend_ahead(self.at(21, 9)) is False
+
+    def test_friday_afternoon_is(self):
+        assert autotrade._weekend_ahead(self.at(21, 16)) is True
+
+    def test_the_warning_leaves_time_to_close_what_is_open(self):
+        """The FX week ends around 21:00 UTC, and a rule discovered at the
+        last quote is a rule discovered too late."""
+        assert autotrade.WEEKEND_WARNING_HOUR_UTC <= 18
+
+    def test_the_whole_weekend_counts(self):
+        """Saturday and Sunday are when a position can only have been carried
+        in, which is the thing the rule is about."""
+        assert autotrade._weekend_ahead(self.at(22, 10)) is True  # Saturday
+        assert autotrade._weekend_ahead(self.at(23, 20)) is True  # Sunday
+
+
+class TestTheAccountWideNewsAnswer:
+    """Distinct from the per-symbol gate: the rulebook asks whether trading is
+    restricted right now, not whether one instrument is exposed."""
+
+    CPI = {
+        "impact": "High",
+        "currency": "USD",
+        "at": "2026-08-18T12:03:00+00:00",
+        "title": "CPI y/y",
+    }
+
+    def test_a_release_in_the_window_answers_yes(self):
+        assert autotrade._any_high_impact_now(NEWS_NOW, [self.CPI]) is True
+
+    def test_a_quiet_week_answers_no(self):
+        assert autotrade._any_high_impact_now(NEWS_NOW, []) is False
+
+    def test_a_distant_release_answers_no(self):
+        far = {**self.CPI, "at": "2026-08-18T18:00:00+00:00"}
+
+        assert autotrade._any_high_impact_now(NEWS_NOW, [far]) is False
+
+    def test_medium_impact_does_not_count(self):
+        assert autotrade._any_high_impact_now(
+            NEWS_NOW, [{**self.CPI, "impact": "Medium"}]
+        ) is False
+
+    def test_an_unreadable_feed_answers_unknown_rather_than_no(self):
+        """The engine gates on an unknown restriction, which is the same
+        position the per-symbol check takes and for the same reason."""
+        assert autotrade._any_high_impact_now(NEWS_NOW, None) is None
