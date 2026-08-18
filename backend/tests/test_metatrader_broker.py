@@ -263,3 +263,56 @@ class TestThePatienceBudget:
 
         assert report.state is OrderState.UNKNOWN
         assert len(slept) > 50
+
+
+class TestAFilledOrderReportsASize:
+    """The expert answers with ok, ticket, price and reason - and no volume.
+    A filled order reported as zero quantity is internally inconsistent and
+    reads downstream as "nothing was filled"."""
+
+    def test_a_fill_carries_the_requested_size(self, tmp_path):
+        broker = MetaTraderBroker(directory=tmp_path)
+        (tmp_path / f"{RESULT_PREFIX}abc.json").write_text(
+            json.dumps({"ok": True, "ticket": 123, "price": 1.16}), encoding="utf-8"
+        )
+
+        report = broker._read_result("abc", 0.07)
+
+        assert report.state is OrderState.FILLED
+        assert report.filled_quantity == 0.07
+
+    def test_a_rejection_carries_none_of_it(self):
+        """Nothing was filled, and that zero is a real one."""
+        import tempfile, pathlib as _p
+
+        with tempfile.TemporaryDirectory() as where:
+            root = _p.Path(where)
+            (root / f"{RESULT_PREFIX}abc.json").write_text(
+                json.dumps({"ok": False, "reason": "no money"}), encoding="utf-8"
+            )
+
+            report = MetaTraderBroker(directory=root)._read_result("abc", 0.07)
+
+        assert report.state is OrderState.REJECTED
+        assert report.filled_quantity == 0.0
+
+    def test_the_payload_admits_the_size_is_not_confirmed(self, tmp_path):
+        """Until the expert reports the volume it actually got, a partial fill
+        arrives as a full one. Naming that beats a confident number."""
+        (tmp_path / f"{RESULT_PREFIX}abc.json").write_text(
+            json.dumps({"ok": True, "ticket": 1, "price": 1.16}), encoding="utf-8"
+        )
+
+        report = MetaTraderBroker(directory=tmp_path)._read_result("abc", 0.07)
+
+        assert report.raw["volume_is_requested_not_confirmed"] is True
+        assert "partial fill" in report.raw["note"]
+
+    def test_an_unknown_size_does_not_invent_one(self, tmp_path):
+        (tmp_path / f"{RESULT_PREFIX}abc.json").write_text(
+            json.dumps({"ok": True, "ticket": 1, "price": 1.16}), encoding="utf-8"
+        )
+
+        report = MetaTraderBroker(directory=tmp_path)._read_result("abc")
+
+        assert report.filled_quantity == 0.0

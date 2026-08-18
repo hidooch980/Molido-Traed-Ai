@@ -117,7 +117,7 @@ class MetaTraderBroker:
                 reason=f"the request could not be written: {problem}",
             )
 
-        return self._await_result(client_order_id)
+        return self._await_result(client_order_id, requested_lots=lots)
 
     def status(self, client_order_id: str) -> ExecutionReport:
         """What the expert said about this order, if it has said anything."""
@@ -182,10 +182,12 @@ class MetaTraderBroker:
                 reports.append(found)
         return reports
 
-    def _await_result(self, client_order_id: str) -> ExecutionReport:
+    def _await_result(
+        self, client_order_id: str, *, requested_lots: float | None = None
+    ) -> ExecutionReport:
         deadline = self.clock() + self.timeout
         while self.clock() < deadline:
-            found = self._read_result(client_order_id)
+            found = self._read_result(client_order_id, requested_lots)
             if found is not None:
                 return found
             self.sleeper(POLL_SECONDS)
@@ -203,7 +205,9 @@ class MetaTraderBroker:
             ),
         )
 
-    def _read_result(self, client_order_id: str) -> ExecutionReport | None:
+    def _read_result(
+        self, client_order_id: str, requested_lots: float | None = None
+    ) -> ExecutionReport | None:
         path = self.directory / f"{RESULT_PREFIX}{client_order_id}.json"
         if not path.exists():
             return None
@@ -214,14 +218,35 @@ class MetaTraderBroker:
             return None
 
         filled = bool(body.get("ok"))
+
+        # The expert answers with ok, ticket, price and reason - and no volume.
+        # A filled order reported as zero quantity is internally inconsistent
+        # and reads downstream as "nothing was filled", so the requested size
+        # is carried through as the best number available.
+        #
+        # It is the *requested* size, not a confirmed executed one, and the
+        # payload says so. Until the expert reports the volume it actually got,
+        # a partial fill is invisible here: it would arrive as ok=true and be
+        # recorded at full size. That is a real gap and naming it beats a
+        # confident zero.
+        quantity = float(requested_lots or 0.0) if filled else 0.0
+
         return ExecutionReport(
             client_order_id=client_order_id,
             state=OrderState.FILLED if filled else OrderState.REJECTED,
             at=datetime.now(UTC),
             broker_order_id=str(body.get("ticket") or "") or None,
+            filled_quantity=quantity,
             average_price=float(body.get("price") or 0.0) or None,
             reason=str(body.get("reason") or ""),
-            raw=body,
+            raw={
+                **body,
+                "volume_is_requested_not_confirmed": True,
+                "note": (
+                    "the expert does not report executed volume, so a partial "
+                    "fill would arrive as a full one"
+                ),
+            },
         )
 
     @staticmethod
