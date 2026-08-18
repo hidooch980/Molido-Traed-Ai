@@ -114,6 +114,9 @@ def switch_released(monkeypatch):
     monkeypatch.setattr(killswitch_store, "load", open_switch)
 
 
+NEWS_NOW = datetime(2026, 8, 18, 12, 0, tzinfo=UTC)
+
+
 class FakeBroker:
     """Records what it was asked to send, and answers however the test wants."""
 
@@ -152,6 +155,11 @@ def live(monkeypatch):
 
     monkeypatch.setattr(equity_service, "peak_equity", lambda *a, **k: 10_000.0)
     monkeypatch.setattr(equity_service, "peak_day_open_balance", lambda *a, **k: 10_000.0)
+
+    # A quiet week, injected. Without this every test reaches ForexFactory on
+    # every cycle - slow, flaky, and a suite whose result depends on whether a
+    # third party is up is not testing this code.
+    monkeypatch.setattr(autotrade, "_this_week", lambda *a, **k: [])
 
 
 def decide(
@@ -1146,3 +1154,90 @@ class TestTheOpenBookIsPricedBeforeAddingToIt:
         )
 
         assert among is None or among <= alone
+
+
+class TestNewsClosesTheWindow:
+    """Both rulebooks this build carries restrict trading around releases, and
+    a violation there is not a loss - it is the account, in one afternoon. The
+    calendar existed and was reachable only from an API route."""
+
+    CPI = {
+        "impact": "High",
+        "currency": "USD",
+        "at": "2026-08-18T12:03:00+00:00",
+        "title": "CPI y/y",
+    }
+
+    def test_a_release_on_an_exposed_currency_shuts_the_symbol(self):
+        clear, why = autotrade._news_gate("EURUSD", NEWS_NOW, [self.CPI])
+
+        assert clear is False
+        assert "CPI y/y" in why
+
+    def test_a_release_on_an_unexposed_currency_does_not(self):
+        clear, _ = autotrade._news_gate("AUDNZD", NEWS_NOW, [self.CPI])
+
+        assert clear is True
+
+    def test_the_quote_currency_counts_as_much_as_the_base(self):
+        """USDCAD is exposed to a dollar release from the other side."""
+        clear, _ = autotrade._news_gate("USDCAD", NEWS_NOW, [self.CPI])
+
+        assert clear is False
+
+    def test_gold_is_exposed_to_dollar_releases(self):
+        clear, _ = autotrade._news_gate("XAUUSD", NEWS_NOW, [self.CPI])
+
+        assert clear is False
+
+    def test_a_release_outside_the_window_does_not_shut_it(self):
+        later = {**self.CPI, "at": "2026-08-18T13:00:00+00:00"}
+
+        clear, _ = autotrade._news_gate("EURUSD", NEWS_NOW, [later])
+
+        assert clear is True
+
+    def test_the_window_reaches_backwards_too(self):
+        """The minutes after a print move price as much as the minutes before."""
+        just_passed = {**self.CPI, "at": "2026-08-18T11:57:00+00:00"}
+
+        clear, _ = autotrade._news_gate("EURUSD", NEWS_NOW, [just_passed])
+
+        assert clear is False
+
+    def test_medium_impact_does_not_shut_it(self):
+        clear, _ = autotrade._news_gate(
+            "EURUSD", NEWS_NOW, [{**self.CPI, "impact": "Medium"}]
+        )
+
+        assert clear is True
+
+    def test_an_all_day_entry_draws_no_window(self):
+        """A bank holiday has no clock, so no minutes can be measured from it."""
+        clear, _ = autotrade._news_gate(
+            "EURUSD", NEWS_NOW, [{**self.CPI, "at": None, "title": "Bank Holiday"}]
+        )
+
+        assert clear is True
+
+    def test_an_unreadable_feed_refuses_rather_than_assuming_quiet(self):
+        """An unknown news state is not a quiet one, and the rule being
+        protected ends an account rather than costing a trade."""
+        clear, why = autotrade._news_gate("EURUSD", NEWS_NOW, None)
+
+        assert clear is False
+        assert "unknown is not quiet" in why
+
+    def test_a_symbol_that_cannot_be_split_refuses(self):
+        clear, why = autotrade._news_gate("BTC", NEWS_NOW, [])
+
+        assert clear is False
+        assert "cannot be split" in why
+
+    def test_an_empty_week_lets_everything_through(self):
+        assert autotrade._news_gate("EURUSD", NEWS_NOW, [])[0] is True
+
+    def test_the_window_is_wider_than_either_firm_states(self):
+        """Sitting exactly on a rule's edge lets a clock difference of seconds
+        decide whether the challenge survives."""
+        assert autotrade.NEWS_WINDOW_MINUTES >= 5

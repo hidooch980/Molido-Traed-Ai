@@ -44,7 +44,7 @@ that.
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import select
@@ -155,6 +155,98 @@ def _authorise(state: Any, *, feed_age_bars: float | None) -> Any:
         account=state,
         health=DataHealth(data_age_bars=feed_age_bars),
     )
+
+
+#: How close to a high-impact release a new position may be opened. Both prop
+#: firms this build carries rulebooks for restrict trading around news, and a
+#: violation there is not a loss - it is the account, in one afternoon. The
+#: window is deliberately wider than either firm's stated one: sitting exactly
+#: on a rule's edge means a clock difference of seconds decides whether the
+#: challenge survives.
+NEWS_WINDOW_MINUTES = 5
+
+#: Impacts that close the window. Medium releases move price too, but blocking
+#: on them costs most of the session on a busy week for a rule that has no
+#: measured edge around news either way.
+NEWS_IMPACTS = frozenset({"High"})
+
+
+def _currencies_of(symbol: str) -> set[str]:
+    """The two currencies a pair is exposed to.
+
+    Metals and indices are left with whatever their first three characters
+    say plus USD, because XAUUSD is exposed to dollar releases whatever else
+    it is. A symbol too short to split returns nothing and the caller then has
+    no currency to match on - which is reported rather than treated as safe.
+    """
+    cleaned = "".join(c for c in symbol.upper() if c.isalpha())
+    if len(cleaned) < 6:
+        return set()
+    return {cleaned[:3], cleaned[3:6]}
+
+
+def _news_gate(
+    symbol: str, moment: datetime, releases: list[dict[str, Any]] | None
+) -> tuple[bool, str]:
+    """Whether a release is close enough to keep this symbol shut.
+
+    `releases` is None when the calendar could not be read, and that refuses.
+    An unknown news state is not a quiet one, and the rule being protected
+    here is the kind that ends an account rather than costing a trade. The
+    calendar module takes the same position about its own feed: a feed failing
+    is not a quiet week.
+    """
+    if releases is None:
+        return False, (
+            "the economic calendar could not be read, so whether a release is "
+            "imminent is unknown - and unknown is not quiet"
+        )
+
+    exposed = _currencies_of(symbol)
+    if not exposed:
+        return False, (
+            f"{symbol} cannot be split into currencies, so its news exposure "
+            "cannot be checked"
+        )
+
+    window = timedelta(minutes=NEWS_WINDOW_MINUTES)
+    for release in releases:
+        if str(release.get("impact") or "") not in NEWS_IMPACTS:
+            continue
+        if str(release.get("currency") or "").upper() not in exposed:
+            continue
+        at = release.get("at")
+        if not at:
+            # An all-day entry has no clock, so no window can be drawn around
+            # it. Named rather than silently skipped.
+            continue
+        try:
+            when = datetime.fromisoformat(str(at))
+        except ValueError:
+            continue
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=UTC)
+        if abs((when - moment).total_seconds()) <= window.total_seconds():
+            return False, (
+                f"{release.get('title') or 'a high-impact release'} for "
+                f"{release.get('currency')} lands within {NEWS_WINDOW_MINUTES} "
+                "minutes, and both rulebooks restrict trading around it"
+            )
+    return True, ""
+
+
+def _this_week(moment: datetime) -> list[dict[str, Any]] | None:
+    """This week's releases, or None if the feed could not be read.
+
+    None rather than an empty list on failure. An empty week and an unreadable
+    feed are different facts and only one of them means it is safe to trade.
+    """
+    from app.services import calendar as calendar_service
+
+    try:
+        return list(calendar_service.week(now=moment).get("releases") or [])
+    except Exception:  # noqa: BLE001 - any failure is "unknown", not "quiet"
+        return None
 
 
 def _open_risk_r(
@@ -582,6 +674,8 @@ def run_cycle(
         # obeyed is one limit consulted.
         verdict.permitted_risk_r = headroom_r
 
+    releases = _this_week(moment)
+
     cap = _max_open_positions()
     room = cap - open_now
     if room <= 0:
@@ -629,6 +723,11 @@ def run_cycle(
                 f"{entry.symbol}: the terminal publishes no contract "
                 "specification, so the size cannot be computed from it"
             )
+            continue
+
+        clear, news_reason = _news_gate(entry.symbol, moment, releases)
+        if not clear:
+            skipped.append(f"{entry.symbol}: {news_reason}")
             continue
 
         stop_distance = abs(float(price) - float(stop))
