@@ -733,6 +733,68 @@ def _lots(
     return lots, ""
 
 
+def run_all_accounts(
+    session: Session,
+    *,
+    now: datetime | None = None,
+    kill_switch: Any = None,
+) -> dict[str, Any]:
+    """Run one cycle per configured account, and let each fail alone.
+
+    Every account gets its own bridge, its own broker and its own pass through
+    every gate. Nothing is shared but the kill switch, which is deliberate: a
+    halt is a halt across the fleet, and a per-account halt that leaves the
+    others trading is not the thing anybody reaches for it to do.
+
+    **One account's failure must not stop the others.** That is the whole
+    reason this exists rather than a loop at the call site. A terminal that is
+    logged out, a bridge that is not mounted, a rulebook that no longer
+    resolves - each of those is a fact about one account, and a fleet that
+    stops on the first of them is a fleet that stops on its weakest member.
+
+    So every account is caught individually and its failure is reported beside
+    the others' results rather than raised. What is *not* caught is a kill
+    switch refusal, because that is not a failure - it is the answer.
+    """
+    from app.providers.metatrader import MetaTraderBridge, bridge_dirs
+
+    moment = (now or datetime.now(UTC)).astimezone(UTC)
+    accounts = bridge_dirs()
+
+    reports: dict[str, Any] = {}
+    sent = 0
+    for key, directory in sorted(accounts.items()):
+        try:
+            report = run_cycle(
+                session,
+                now=moment,
+                broker=MetaTraderBroker(directory=directory),
+                bridge=MetaTraderBridge(directory=directory),
+                kill_switch=kill_switch,
+            )
+        except Exception as problem:  # noqa: BLE001 - one account, not the fleet
+            reports[key] = {
+                "orders": 0,
+                "refused": (
+                    f"{type(problem).__name__} while trading this account. The "
+                    "others were unaffected"
+                ),
+            }
+            continue
+        reports[key] = report
+        sent += int(report.get("orders") or 0)
+
+    return {
+        "accounts": len(accounts),
+        "orders": sent,
+        "by_account": reports,
+        "note": (
+            "each account ran its own gates against its own terminal. A "
+            "failure here is about one account and says which"
+        ),
+    }
+
+
 def run_cycle(
     session: Session,
     *,

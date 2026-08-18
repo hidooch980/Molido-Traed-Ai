@@ -1503,3 +1503,94 @@ class TestTheDailySeriesIsAdmittedAndReAnchored:
         assert round(target - entry, 5) == round(
             geometry["target"] - geometry["entry"], 5
         )
+
+
+class TestTheFleetLetsEachAccountFailAlone:
+    """A terminal that is logged out, a bridge that is not mounted, a rulebook
+    that no longer resolves - each is a fact about one account, and a fleet
+    that stops on the first of them stops on its weakest member."""
+
+    def dirs(self, monkeypatch, mapping):
+        from app.providers import metatrader
+
+        monkeypatch.setattr(metatrader, "bridge_dirs", lambda *a, **k: mapping)
+
+    def test_every_configured_account_gets_a_cycle(self, session, monkeypatch, live):
+        import pathlib
+
+        from app.workers import autotrade as mod
+
+        self.dirs(monkeypatch, {"one": pathlib.Path("/a"), "two": pathlib.Path("/b")})
+        seen: list[str] = []
+
+        def fake_cycle(_session, **kwargs):
+            seen.append(str(kwargs["bridge"].directory))
+            return {"orders": 1}
+
+        monkeypatch.setattr(mod, "run_cycle", fake_cycle)
+        report = mod.run_all_accounts(session)
+
+        assert report["accounts"] == 2
+        assert report["orders"] == 2
+        assert len(seen) == 2
+
+    def test_one_account_raising_does_not_stop_the_others(
+        self, session, monkeypatch, live
+    ):
+        import pathlib
+
+        from app.workers import autotrade as mod
+
+        self.dirs(monkeypatch, {"broken": pathlib.Path("/a"), "fine": pathlib.Path("/b")})
+
+        def fake_cycle(_session, **kwargs):
+            if str(kwargs["bridge"].directory).endswith("a"):
+                raise RuntimeError("terminal logged out")
+            return {"orders": 3}
+
+        monkeypatch.setattr(mod, "run_cycle", fake_cycle)
+        report = mod.run_all_accounts(session)
+
+        assert report["orders"] == 3
+        assert "RuntimeError" in report["by_account"]["broken"]["refused"]
+        assert report["by_account"]["fine"]["orders"] == 3
+
+    def test_the_failure_says_the_others_were_unaffected(
+        self, session, monkeypatch, live
+    ):
+        import pathlib
+
+        from app.workers import autotrade as mod
+
+        self.dirs(monkeypatch, {"broken": pathlib.Path("/a")})
+        monkeypatch.setattr(
+            mod, "run_cycle", lambda *a, **k: (_ for _ in ()).throw(OSError("no mount"))
+        )
+
+        report = mod.run_all_accounts(session)
+
+        assert "others were unaffected" in report["by_account"]["broken"]["refused"]
+
+    def test_each_account_gets_its_own_broker_and_bridge(
+        self, session, monkeypatch, live
+    ):
+        """Sharing either would send one account's orders to another's
+        terminal, which every file involved would make look correct."""
+        import pathlib
+
+        from app.workers import autotrade as mod
+
+        self.dirs(monkeypatch, {"one": pathlib.Path("/a"), "two": pathlib.Path("/b")})
+        pairs: list[tuple[str, str]] = []
+
+        def fake_cycle(_session, **kwargs):
+            pairs.append(
+                (str(kwargs["bridge"].directory), str(kwargs["broker"].directory))
+            )
+            return {"orders": 0}
+
+        monkeypatch.setattr(mod, "run_cycle", fake_cycle)
+        mod.run_all_accounts(session)
+
+        assert len({p[0] for p in pairs}) == 2
+        assert all(bridge == broker for bridge, broker in pairs)
