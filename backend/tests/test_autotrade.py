@@ -1435,13 +1435,15 @@ class TestADecisionFromAnotherFeedIsReanchored:
 
         assert SOURCE_BROKER not in autotrade.REANCHORED_SOURCES
 
-    def test_only_a_current_series_is_admitted(self):
-        """This set was empty while the only daily series ended on 2025-12-31.
-        Measured against the live book its gap was 146.7 pips - not feed
-        difference but a stale market - and re-anchoring would have carried
-        last December's signal onto today's quote. The fold replaced it with
-        one that reaches yesterday, and that is what is admitted."""
-        assert autotrade.REANCHORED_SOURCES == frozenset({"aggregated"})
+    def test_nothing_is_admitted_until_a_series_measures_positive(self):
+        """The fold was admitted and then withdrawn on its own numbers.
+
+        Measured over 2024-2026 on the twenty-two instruments both daily
+        series carry, it came out at -0.0201 R against its control - and on
+        the full declared universe at -0.1064 R, t = -3.28, significantly
+        negative. The mechanism is right and the series it was admitted for
+        does not clear the bar it was admitted to trade on."""
+        assert autotrade.REANCHORED_SOURCES == frozenset()
 
     def test_the_stale_provider_is_not_admitted(self):
         """It still holds the twenty-one years the edge was measured on, and
@@ -1465,8 +1467,11 @@ class TestTheDailySeriesIsAdmittedAndReAnchored:
     are another feed's numbers, so they are re-anchored onto the broker's own
     price before anything is sent."""
 
-    def test_the_folded_series_is_admitted(self):
-        assert "aggregated" in autotrade.REANCHORED_SOURCES
+    def test_the_folded_series_is_not_admitted_on_a_negative_measurement(self):
+        """It reaches today, which was the blocker. It also measures negative
+        over the period it can reach, which is a different blocker and the
+        one that decides."""
+        assert "aggregated" not in autotrade.REANCHORED_SOURCES
 
     def test_the_terminal_series_is_not_in_the_re_anchored_set(self):
         """Its prices are the prices the order will meet, so re-anchoring them
