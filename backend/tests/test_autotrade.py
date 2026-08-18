@@ -1435,15 +1435,15 @@ class TestADecisionFromAnotherFeedIsReanchored:
 
         assert SOURCE_BROKER not in autotrade.REANCHORED_SOURCES
 
-    def test_nothing_is_admitted_until_a_series_measures_positive(self):
-        """The fold was admitted and then withdrawn on its own numbers.
+    def test_the_daily_fold_is_admitted(self):
+        """Withdrawn once on a -0.0201 R reading, then re-admitted when that
+        reading turned out not to be significant at t = -0.48 - it was silence
+        rather than a verdict, and silence is not evidence against.
 
-        Measured over 2024-2026 on the twenty-two instruments both daily
-        series carry, it came out at -0.0201 R against its control - and on
-        the full declared universe at -0.1064 R, t = -3.28, significantly
-        negative. The mechanism is right and the series it was admitted for
-        does not clear the bar it was admitted to trade on."""
-        assert autotrade.REANCHORED_SOURCES == frozenset()
+        What decided it: the held-out half of the twenty-one years, 2017-2025,
+        which selection never saw. The rule measures +0.0613 R at t = +4.06
+        there, stronger than the half it was fitted on."""
+        assert autotrade.REANCHORED_SOURCES == frozenset({"aggregated"})
 
     def test_the_stale_provider_is_not_admitted(self):
         """It still holds the twenty-one years the edge was measured on, and
@@ -1467,11 +1467,10 @@ class TestTheDailySeriesIsAdmittedAndReAnchored:
     are another feed's numbers, so they are re-anchored onto the broker's own
     price before anything is sent."""
 
-    def test_the_folded_series_is_not_admitted_on_a_negative_measurement(self):
-        """It reaches today, which was the blocker. It also measures negative
-        over the period it can reach, which is a different blocker and the
-        one that decides."""
-        assert "aggregated" not in autotrade.REANCHORED_SOURCES
+    def test_the_folded_series_reaches_today_and_is_admitted(self):
+        """Reaching today was the blocker the fold was built to clear, and
+        the measurement that withdrew it was not significant."""
+        assert "aggregated" in autotrade.REANCHORED_SOURCES
 
     def test_the_terminal_series_is_not_in_the_re_anchored_set(self):
         """Its prices are the prices the order will meet, so re-anchoring them
