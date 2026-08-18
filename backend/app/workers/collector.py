@@ -323,9 +323,21 @@ def sample_equity() -> dict[str, Any]:
     return {"recorded": stored, "account": login}
 
 
-#: The provider the twenty-one year daily series was loaded from, and the only
-#: one that carries D1 here.
+#: The provider the twenty-one year daily series was loaded from. It ends on
+#: 2025-12-31 and serves nothing after, so it measures history and cannot
+#: carry forward evidence.
 DEEP_HISTORY_SOURCE = "dukascopy"
+
+#: Where live daily bars come from: folded from the hourly series, which is
+#: current. See `app/workers/aggregate.py`.
+#:
+#: This is deliberately a different feed from the one the historical result
+#: was measured on, and that is a real caveat rather than a detail. The rule
+#: is cross-sectional and should not care whose ticks built the bar, but
+#: "should not" is a claim about the rule, not a measurement of it - so the
+#: forward series is recorded under its own provider and can be compared
+#: against the historical one rather than assumed to continue it.
+LIVE_DAILY_SOURCE = "aggregated"
 
 
 def _sources_for(timeframe: Any) -> tuple[str, ...]:
@@ -335,16 +347,18 @@ def _sources_for(timeframe: Any) -> tuple[str, ...]:
     returns "considered: none", which reads in the report exactly like a
     cross-section that was too small to rank - a real and different condition.
 
-    The daily series comes from the deep-history provider and from nowhere
-    else: the public feed carries no D1 here, and the terminal publishes only
-    what the expert was compiled to write. That matters more than tidiness now
-    that D1 is the timeframe the historical measurement cleared its bar on.
+    The daily series comes from the aggregator and from nowhere else. The
+    public feed carries no D1, the terminal publishes only what the expert was
+    compiled to write, and the deep-history provider - which carries the
+    twenty-one years the historical result was measured on - stops at the end
+    of 2025. A series that cannot reach today cannot carry forward evidence,
+    whatever it proved about the past.
     """
     from app.core.enums import Timeframe
     from app.models.journal import SOURCE_BROKER, SOURCE_PUBLIC
 
     if timeframe is Timeframe.D1:
-        return (DEEP_HISTORY_SOURCE,)
+        return (LIVE_DAILY_SOURCE,)
     return (SOURCE_PUBLIC, SOURCE_BROKER)
 
 
@@ -836,6 +850,29 @@ async def refresh_dna_job(ctx: dict) -> dict[str, Any]:
 DEEP_HISTORY_HOURS = {1, 5, 9, 13, 17, 21}
 
 
+#: When the daily fold runs. After the FX week's last hour has closed
+#: everywhere, so the day being folded is finished in every venue rather than
+#: only in UTC.
+AGGREGATE_HOUR = 23
+
+
+async def aggregate_daily_job(ctx: dict) -> dict[str, Any]:
+    """Fold yesterday's hourly bars into a daily one.
+
+    Runs nightly rather than on the collection cycle. A fold is cheap per day
+    and expensive over two years of history, and the only day that changes
+    between one cycle and the next is the one that has not closed - which this
+    excludes on purpose.
+    """
+    from app.workers.aggregate import build
+
+    def run() -> dict[str, Any]:
+        with session_scope() as session:
+            return build(session)
+
+    return await asyncio.to_thread(run)
+
+
 async def deep_history_job(ctx: dict) -> dict[str, Any]:
     """Try the deep-history backfill, and stop trying once it has landed.
 
@@ -897,6 +934,10 @@ def _cron_jobs() -> list:
         # collection cycle that has to land on the minute.
         cron(build_episodes_job, hour={EPISODE_BUILD_HOUR}, minute={0}, max_tries=1),
         cron(compare_providers_job, hour={CONFLICT_CHECK_HOUR}, minute={0}, max_tries=1),
+        # After the last venue has closed the day this folds, not merely after
+        # UTC midnight - a day that is finished in London is still trading in
+        # New York.
+        cron(aggregate_daily_job, hour={AGGREGATE_HOUR}, minute={10}, max_tries=1),
         # Retries itself until the history is in, then reports that it skipped.
         # max_tries=1 on purpose: a failed attempt means the feed is closed,
         # and arq retrying it immediately is the opposite of waiting.
