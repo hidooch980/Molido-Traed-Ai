@@ -47,7 +47,7 @@ import uuid
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.core.errors import ValidationFailedError
@@ -570,6 +570,51 @@ def _account_state(
 #: before. Everything below is written and tested against it.
 REANCHORED_SOURCES: frozenset[str] = frozenset({"aggregated"})
 
+#: Analysis symbols admitted from any stored series, whatever its provider.
+#:
+#: The source-level rule above exists because a decision taken on one feed's
+#: prices is a decision about a slightly different reality: the public EURUSD
+#: and the broker's sit about four pips apart, which is a fifth of an hourly
+#: stop and enough to matter.
+#:
+#: Gold is the case where that reasoning does not apply. The analysis series
+#: is the futures contract and the order is spot, so the two never had the
+#: same price and were never going to - the difference is a carry basis, which
+#: is large, stable and completely absent from a *stretch*, because a stretch
+#: is a distance measured in the instrument's own volatility. Re-anchoring
+#: then takes the level from the venue that fills.
+#:
+#: It is also the cheapest instrument the account can trade: 0.029 R to cross
+#: at hourly geometry against 0.062 for EURUSD, measured off the terminal's
+#: own book.
+REANCHORED_SYMBOLS: frozenset[str] = frozenset({"GCFUT", "SIFUT"})
+
+
+#: Analysis symbol to the symbol the order is actually placed in.
+#:
+#: The rule ranks a series; the broker fills an instrument. Usually they are
+#: the same name. For gold they are not: the public feed carries the futures
+#: contract (GC=F, stored as GCFUT) and has fifteen-minute history for it,
+#: while the terminal trades spot XAUUSD and publishes only hourly bars.
+#:
+#: They are not the same instrument, and the mapping is only defensible
+#: because of what is done with it. The *shape* crosses over - gold futures
+#: and gold spot move together closely enough that a stretch in one is a
+#: stretch in the other - and the *price* does not, which is exactly what
+#: re-anchoring already fixes: distances from the analysis series, absolute
+#: level from the venue the order will meet.
+#:
+#: Silver the same way, for the same reason.
+EXECUTION_SYMBOL: dict[str, str] = {
+    "GCFUT": "XAUUSD",
+    "SIFUT": "XAGUSD",
+}
+
+
+def _tradeable_symbol(symbol: str) -> str:
+    """The instrument an order for this analysis symbol is placed in."""
+    return EXECUTION_SYMBOL.get(symbol, symbol)
+
 
 def _levels_from_broker(
     geometry: dict[str, Any], specification: dict[str, Any], side: str
@@ -935,7 +980,11 @@ def run_cycle(
     skipped: list[str] = []
 
     for entry in candidates:
-        if entry.symbol in held:
+        # Resolved before the per-symbol cap, because the cap is about the
+        # instrument the account will actually carry: a GCFUT decision and
+        # an XAUUSD position are the same exposure under two names.
+        traded_as = _tradeable_symbol(entry.symbol)
+        if traded_as in held:
             skipped.append(
                 f"{entry.symbol}: the account already holds a position in it, "
                 "and a second one doubles an exposure that was sized for one"
@@ -955,7 +1004,7 @@ def run_cycle(
             skipped.append(f"{entry.symbol}: the decision recorded no levels")
             continue
 
-        specification = specifications.get(entry.symbol)
+        specification = specifications.get(traded_as)
         if not specification:
             skipped.append(
                 f"{entry.symbol}: the terminal publishes no contract "
@@ -1034,7 +1083,9 @@ def run_cycle(
 
         try:
             intent = OrderIntent(
-                symbol=entry.symbol,
+                # The instrument the broker fills, which is not always the
+                # one the rule ranked. See EXECUTION_SYMBOL.
+                symbol=traded_as,
                 side=OrderSide.BUY if entry.decision == "long" else OrderSide.SELL,
                 order_type=OrderType.MARKET,
                 risk_r=_risk_percent() / 100.0,
@@ -1160,7 +1211,14 @@ def _pending(session: Session, moment: datetime) -> list[JournalEntry]:
             JournalEntry.arm == ARM_RULE,
             # The terminal's own series, plus any series wide enough to be
             # re-anchored onto the broker's price. See REANCHORED_SOURCES.
-            JournalEntry.price_source.in_([SOURCE_BROKER, *sorted(REANCHORED_SOURCES)]),
+            or_(
+                JournalEntry.price_source.in_(
+                    [SOURCE_BROKER, *sorted(REANCHORED_SOURCES)]
+                ),
+                # Admitted on the instrument rather than on the feed. See
+                # REANCHORED_SYMBOLS for why gold is the exception.
+                JournalEntry.symbol.in_(sorted(REANCHORED_SYMBOLS)),
+            ),
             JournalEntry.closed_at.is_(None),
             JournalEntry.opened_at >= cutoff,
         )

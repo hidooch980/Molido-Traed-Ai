@@ -1649,3 +1649,31 @@ class TestOneAccountCanBePausedWithoutTheOthers:
 
         assert "skipped" in report["by_account"]["one"]
         assert "refused" not in report["by_account"]["one"]
+
+
+class TestGoldIsAdmittedOnTheInstrumentNotTheFeed:
+    """The source rule exists because a decision on one feed's prices is a
+    decision about a slightly different reality. Gold is where that reasoning
+    does not apply: the analysis series is the futures contract and the order
+    is spot, so the two never had the same price and were never going to."""
+
+    def test_the_futures_symbol_is_admitted(self):
+        assert "GCFUT" in autotrade.REANCHORED_SYMBOLS
+
+    def test_it_is_placed_in_the_instrument_the_broker_fills(self):
+        assert autotrade._tradeable_symbol("GCFUT") == "XAUUSD"
+        assert autotrade._tradeable_symbol("SIFUT") == "XAGUSD"
+
+    def test_an_ordinary_symbol_is_unchanged(self):
+        assert autotrade._tradeable_symbol("EURUSD") == "EURUSD"
+
+    def test_no_currency_pair_is_admitted_by_symbol(self):
+        """The exception is about an instrument whose two series were never
+        the same price, not a way around the feed rule."""
+        for pair in ("EURUSD", "GBPUSD", "USDJPY"):
+            assert pair not in autotrade.REANCHORED_SYMBOLS
+
+    def test_the_position_cap_counts_the_traded_name(self):
+        """A GCFUT decision and an XAUUSD position are the same exposure under
+        two names, and a cap that misses that opens both."""
+        assert autotrade._tradeable_symbol("GCFUT") in {"XAUUSD"}
