@@ -66,7 +66,7 @@ export function LiveTrading({ initial }: { initial?: Live }) {
 
     async function pull() {
       try {
-        const answer = await fetch("/api/live", { cache: "no-store" });
+        const answer = await fetch("/live-feed", { cache: "no-store" });
         if (!answer.ok) throw new Error(`HTTP ${answer.status}`);
         const body = (await answer.json()) as Live;
         if (!alive) return;
