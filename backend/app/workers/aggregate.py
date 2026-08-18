@@ -65,7 +65,15 @@ def _provider_id(session: Session, code: str) -> uuid.UUID:
     """
     session.execute(
         pg_insert(Provider)
-        .values(code=code, name="Derived from hourly bars", is_active=True)
+        .values(
+            code=code,
+            name="Derived from hourly bars",
+            capabilities={"ohlcv": True, "derived": True},
+            # Below the fetched feeds on purpose. A folded bar is evidence
+            # about the hours it was folded from, and a reader weighting it
+            # equally with an observed one is weighting the fold as data.
+            trust_weight=0.4,
+        )
         .on_conflict_do_nothing(index_elements=[Provider.code])
     )
     session.flush()
