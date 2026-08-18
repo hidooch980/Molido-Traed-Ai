@@ -569,3 +569,35 @@ class TestWhichTimeframesTheRuleDecidesOn:
         monkeypatch.setattr(get_settings(), "forward_timeframes", "", raising=False)
 
         assert _forward_timeframes() == (Timeframe.H1,)
+
+
+class TestEachTimeframeAsksAProviderThatCarriesIt:
+    """Asking a provider for a timeframe it does not hold costs a query and
+    returns "considered: none", which reads in the report exactly like a
+    cross-section too small to rank - a real and different condition."""
+
+    def test_the_daily_series_comes_from_the_deep_history_provider(self):
+        """The public feed carries no D1 here, and the terminal publishes only
+        what the expert was compiled to write. D1 is also the timeframe the
+        historical measurement cleared its bar on, so this one matters."""
+        from app.core.enums import Timeframe
+        from app.workers.collector import DEEP_HISTORY_SOURCE, _sources_for
+
+        assert _sources_for(Timeframe.D1) == (DEEP_HISTORY_SOURCE,)
+
+    def test_the_intraday_timeframes_ask_both_live_feeds(self):
+        from app.core.enums import Timeframe
+        from app.models.journal import SOURCE_BROKER, SOURCE_PUBLIC
+        from app.workers.collector import _sources_for
+
+        for timeframe in (Timeframe.H1, Timeframe.M15, Timeframe.M5):
+            assert _sources_for(timeframe) == (SOURCE_PUBLIC, SOURCE_BROKER)
+
+    def test_the_daily_series_never_asks_the_terminal(self):
+        """A broker D1 decision would be tradeable, and the expert publishes
+        no D1 - so it would be a decision on a series nobody is watching."""
+        from app.core.enums import Timeframe
+        from app.models.journal import SOURCE_BROKER
+        from app.workers.collector import _sources_for
+
+        assert SOURCE_BROKER not in _sources_for(Timeframe.D1)

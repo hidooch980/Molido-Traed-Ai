@@ -323,6 +323,31 @@ def sample_equity() -> dict[str, Any]:
     return {"recorded": stored, "account": login}
 
 
+#: The provider the twenty-one year daily series was loaded from, and the only
+#: one that carries D1 here.
+DEEP_HISTORY_SOURCE = "dukascopy"
+
+
+def _sources_for(timeframe: Any) -> tuple[str, ...]:
+    """Which price series can answer at this timeframe.
+
+    Asking a provider for a timeframe it does not carry costs a query and
+    returns "considered: none", which reads in the report exactly like a
+    cross-section that was too small to rank - a real and different condition.
+
+    The daily series comes from the deep-history provider and from nowhere
+    else: the public feed carries no D1 here, and the terminal publishes only
+    what the expert was compiled to write. That matters more than tidiness now
+    that D1 is the timeframe the historical measurement cleared its bar on.
+    """
+    from app.core.enums import Timeframe
+    from app.models.journal import SOURCE_BROKER, SOURCE_PUBLIC
+
+    if timeframe is Timeframe.D1:
+        return (DEEP_HISTORY_SOURCE,)
+    return (SOURCE_PUBLIC, SOURCE_BROKER)
+
+
 def _forward_timeframes() -> tuple:
     """Which timeframes the rule records decisions on.
 
@@ -386,7 +411,7 @@ def record_forward() -> dict[str, Any]:
 
     reports: dict[str, Any] = {}
     for timeframe in _forward_timeframes():
-        for source in (SOURCE_PUBLIC, SOURCE_BROKER):
+        for source in _sources_for(timeframe):
             key = source if timeframe is Timeframe.H1 else f"{source}:{timeframe.value}"
             try:
                 with session_scope() as session:
