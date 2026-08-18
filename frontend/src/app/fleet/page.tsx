@@ -1,3 +1,4 @@
+import { AccountSwitches } from "@/components/AccountSwitches";
 import { LiveTrading } from "@/components/LiveTrading";
 import { Offline, Panel, Stat, StatusBadge } from "@/components/ui";
 import { api } from "@/lib/api";
@@ -19,10 +20,11 @@ export const dynamic = "force-dynamic";
  */
 export default async function FleetPage() {
   const { t } = await getT();
-  const [accounts, positions, realised] = await Promise.all([
+  const [accounts, positions, realised, states] = await Promise.all([
     api.accounts(),
     api.positions(),
     api.realised(30),
+    api.accountStates(),
   ]);
 
   if (!accounts.ok) return <Offline error={accounts.error} />;
@@ -84,6 +86,16 @@ export default async function FleetPage() {
       </Panel>
 
       <LiveTrading initial={firstReading as never} />
+
+      <Panel title="فعال و غیرفعال کردن حساب">
+        {states.ok ? (
+          <AccountSwitches initial={states.data.accounts} />
+        ) : (
+          /* Not an empty control. A registry that cannot be read and a fleet
+             with nothing in it look identical in a blank panel. */
+          <Offline error={states.error} />
+        )}
+      </Panel>
 
       <Panel title={`حساب‌ها (${rows.length})`}>
         {rows.length === 0 ? (

@@ -853,6 +853,10 @@ export const api = {
   orderStates: () => request<OrderStatesView>("/api/v1/execution/order-states"),
   research: () => request<ResearchView>("/api/v1/learning/research"),
   positions: () => request<PositionsView>("/api/v1/execution/positions"),
+  accountStates: () =>
+    request<{ accounts: Array<{ account: string; active: boolean; reason: string }> }>(
+      "/api/v1/execution/accounts/state",
+    ),
   autopilot: () => request<AutopilotView>("/api/v1/execution/autopilot"),
   setup: () => request<SetupView>("/api/v1/users/setup"),
   health: () => request<Health>("/health/ready"),
