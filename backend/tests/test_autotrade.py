@@ -1025,16 +1025,20 @@ class TestThePropRulebookGovernsWhenThereIsOne:
 
     @staticmethod
     def account(**over):
+        """The shape `listing` really returns: a view wrapping the row, with
+        the rulebook already resolved beside it. A flat stand-in passed every
+        test and failed the first real registration."""
         from types import SimpleNamespace
 
-        base = dict(
-            is_active=True,
-            rulebook_key="ftmo-challenge-2step-phase1",
-            starting_balance=10_000.0,
-            label="test",
-        )
+        from app.brain import rulebooks
+
+        key = over.pop("rulebook_key", "ftmo-challenge-2step-phase1")
+        base = dict(is_active=True, rulebook_key=key, starting_balance=10_000.0,
+                    label="test")
         base.update(over)
-        return SimpleNamespace(**base)
+        return SimpleNamespace(
+            account=SimpleNamespace(**base), rulebook=rulebooks.get(key)
+        )
 
     def registry(self, monkeypatch, rows):
         from app.services import challenge_accounts

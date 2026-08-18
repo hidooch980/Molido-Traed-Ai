@@ -403,16 +403,19 @@ def _challenge_gate(
     and applying the wrong one is applying limits from another account.
     """
     from app.brain import challenge as challenge_brain
-    from app.brain import rulebooks
     from app.services import challenge_accounts
 
     try:
+        # `listing` returns a view that wraps the row and carries the resolved
+        # rulebook beside it. Reading the row's fields off the view returns
+        # nothing - which produced "the registered rulebook '?' is not one
+        # this build knows" the first time an account was ever registered.
         registered = [
-            a
-            for a in challenge_accounts.listing(
+            view
+            for view in challenge_accounts.listing(
                 session, tenant_id=challenge_accounts.default_tenant(session)
             )
-            if getattr(a, "is_active", True)
+            if getattr(view.account, "is_active", True)
         ]
     except Exception as problem:  # noqa: BLE001 - reported, never fatal
         return False, f"the challenge registry could not be read: {type(problem).__name__}", None
@@ -427,21 +430,24 @@ def _challenge_gate(
             None,
         )
 
-    account = registered[0]
-    book = rulebooks.get(str(getattr(account, "rulebook_key", "") or ""))
+    view = registered[0]
+    account = view.account
+    # Already resolved by the service. Looking it up again would be a second
+    # resolution that can disagree with the one the API reports.
+    book = view.rulebook
     if book is None:
         return (
             False,
-            f"the registered rulebook {getattr(account, 'rulebook_key', '?')!r} is not "
-            "one this build knows, so its limits cannot be applied",
+            f"the registered rulebook {account.rulebook_key!r} is not one this "
+            "build knows, so its limits cannot be applied",
             None,
         )
 
     equity = float(published.get("equity") or 0.0)
     state = challenge_brain.ChallengeState(
-        starting_balance=float(getattr(account, "starting_balance", 0.0) or 0.0),
+        starting_balance=float(account.starting_balance or 0.0),
         current_equity=equity,
-        peak_equity=max(equity, float(getattr(account, "starting_balance", 0.0) or 0.0)),
+        peak_equity=max(equity, float(account.starting_balance or 0.0)),
         daily_starting_equity=equity,
         days_traded=0,
         open_positions=open_positions,
