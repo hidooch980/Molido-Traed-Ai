@@ -320,11 +320,47 @@ class TestWhatIsNeverTraded:
 
 
 class TestTheGates:
-    def test_paper_mode_sends_nothing(self, session, monkeypatch):
+    def test_paper_mode_reaches_no_real_broker(self, session, monkeypatch, live):
+        """Paper now runs the whole cycle and sends nothing, rather than
+        refusing before any of it. What must stay true is that nothing reaches
+        an adapter that can place an order."""
+        from app.execution import autopilot
+        from app.execution.paper_broker import PaperBroker
+
+        monkeypatch.setattr(
+            autopilot, "mode_now", lambda: ("paper", "no proven edge", False)
+        )
+        decide(session)
+        paper = PaperBroker()
+
+        report = autotrade.run_cycle(
+            session, now=NOW, broker=paper, bridge=FakeBridge()
+        )
+
+        assert report["mode"] == "paper"
+        assert paper.submitted != []
+
+    def test_paper_uses_the_paper_adapter_when_none_is_given(
+        self, session, monkeypatch, live
+    ):
+        """The default in paper mode must not be the real one. A mode that
+        depends on the caller passing the right broker is not a mode."""
         from app.execution import autopilot
 
         monkeypatch.setattr(
             autopilot, "mode_now", lambda: ("paper", "no proven edge", False)
+        )
+        decide(session)
+
+        report = autotrade.run_cycle(session, now=NOW, bridge=FakeBridge())
+
+        assert report["mode"] == "paper"
+
+    def test_halted_still_refuses_before_anything(self, session, monkeypatch):
+        from app.execution import autopilot
+
+        monkeypatch.setattr(
+            autopilot, "mode_now", lambda: ("halted", "edge gate shut", False)
         )
         decide(session)
         broker = FakeBroker()
@@ -334,7 +370,7 @@ class TestTheGates:
         )
 
         assert report["orders"] == 0
-        assert "paper" in report["refused"]
+        assert "halted" in report["refused"]
         assert broker.submitted == []
 
     def test_a_closed_account_gate_sends_nothing(self, session, monkeypatch):

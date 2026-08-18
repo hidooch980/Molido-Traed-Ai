@@ -666,8 +666,18 @@ def run_cycle(
         return _report(mode="halted", refused=f"kill switch: {switch.reason}")
 
     mode, why, _live = autopilot.mode_now()
-    if mode != "live":
+    if mode == autopilot.HALTED:
         return _report(mode=mode, refused=f"autopilot is in {mode}: {why}")
+
+    # Paper runs the whole cycle and sends nothing. The mode existed and this
+    # function refused on it, so "paper" meant "do nothing" rather than "do
+    # everything except send" - and everything except send is where the work
+    # is. The first run of the sizing, the gates and the lot arithmetic should
+    # not be on real money.
+    if mode == autopilot.PAPER:
+        from app.execution.paper_broker import PaperBroker
+
+        sender = broker if broker is not None else PaperBroker()
 
     published = feed.account()
     allowed, account_reason = autopilot.account_gate(published)
@@ -856,8 +866,14 @@ def run_cycle(
                     Approval(
                         source="risk",
                         approved=True,
+                        # What was used, not what was configured. The approval
+                        # is the audit record, and the two stopped being the
+                        # same number the moment the risk brain started
+                        # reducing - it said 0.8% while sizing at 0.2%.
                         detail=(
-                            f"{_risk_percent()}% of equity behind the recorded stop"
+                            f"{risk_for_this * 100:.4g}% of equity behind the "
+                            f"recorded stop (requested {_risk_percent()}%, "
+                            f"reduced by risk/challenge/portfolio)"
                         ),
                         at=moment,
                     ),
