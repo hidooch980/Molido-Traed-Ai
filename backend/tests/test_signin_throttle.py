@@ -186,3 +186,163 @@ class TestTheRouteRefusesBeforeItHashes:
             raise AssertionError("a throttled attempt was allowed through")
 
         assert reached == [], "the password was hashed despite the throttle"
+
+
+class FakeRedis:
+    """Enough of a client to count with, including the expiry semantics."""
+
+    def __init__(self, *, broken: bool = False):
+        self.store: dict[str, int] = {}
+        self.expiries: dict[str, int] = {}
+        self.broken = broken
+
+    def _boom(self):
+        if self.broken:
+            raise RuntimeError("redis is down")
+
+    def ping(self):
+        self._boom()
+        return True
+
+    def get(self, key):
+        self._boom()
+        return self.store.get(key)
+
+    def incr(self, key):
+        self.store[key] = self.store.get(key, 0) + 1
+        return self.store[key]
+
+    def expire(self, key, seconds, nx=False):
+        # nx means "only if it has no expiry yet", which is what keeps the
+        # window measured from the first failure.
+        if nx and key in self.expiries:
+            return False
+        self.expiries[key] = seconds
+        return True
+
+    def delete(self, key):
+        self._boom()
+        self.store.pop(key, None)
+
+    def scan_iter(self, match, count=None):
+        self._boom()
+        prefix = match.rstrip("*")
+        return [k for k in self.store if k.startswith(prefix)]
+
+    def pipeline(self):
+        self._boom()
+        return self
+
+    def execute(self):
+        return True
+
+
+class TestItCountsWhereEveryWorkerCanSee:
+    """The API runs under gunicorn with several uvicorn workers. A counter in
+    each of them is not one limit of eight - it is eight per worker, read from
+    whichever answered. The first implementation here did exactly that: ten
+    wrong passwords went through and the snapshot reported zero."""
+
+    def build(self, monkeypatch, client):
+        from app.services import signin_throttle
+
+        monkeypatch.setattr(signin_throttle, "_redis", lambda: client)
+        return signin_throttle.SharedThrottle(per_email=3, overall=10)
+
+    def test_failures_are_counted_in_redis(self, monkeypatch):
+        client = FakeRedis()
+        throttle = self.build(monkeypatch, client)
+
+        throttle.failed("a@b.com")
+        throttle.failed("a@b.com")
+
+        assert client.store["molido:signin:email:a@b.com"] == 2
+        assert client.store["molido:signin:all"] == 2
+
+    def test_the_limit_refuses(self, monkeypatch):
+        client = FakeRedis()
+        throttle = self.build(monkeypatch, client)
+        for _ in range(3):
+            throttle.failed("a@b.com")
+
+        assert "this address" in (throttle.check("a@b.com") or "")
+
+    def test_a_second_worker_sees_the_first_worker_s_failures(self, monkeypatch):
+        """The whole point. Two instances, one shared counter."""
+        client = FakeRedis()
+        worker_one = self.build(monkeypatch, client)
+        worker_two = self.build(monkeypatch, client)
+
+        for _ in range(3):
+            worker_one.failed("a@b.com")
+
+        assert worker_two.check("a@b.com") is not None
+
+    def test_success_clears_the_address_everywhere(self, monkeypatch):
+        client = FakeRedis()
+        throttle = self.build(monkeypatch, client)
+        for _ in range(3):
+            throttle.failed("a@b.com")
+
+        throttle.succeeded("a@b.com")
+
+        assert throttle.check("a@b.com") is None
+
+    def test_the_window_runs_from_the_first_failure(self, monkeypatch):
+        """A steady drip of guesses must not keep pushing the expiry out and
+        stay under the limit forever."""
+        client = FakeRedis()
+        throttle = self.build(monkeypatch, client)
+
+        throttle.failed("a@b.com")
+        first = dict(client.expiries)
+        throttle.failed("a@b.com")
+
+        assert client.expiries == first
+
+    def test_the_snapshot_says_it_is_counting_in_redis(self, monkeypatch):
+        throttle = self.build(monkeypatch, FakeRedis())
+
+        assert throttle.snapshot()["counted_in"] == "redis"
+
+
+class TestWhenRedisIsUnreachable:
+    """Weaker by exactly the number of workers, and honest about it. A
+    limiter quietly running at four times its stated limit is worse than one
+    that says so."""
+
+    def build(self, monkeypatch):
+        from app.services import signin_throttle
+
+        monkeypatch.setattr(signin_throttle, "_redis", lambda: None)
+        return signin_throttle.SharedThrottle(per_email=2, overall=10)
+
+    def test_it_still_throttles(self, monkeypatch):
+        """Falling back to something is better than falling back to nothing."""
+        throttle = self.build(monkeypatch)
+        throttle.failed("a@b.com")
+        throttle.failed("a@b.com")
+
+        assert throttle.check("a@b.com") is not None
+
+    def test_the_snapshot_warns(self, monkeypatch):
+        snapshot = self.build(monkeypatch).snapshot()
+
+        assert snapshot["counted_in"] == "process"
+        assert "times the number of workers" in snapshot["warning"]
+
+    def test_it_does_not_lock_everyone_out(self, monkeypatch):
+        """Refusing every sign-in would lock the operator out of their own
+        controls at the moment something is already wrong."""
+        assert self.build(monkeypatch).check("fresh@example.com") is None
+
+    def test_a_broken_client_falls_back_rather_than_raising(self, monkeypatch):
+        from app.services import signin_throttle
+
+        monkeypatch.setattr(signin_throttle, "_redis", lambda: FakeRedis(broken=True))
+        throttle = signin_throttle.SharedThrottle(per_email=2)
+
+        throttle.failed("a@b.com")
+        throttle.failed("a@b.com")
+
+        assert throttle.check("a@b.com") is not None

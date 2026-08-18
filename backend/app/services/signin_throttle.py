@@ -29,9 +29,25 @@ one wins.
 then gets it right is not an attacker, and carrying their failures forward
 would lock out the person who just proved who they are.
 
-In memory rather than in the database. The window is minutes, a restart
-clearing it is acceptable, and a write on every failed guess would hand an
-attacker a way to make the database do work too.
+**Counted in Redis, not in this process.** The API runs under gunicorn with
+several uvicorn workers, and a module-level counter in each of them is not one
+limit of eight - it is one limit of eight per worker, read from whichever
+worker happened to answer. That was the first implementation here and it did
+not throttle: ten wrong passwords in a row went through and the snapshot
+reported zero failures, because the process being asked was not the process
+that had counted.
+
+Not the database either. The window is minutes, a restart clearing it is
+acceptable, and a write per failed guess would hand an attacker a way to make
+the database do work too. Redis is already a hard dependency of this
+deployment and expires keys on its own.
+
+**If Redis cannot be reached it falls back to the per-process counter and
+says so.** That fallback is weaker by exactly the number of workers, which is
+why the snapshot reports which one is in force - a limiter quietly running at
+four times its stated limit is worse than one that is honest about it.
+Refusing every sign-in instead would lock the operator out of their own
+controls at the moment something is already wrong.
 """
 
 from __future__ import annotations
@@ -39,6 +55,7 @@ from __future__ import annotations
 import threading
 from collections import deque
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 #: How long failures are remembered. Short enough that a person who forgot
 #: their password can try again after a coffee; long enough that grinding
@@ -142,6 +159,133 @@ class Throttle:
             }
 
 
-#: The one the API uses. A module-level instance because the window is
-#: per-process state and there is one process serving these routes.
-throttle = Throttle()
+
+
+#: Key prefix for the shared counters. Namespaced so a flush of something
+#: else's keys cannot silently disable this.
+KEY_PREFIX = "molido:signin"
+
+
+def _redis():
+    """A client, or None if Redis cannot be reached quickly.
+
+    The timeout is short on purpose: this runs on the path of every sign-in,
+    and a slow limiter is a slow front door.
+    """
+    try:
+        import redis
+
+        from app.core.config import get_settings
+
+        client = redis.Redis.from_url(
+            get_settings().redis_url, socket_connect_timeout=1, socket_timeout=1
+        )
+        client.ping()
+        return client
+    except Exception:  # noqa: BLE001 - any failure means "use the fallback"
+        return None
+
+
+class SharedThrottle:
+    """The same limits, counted where every worker can see them."""
+
+    def __init__(
+        self,
+        *,
+        window: timedelta = WINDOW,
+        per_email: int = PER_EMAIL,
+        overall: int = GLOBAL,
+    ) -> None:
+        self.window = window
+        self.per_email = per_email
+        self.overall = overall
+        #: Used when Redis is unreachable. Weaker by the number of workers,
+        #: and the snapshot says which is in force.
+        self.fallback = Throttle(window=window, per_email=per_email, overall=overall)
+
+    def _keys(self, email: str) -> tuple[str, str]:
+        key = email.strip().lower()
+        return f"{KEY_PREFIX}:email:{key}", f"{KEY_PREFIX}:all"
+
+    def check(self, email: str, *, now: datetime | None = None) -> str | None:
+        client = _redis()
+        if client is None:
+            return self.fallback.check(email, now=now)
+
+        minutes = int(self.window.total_seconds() // 60)
+        email_key, all_key = self._keys(email)
+        try:
+            per_address = int(client.get(email_key) or 0)
+            everyone = int(client.get(all_key) or 0)
+        except Exception:  # noqa: BLE001 - a read that failed is not a zero
+            return self.fallback.check(email, now=now)
+
+        if per_address >= self.per_email:
+            return (
+                "too many failed sign-ins for this address. Try again in "
+                f"{minutes} minutes"
+            )
+        if everyone >= self.overall:
+            return f"too many failed sign-ins. Try again in {minutes} minutes"
+        return None
+
+    def failed(self, email: str, *, now: datetime | None = None) -> None:
+        client = _redis()
+        if client is None:
+            self.fallback.failed(email, now=now)
+            return
+        email_key, all_key = self._keys(email)
+        seconds = int(self.window.total_seconds())
+        try:
+            pipe = client.pipeline()
+            # INCR then EXPIRE rather than SETEX: the window is from the first
+            # failure, so a steady drip of guesses cannot keep pushing the
+            # expiry out and stay under the limit forever.
+            pipe.incr(email_key)
+            pipe.expire(email_key, seconds, nx=True)
+            pipe.incr(all_key)
+            pipe.expire(all_key, seconds, nx=True)
+            pipe.execute()
+        except Exception:  # noqa: BLE001
+            self.fallback.failed(email, now=now)
+
+    def succeeded(self, email: str) -> None:
+        self.fallback.succeeded(email)
+        client = _redis()
+        if client is None:
+            return
+        email_key, _ = self._keys(email)
+        try:
+            client.delete(email_key)
+        except Exception:  # noqa: BLE001 - the address stays counted, which
+            # is the safe direction: it can only refuse, never allow.
+            pass
+
+    def snapshot(self, *, now: datetime | None = None) -> dict[str, Any]:
+        client = _redis()
+        if client is None:
+            return {
+                **self.fallback.snapshot(now=now),
+                "counted_in": "process",
+                "warning": (
+                    "Redis is unreachable, so each worker is counting on its "
+                    "own - the effective limit is this one times the number "
+                    "of workers"
+                ),
+            }
+        try:
+            everyone = int(client.get(f"{KEY_PREFIX}:all") or 0)
+            addresses = len(list(client.scan_iter(f"{KEY_PREFIX}:email:*", count=200)))
+        except Exception:  # noqa: BLE001
+            return {**self.fallback.snapshot(now=now), "counted_in": "process"}
+        return {
+            "addresses_with_failures": addresses,
+            "failures_in_window": everyone,
+            "per_email_limit": self.per_email,
+            "overall_limit": self.overall,
+            "counted_in": "redis",
+        }
+
+
+#: The one the API uses.
+throttle = SharedThrottle()
