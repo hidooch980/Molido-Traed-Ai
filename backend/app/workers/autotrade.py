@@ -538,12 +538,31 @@ def _account_state(
 #: from a different feed is a different number for the same moment - the public
 #: feed and the broker sit about four pips apart on EURUSD here.
 #:
-#: The daily series is the only other one admitted, and only because its
-#: geometry is wide enough to survive the gap: a 2.5x ATR stop on D1 is around
-#: eighty-five pips, so four pips of feed difference is under five percent of
-#: it. The same reasoning fails at H1, where the stop is twenty-odd pips and
-#: the gap is a fifth of it - which is why H1 stays broker-only.
-REANCHORED_SOURCES = frozenset({"dukascopy"})
+#: The reasoning that admitted the daily series was that a 2.5x ATR stop on D1
+#: is around eighty-five pips, so four pips of feed difference is under five
+#: percent of it. Measured against the live book, the actual gap on the one
+#: recorded D1 decision was 146.7 pips - not feed difference at all, but a
+#: series that stops last December. Re-anchoring held the stop at exactly the
+#: 84.9 pips the decision asked for, where sending it as recorded would have
+#: placed it 232 pips away, nearly three times the intended risk.
+#:
+#: So the mechanism works and the admission was wrong. Both are kept: the
+#: function, because a current series will need it, and the empty set, because
+#: this one is not current.
+#: Empty, and the reason is measured rather than cautious. The daily series
+#: this was written for ends on 2025-12-31 - two hundred and thirty days stale
+#: - because the backfill loaded 2005 to 2025 and never reached this year. A
+#: decision taken on it is not a stale price, it is a stale *market*, and
+#: re-anchoring would carry last December's signal onto today's quote, which
+#: is worse than not trading it at all.
+#:
+#: The check that would have caught this on its own is decision *age*, and it
+#: does not: these entries were opened minutes ago on data from December. Age
+#: of the row is not age of the evidence.
+#:
+#: Put "dukascopy" back when the series reaches the current day, and not
+#: before. Everything below is written and tested against it.
+REANCHORED_SOURCES: frozenset[str] = frozenset()
 
 
 def _levels_from_broker(
@@ -867,6 +886,20 @@ def run_cycle(
             )
             continue
 
+        # A decision from another feed carries that feed's prices, and the
+        # public series sits about four pips from the broker on EURUSD here.
+        # Its *shape* is volatility and transfers; its absolute levels do not.
+        if entry.price_source != SOURCE_BROKER:
+            reanchored = _levels_from_broker(geometry, specification, entry.decision)
+            if reanchored is None:
+                skipped.append(
+                    f"{entry.symbol}: recorded on {entry.price_source} and the "
+                    "terminal publishes no quote to re-anchor it onto, so its "
+                    "levels would be another feed's prices"
+                )
+                continue
+            price, stop, target = reanchored
+
         clear, news_reason = _news_gate(entry.symbol, moment, releases)
         if not clear:
             skipped.append(f"{entry.symbol}: {news_reason}")
@@ -1048,7 +1081,9 @@ def _pending(session: Session, moment: datetime) -> list[JournalEntry]:
         select(JournalEntry)
         .where(
             JournalEntry.arm == ARM_RULE,
-            JournalEntry.price_source == SOURCE_BROKER,
+            # The terminal's own series, plus any series wide enough to be
+            # re-anchored onto the broker's price. See REANCHORED_SOURCES.
+            JournalEntry.price_source.in_([SOURCE_BROKER, *sorted(REANCHORED_SOURCES)]),
             JournalEntry.closed_at.is_(None),
             JournalEntry.opened_at >= cutoff,
         )

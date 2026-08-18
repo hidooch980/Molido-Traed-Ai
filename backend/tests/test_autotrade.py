@@ -1345,3 +1345,109 @@ class TestTheAccountWideNewsAnswer:
         """The engine gates on an unknown restriction, which is the same
         position the per-symbol check takes and for the same reason."""
         assert autotrade._any_high_impact_now(NEWS_NOW, None) is None
+
+
+class TestADecisionFromAnotherFeedIsReanchored:
+    """The daily series is measured on dukascopy and the order meets the
+    broker. Those two disagree by about four pips on EURUSD here, so a level
+    taken from one and sent to the other is a stop at a price that meant
+    something on a different chart."""
+
+    GEOMETRY = {"entry": 1.37241, "stop": 1.36392, "target": 1.38090}
+    SPEC = {"bid": 1.37500, "ask": 1.37514}
+
+    def test_a_long_enters_at_the_ask(self):
+        """A buy lifts the ask. Entering at a mid nobody trades understates
+        the cost by half the spread on every decision."""
+        entry, _, _ = autotrade._levels_from_broker(self.GEOMETRY, self.SPEC, "long")
+
+        assert entry == 1.37514
+
+    def test_a_short_enters_at_the_bid(self):
+        entry, _, _ = autotrade._levels_from_broker(self.GEOMETRY, self.SPEC, "short")
+
+        assert entry == 1.37500
+
+    def test_the_stop_distance_survives_the_move(self):
+        """The distance is what the analysis produced - it is volatility, and
+        volatility transfers between feeds. Only the anchor changes."""
+        recorded = abs(self.GEOMETRY["entry"] - self.GEOMETRY["stop"])
+
+        entry, stop, _ = autotrade._levels_from_broker(self.GEOMETRY, self.SPEC, "long")
+
+        assert abs(entry - stop) == pytest.approx(recorded)
+
+    def test_the_target_distance_survives_too(self):
+        recorded = abs(self.GEOMETRY["target"] - self.GEOMETRY["entry"])
+
+        entry, _, target = autotrade._levels_from_broker(
+            self.GEOMETRY, self.SPEC, "long"
+        )
+
+        assert abs(target - entry) == pytest.approx(recorded)
+
+    def test_the_stop_sits_below_a_long_and_above_a_short(self):
+        _, long_stop, _ = autotrade._levels_from_broker(
+            self.GEOMETRY, self.SPEC, "long"
+        )
+        short_entry, short_stop, _ = autotrade._levels_from_broker(
+            self.GEOMETRY, self.SPEC, "short"
+        )
+
+        assert long_stop < self.SPEC["ask"]
+        assert short_stop > short_entry
+
+    def test_distances_come_from_the_recorded_levels_not_the_constants(self):
+        """A decision keeps whatever geometry it was written with. Re-deriving
+        from today's multiples would silently re-shape an old decision if one
+        ever moved."""
+        odd = {"entry": 100.0, "stop": 97.0, "target": 106.0}
+
+        entry, stop, target = autotrade._levels_from_broker(
+            odd, {"bid": 200.0, "ask": 200.0}, "long"
+        )
+
+        assert entry - stop == pytest.approx(3.0)
+        assert target - entry == pytest.approx(6.0)
+
+    def test_no_quote_refuses_rather_than_guessing_where_the_market_is(self):
+        assert autotrade._levels_from_broker(self.GEOMETRY, {}, "long") is None
+        assert autotrade._levels_from_broker(self.GEOMETRY, {"bid": None}, "long") is None
+
+    def test_a_zero_stop_distance_refuses(self):
+        flat = {"entry": 1.1, "stop": 1.1}
+
+        assert autotrade._levels_from_broker(flat, self.SPEC, "long") is None
+
+    def test_a_missing_target_is_carried_as_missing(self):
+        """Not invented. A decision written without one is a decision without
+        one, and a target conjured here is a level nobody chose."""
+        _, _, target = autotrade._levels_from_broker(
+            {"entry": 1.37241, "stop": 1.36392}, self.SPEC, "long"
+        )
+
+        assert target is None
+
+    def test_a_broker_decision_is_left_alone(self):
+        """Its prices are the prices the order will meet, so re-anchoring
+        would move a level that was already correct."""
+        from app.models.journal import SOURCE_BROKER
+
+        assert SOURCE_BROKER not in autotrade.REANCHORED_SOURCES
+
+    def test_nothing_is_admitted_while_no_series_is_current(self):
+        """The daily series this was written for ends on 2025-12-31. Measured
+        against the live book its gap was 146.7 pips - not feed difference but
+        a stale market - and re-anchoring would have carried last December's
+        signal onto today's quote."""
+        assert autotrade.REANCHORED_SOURCES == frozenset()
+
+    def test_the_mechanism_is_kept_for_a_series_that_is_current(self):
+        """The admission was wrong; the arithmetic was not. Sending the one
+        recorded decision as-is would have placed its stop 232 pips away
+        instead of the 84.9 it asked for."""
+        entry, stop, _ = autotrade._levels_from_broker(
+            self.GEOMETRY, {"bid": 1.38691, "ask": 1.38708}, "long"
+        )
+
+        assert (entry - stop) * 10000 == pytest.approx(84.9, abs=0.1)
