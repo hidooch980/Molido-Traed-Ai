@@ -75,6 +75,7 @@ ROLE_PERMISSIONS: dict[UserRole, set[Permission]] = {
     UserRole.OWNER: set(Permission),
     UserRole.ADMIN: {
         Permission.READ,
+        Permission.SELF_MANAGE,
         Permission.SIMULATE,
         Permission.HALT,
         Permission.USERS_MANAGE,
@@ -84,19 +85,26 @@ ROLE_PERMISSIONS: dict[UserRole, set[Permission]] = {
     },
     UserRole.TRADER: {
         Permission.READ,
+        Permission.SELF_MANAGE,
         Permission.SIMULATE,
         Permission.EXECUTE,
         Permission.HALT,
     },
     UserRole.ANALYST: {
         Permission.READ,
+        Permission.SELF_MANAGE,
         Permission.SIMULATE,
         Permission.HALT,
     },
     # Where self sign-up lands. Read, and nothing that moves - including the
     # kill switch, which a stranger holding would be a way to stop the system
     # by registering.
-    UserRole.VIEWER: {Permission.READ},
+    # Read, act on itself, and nothing that moves - including the kill
+    # switch, which a stranger holding would be a way to stop the system by
+    # registering. `SELF_MANAGE` is here so a viewer can change their own
+    # password and turn on a second factor; withholding that would mean the
+    # weakest accounts are also the ones that cannot be secured.
+    UserRole.VIEWER: {Permission.READ, Permission.SELF_MANAGE},
 }
 
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, ForeignKey, Integer, String, UniqueConstraint
+from sqlalchemy import BigInteger, Boolean, ForeignKey, Integer, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.enums import UserRole
@@ -39,6 +39,32 @@ class User(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     locale: Mapped[str] = mapped_column(String(10), default="en", nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     last_login_at: Mapped[datetime | None] = mapped_column(TimestampType, nullable=True)
+
+    # --- second factor -------------------------------------------------
+    #
+    # The shared secret an authenticator app holds. Null until enrolment
+    # starts. Unlike a password this cannot be hashed - the server has to
+    # compute the same code the phone does - so it is stored as issued, and
+    # the protections around it are the ones around the database itself:
+    # Postgres publishes no host port on this deployment, and the dump the
+    # nightly backup makes is the only copy that leaves the machine.
+    #
+    # That is a real trade and it is written down rather than glossed. The
+    # alternative is an encryption key, which has to live somewhere the
+    # application can read it - which is the same threat model with one more
+    # file in it.
+    totp_secret: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+    # Enrolment is not finished when a secret is issued. It is finished when
+    # the user proves the app is working by typing a code it produced. Until
+    # this is set the account has no second factor, and an account left
+    # half-enrolled must not be locked out of itself.
+    totp_confirmed_at: Mapped[datetime | None] = mapped_column(TimestampType, nullable=True)
+
+    # The last 30-second step accepted. A code stays valid for its whole
+    # window, so without this the same six digits work twice - and the second
+    # time is the one somebody read over a shoulder.
+    totp_last_step: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
     # The code a stranger types to say who sent them. Unique, because two
     # accounts sharing one would credit whichever the query found first - a bug

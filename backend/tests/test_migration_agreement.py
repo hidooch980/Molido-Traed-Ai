@@ -24,25 +24,43 @@ from __future__ import annotations
 import importlib
 
 import pytest
+import sqlalchemy as sa
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
 from sqlalchemy import create_engine, inspect
 
 from app.models.human_checks import HumanChallenge
 from app.models.login_attempts import LoginAttempt
+from app.models.recovery_codes import RecoveryCode
+from app.models.tenancy import User
 
 MIGRATIONS = [
     "app.db.alembic.versions.0012_login_attempts",
     "app.db.alembic.versions.0013_human_challenges",
+    "app.db.alembic.versions.0014_two_factor",
 ]
 
-TABLES = [LoginAttempt, HumanChallenge]
+TABLES = [LoginAttempt, HumanChallenge, RecoveryCode]
 
 
 @pytest.fixture()
 def migrated():
     """A SQLite database built by the migrations, not by the models."""
     engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+    # `0014` alters `users` and `recovery_codes` points a foreign key at it,
+    # but no migration in this list creates it - the real chain builds it in
+    # `0001`, which is Postgres-only.
+    #
+    # So a stand-in is created with the *pre-0014* shape: an id for the foreign
+    # key to reference, and none of the columns 0014 adds. Building it from the
+    # model instead would already contain them, and the ALTERs would fail as
+    # duplicates - which is a test failing because the fixture did the
+    # migration's job, not because anything is wrong.
+    sa.Table(
+        "users",
+        sa.MetaData(),
+        sa.Column("id", sa.Uuid(), primary_key=True),
+    ).create(engine)
     with engine.begin() as connection:
         context = MigrationContext.configure(connection)
         # Installs the module-level `op` proxy the migration files import.
@@ -106,3 +124,32 @@ def test_downgrade_removes_what_upgrade_added(migrated):
     remaining = set(inspect(migrated).get_table_names())
 
     assert remaining.isdisjoint({m.__tablename__ for m in TABLES})
+
+
+#: The columns `0014` adds to a table it does not create. Checked separately
+#: from `TABLES`, whose members are whole tables the migrations build.
+ADDED_TO_USERS = ("totp_secret", "totp_confirmed_at", "totp_last_step")
+
+
+def test_the_second_factor_columns_land_on_users(migrated):
+    built = {c["name"] for c in inspect(migrated).get_columns("users")}
+
+    assert set(ADDED_TO_USERS) <= built
+
+
+def test_those_columns_are_the_ones_the_model_declares(migrated):
+    """A column the model calls `totp_last_step` and the migration calls
+    `totp_step` is a `None` on every sign-in, and the replay guard silently
+    stops guarding."""
+    declared = {c.name for c in User.__table__.columns}
+
+    assert set(ADDED_TO_USERS) <= declared
+
+
+def test_they_are_all_nullable(migrated):
+    """An account that predates the second factor has none, and a NOT NULL
+    column added to a populated table fails the migration on the server rather
+    than in any test that builds its schema from the models."""
+    built = {c["name"]: c["nullable"] for c in inspect(migrated).get_columns("users")}
+
+    assert all(built[name] for name in ADDED_TO_USERS)

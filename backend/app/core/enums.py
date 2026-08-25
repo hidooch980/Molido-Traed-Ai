@@ -180,6 +180,13 @@ class Permission(StrEnum):
     #: include live execution, and both are checked separately.
     EXECUTE = "execute"
 
+    #: Act on your own account: change your password, turn on a second
+    #: factor, ask for a fresh verification link. Held by every role and by no
+    #: anonymous caller, which is exactly the distinction that was missing -
+    #: these routes mutate, so READ leaves them reachable by a stranger, and
+    #: SIMULATE meant a viewer could not change their own password.
+    SELF_MANAGE = "self.manage"
+
     #: Engage the kill switch. Wide on purpose.
     HALT = "halt"
     #: Clear a halt. Narrow on purpose.
@@ -236,6 +243,11 @@ class AuditEventType(StrEnum):
     SIGN_IN_THROTTLED = "auth.sign_in.throttled"
     HUMAN_CHECK_FAILED = "auth.human_check.failed"
     SIGN_OUT = "auth.sign_out"
+    #: Somebody signed in with a recovery code rather than the app. Usually a
+    #: lost phone; occasionally somebody else holding the codes.
+    RECOVERY_CODE_USED = "auth.recovery_code.used"
+    TWO_FACTOR_ENROLLED = "auth.two_factor.enrolled"
+    TWO_FACTOR_DISABLED = "auth.two_factor.disabled"
     #: Somebody authenticated reached for authority they do not hold. Rare by
     #: construction, and the most interesting line in the log when it is not.
     PERMISSION_DENIED = "auth.permission.denied"

@@ -59,6 +59,9 @@ SECURITY_EVENTS: tuple[AuditEventType, ...] = (
     AuditEventType.SIGN_IN_THROTTLED,
     AuditEventType.HUMAN_CHECK_FAILED,
     AuditEventType.SIGN_OUT,
+    AuditEventType.RECOVERY_CODE_USED,
+    AuditEventType.TWO_FACTOR_ENROLLED,
+    AuditEventType.TWO_FACTOR_DISABLED,
     AuditEventType.PERMISSION_DENIED,
     AuditEventType.USER_CREATED,
     AuditEventType.USER_REGISTERED,
@@ -79,6 +82,8 @@ SECURITY_EVENTS: tuple[AuditEventType, ...] = (
 ALARMING: frozenset[AuditEventType] = frozenset(
     {
         AuditEventType.PERMISSION_DENIED,
+        AuditEventType.RECOVERY_CODE_USED,
+        AuditEventType.TWO_FACTOR_DISABLED,
         AuditEventType.SIGN_IN_THROTTLED,
         AuditEventType.USER_ROLE_CHANGED,
         AuditEventType.KILL_SWITCH_RELEASED,

@@ -52,7 +52,11 @@ READ = Depends(require(Permission.READ))
 #: verification link. A mutation, so above READ, but not account management -
 #: needing the permission that mints admins in order to change your own
 #: password would give every user the power to mint one.
-SIMULATE = Depends(require(Permission.SIMULATE))
+#:
+#: This was SIMULATE, which a viewer does not hold - so the role with the least
+#: to lose was the one role that could not change its own password. `READ` is
+#: not an option either: an anonymous caller holds it, and these mutate.
+SELF_MANAGE = Depends(require(Permission.SELF_MANAGE))
 
 #: Creating accounts, switching them off, and reading the roster.
 #:
@@ -236,7 +240,7 @@ def set_user_active(
 @router.post("/me/password")
 def change_own_password(
     body: PasswordChange,
-    principal: Principal = SIMULATE,
+    principal: Principal = SELF_MANAGE,
     session: Session = Depends(get_db),
     molido_session: str | None = Cookie(
         default=None, alias=sessions_auth.COOKIE_NAME
@@ -338,7 +342,7 @@ def verify_account(
 
 @router.post("/me/verification")
 def resend_verification(
-    principal: Principal = SIMULATE,
+    principal: Principal = SELF_MANAGE,
     session: Session = Depends(get_db),
 ) -> dict[str, Any]:
     """Ask for a new link. The previous unused one stops working."""
