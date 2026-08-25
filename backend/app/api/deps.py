@@ -25,11 +25,11 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from fastapi import Cookie, Depends, Header
+from fastapi import Cookie, Depends, Header, Request
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.guard import PERMISSION_ATTR
+from app.api.guard import BOOTSTRAP_PATHS, PERMISSION_ATTR
 from app.core.config import get_settings
 from app.core.enums import Permission, UserRole
 from app.core.errors import MolidoError
@@ -160,6 +160,7 @@ def _principal_for(session: Session, key: ApiKey) -> Principal:
 
 
 def resolve_principal(
+    request: Request,
     x_api_key: str | None = Header(default=None, alias="X-API-Key"),
     molido_session: str | None = Cookie(default=None, alias="molido_session"),
     session: Session = Depends(get_db),
@@ -184,7 +185,12 @@ def resolve_principal(
         # lock somebody out of the public pages for holding an old cookie.
 
     if not x_api_key:
-        if settings.require_auth:
+        # The seven routes that exist to *obtain* a credential are exempt, and
+        # they have to be: applied without exception, `require_auth` closes the
+        # sign-in route as well, and a deployment with the flag on and nobody
+        # signed in can never be signed into again. The list is in
+        # `api.guard`, next to the other one, so both are read together.
+        if settings.require_auth and request.url.path not in BOOTSTRAP_PATHS:
             raise AuthenticationError("An API key is required for this deployment.")
         return ANONYMOUS
 

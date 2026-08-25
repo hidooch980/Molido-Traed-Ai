@@ -183,4 +183,16 @@ class TestThePagesThatClaimToBeBuiltActuallyRead:
         if page.parent.name in {"settings", "charts", "verify", "login", "register"}:
             return
 
+        # The landing page is the one page that reads nothing and must not.
+        # It is the only page a visitor sees without an account, and every
+        # figure this application holds is about somebody's account - so a
+        # landing page that fetched live data would be publishing it to anybody
+        # who loaded the URL. Its whole content is claims about the system,
+        # which are true whether or not a database is reachable.
+        if page.parent.name == "app":
+            assert "api." not in source, (
+                "the landing page is public and must read nothing"
+            )
+            return
+
         assert "api." in source, f"{page.parent.name} renders without reading anything"

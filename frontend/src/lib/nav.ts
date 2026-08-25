@@ -16,7 +16,7 @@ export interface NavItem {
 }
 
 export const NAV: NavItem[] = [
-  { key: "home", labelKey: "nav.home", href: "/", group: "overview" },
+  { key: "home", labelKey: "nav.home", href: "/dashboard", group: "overview" },
   { key: "ai-brain", labelKey: "nav.aiBrain", href: "/brain", group: "overview" },
   { key: "situation-room", labelKey: "nav.situationRoom", href: "/posture", group: "overview" },
 

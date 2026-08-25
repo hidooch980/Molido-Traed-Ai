@@ -969,3 +969,205 @@ body {
     display: none;
   }
 }
+
+/* ---------------------------------------------------------------- landing
+ *
+ * The only page a visitor sees without an account, and it reads nothing. That
+ * is deliberate: everything this application knows is about somebody's
+ * account, so a landing page that fetched live figures would be publishing
+ * them to anybody who loaded the URL.
+ *
+ * It is wider and quieter than the dashboard. A dashboard is dense because
+ * somebody is working; a landing page is read once, slowly, by somebody
+ * deciding whether to bother.
+ */
+.landing {
+  min-height: 100vh;
+  min-height: 100dvh;
+  background: var(--plane);
+}
+
+.landing-bar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem clamp(1rem, 4vw, 3rem);
+  background: color-mix(in srgb, var(--plane) 88%, transparent);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--border);
+}
+
+.landing-brand {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.landing-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.landing-hero {
+  position: relative;
+  overflow: hidden;
+  padding: clamp(3rem, 9vw, 7rem) clamp(1rem, 4vw, 3rem) clamp(3rem, 7vw, 5.5rem);
+}
+
+.landing-grid {
+  opacity: 0.6;
+}
+
+.landing-hero-body {
+  position: relative;
+  max-width: 60rem;
+  margin-inline: auto;
+  text-align: center;
+}
+
+.landing-eyebrow {
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin-bottom: 1.25rem;
+}
+
+/* The one place a headline is allowed to be this big. It is a single sentence
+   read once, which is exactly the case the dashboard's display size is wrong
+   for. */
+.landing-title {
+  font-size: clamp(2rem, 5.5vw, 3.75rem);
+  font-weight: 800;
+  line-height: 1.15;
+  letter-spacing: -0.03em;
+  text-wrap: balance;
+}
+
+.landing-lede {
+  margin: 1.5rem auto 0;
+  max-width: 46rem;
+  font-size: clamp(0.9375rem, 1.6vw, 1.125rem);
+  line-height: 1.85;
+  color: var(--ink-2);
+  text-wrap: pretty;
+}
+
+.landing-cta {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.75rem;
+  margin-top: 2.25rem;
+}
+
+.landing-button {
+  width: auto;
+  min-width: 12rem;
+  margin-top: 0;
+  text-align: center;
+}
+
+.landing-section {
+  max-width: 72rem;
+  margin-inline: auto;
+  padding: clamp(2.5rem, 6vw, 4.5rem) clamp(1rem, 4vw, 3rem);
+  border-top: 1px solid var(--border);
+}
+
+.landing-h2 {
+  font-size: clamp(1.375rem, 2.6vw, 2rem);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.25;
+}
+
+.landing-section-lede {
+  margin-top: 0.75rem;
+  max-width: 52rem;
+  color: var(--ink-3);
+  font-size: 0.9375rem;
+  line-height: 1.8;
+}
+
+.landing-chain,
+.landing-refusals {
+  display: grid;
+  gap: 1rem;
+  margin-top: 2.25rem;
+  padding: 0;
+  list-style: none;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 17rem), 1fr));
+}
+
+.landing-step,
+.landing-refusals > li {
+  padding: 1.4rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel);
+}
+
+/* Numbered, because the order is the argument. The chain's whole value is that
+   the second link cannot be overruled by the first, and a grid of four
+   unnumbered cards says nothing about sequence. */
+.landing-step-n {
+  display: block;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+  margin-bottom: 0.6rem;
+}
+
+.landing-step-title,
+.landing-refusal-title {
+  font-size: 1rem;
+  font-weight: 700;
+  line-height: 1.35;
+  letter-spacing: -0.01em;
+}
+
+.landing-refusal-title {
+  color: var(--ink);
+  padding-inline-start: 0.9rem;
+  border-inline-start: 3px solid var(--warning);
+}
+
+.landing-step-body {
+  margin-top: 0.6rem;
+  font-size: 0.875rem;
+  line-height: 1.8;
+  color: var(--ink-3);
+}
+
+.landing-foot {
+  max-width: 72rem;
+  margin-inline: auto;
+  padding: 2rem clamp(1rem, 4vw, 3rem) 3rem;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 0.75rem;
+  line-height: 1.8;
+  color: var(--ink-3);
+}
+
+.landing-foot p {
+  max-width: 52rem;
+}
+
+.landing-foot-brand {
+  font-weight: 700;
+  color: var(--ink-2);
+}
