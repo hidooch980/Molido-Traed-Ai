@@ -137,15 +137,20 @@ export default function Shell({
           ☰
         </button>
 
-        <Logo />
-        <div className="min-w-0">
-          <div className="font-bold leading-tight text-[0.9375rem]">
+        {/* The brand lives at the top of the rail, where it stays put. Repeating
+            it in the header cost the widest strip of the screen to say the
+            same word twice, and left no room for the thing a header is for:
+            what is happening right now. */}
+        <div className="md:hidden flex items-center gap-2 min-w-0">
+          <Logo size={24} />
+          <span className="font-bold text-[0.9375rem]">
             Molido<span style={{ color: "var(--accent)" }}>Trade</span>
-            <span className="eyebrow ms-1.5 align-middle">AI</span>
-          </div>
-          <div className="text-[0.6875rem] ink-3 truncate hidden sm:block">
-            {t("app.tagline")}
-          </div>
+          </span>
+        </div>
+
+        <div className="posture-strip" title={t("app.noExecution")}>
+          <span className="posture-dot" />
+          <span className="posture-text">{t("app.noExecution")}</span>
         </div>
 
         <div className="flex-1" />
@@ -205,14 +210,27 @@ export default function Shell({
         )}
 
         <nav
-          className={`panel-flat shrink-0 overflow-y-auto p-2.5 transition-all duration-200 ${
-            menuOpen ? "block fixed inset-y-0 z-10 mt-12 w-56" : "hidden"
-          } md:block ${railCollapsed ? "md:w-0 md:p-0 md:overflow-hidden" : "md:w-56"}`}
-          style={{ borderBlock: "none", borderInlineStart: "none" }}
+          className={`rail shrink-0 overflow-y-auto transition-all duration-200 ${
+            menuOpen ? "block fixed inset-y-0 z-10 mt-12 w-64" : "hidden"
+          } md:block ${railCollapsed ? "md:w-0 md:p-0 md:overflow-hidden" : "md:w-64"}`}
         >
+          {/* Anchored, not scrolled past. On a rail of thirty-five links the
+              brand is the one fixed point, and a wordmark that slides away
+              takes the sense of place with it. */}
+          <div className="rail-brand hidden md:flex">
+            <Logo size={26} />
+            <div className="min-w-0">
+              <div className="rail-wordmark">
+                Molido<span style={{ color: "var(--accent)" }}>Trade</span>
+                <span className="rail-ai">AI</span>
+              </div>
+              <div className="rail-tagline">{t("app.tagline")}</div>
+            </div>
+          </div>
+
           {GROUPS.map((group) => (
-            <div key={group} className="mb-3">
-              <div className="eyebrow px-2 mb-1">{t(`nav.${group}`)}</div>
+            <div key={group} className="rail-group">
+              <div className="rail-group-label">{t(`nav.${group}`)}</div>
               {NAV.filter((item) => item.group === group).map((item) => {
                 const label = item.labelKey.includes(".")
                   ? t(item.labelKey)
@@ -247,13 +265,16 @@ export default function Shell({
             </div>
           ))}
 
-          <p className="text-[0.6875rem] ink-3 px-2 pt-2 leading-relaxed">
-            {t("nav.note")}
-          </p>
+          <p className="rail-note">{t("nav.note")}</p>
         </nav>
 
         <div className="flex-1 min-w-0 flex flex-col overflow-y-auto">
-          <main className="flex-1 p-3 md:p-5">{children}</main>
+          {/* A measure. Full-bleed content on a 27-inch monitor produces table
+              rows a metre wide, and the eye loses the row between the label at
+              one edge and the number at the other. */}
+          <main className="page-main">
+            <div className="page-measure">{children}</div>
+          </main>
 
           {/* Build stamp. Deliberately always visible and never breakpoint-hidden:
               its only job is to answer "did my deploy land?", and it cannot do

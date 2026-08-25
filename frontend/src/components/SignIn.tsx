@@ -134,71 +134,16 @@ export function SignIn({ labels }: { labels: SignInLabels }) {
     );
   }
 
-  if (!open) {
-    return (
-      <button
-        type="button"
-        onClick={() => setOpen(true)}
-        className="pill"
-        style={{ color: "var(--accent)", borderColor: "var(--accent)", cursor: "pointer" }}
-        title={labels.anonymousHint}
-      >
-        {labels.signIn}
-      </button>
-    );
-  }
-
+  // Signing out stays here: it is one button and it needs no page. Signing in
+  // does not - the real flow is four steps, and this popover could hold one.
   return (
-    <form
-      onSubmit={submit}
-      className="panel p-3 space-y-2"
-      style={{ position: "absolute", insetInlineEnd: "1rem", top: "3rem", zIndex: 20, width: "18rem" }}
+    <a
+      href="/login"
+      className="pill"
+      style={{ color: "var(--accent)", borderColor: "var(--accent)" }}
+      title={labels.anonymousHint}
     >
-      <label className="space-y-1 block">
-        <span className="eyebrow">{labels.email}</span>
-        <input
-          type="email"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          required
-          autoComplete="username"
-          style={field}
-        />
-      </label>
-      <label className="space-y-1 block">
-        <span className="eyebrow">{labels.password}</span>
-        <input
-          type="password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          required
-          autoComplete="current-password"
-          style={field}
-        />
-      </label>
-      <div className="flex gap-2">
-        <button
-          type="submit"
-          disabled={busy}
-          className="pill"
-          style={{ color: "var(--accent)", borderColor: "var(--accent)", cursor: "pointer" }}
-        >
-          {solving ? labels.verifying : busy ? labels.working : labels.submit}
-        </button>
-        <button
-          type="button"
-          onClick={() => setOpen(false)}
-          className="pill"
-          style={{ color: "var(--ink-3)", cursor: "pointer" }}
-        >
-          {labels.cancel}
-        </button>
-      </div>
-      {error && (
-        <p className="text-xs" style={{ color: "var(--critical)" }}>
-          {error}
-        </p>
-      )}
-    </form>
+      {labels.signIn}
+    </a>
   );
 }

@@ -63,14 +63,18 @@ export default async function HomePage() {
   ];
 
   return (
-    <div className="space-y-4">
-      <header className="flex items-end justify-between gap-4 flex-wrap">
-        <div>
-          <h1 className="text-xl font-bold">{t("home.title")}</h1>
-          <p className="text-xs ink-3 mt-0.5">{t("home.subtitle")}</p>
+    <div className="space-y-6">
+      {/* The one place on this application that gets display type. Every other
+          heading is a label on a region; this is the sentence that says what
+          the screen is, and on a page carrying forty figures it is the only
+          thing that should be readable from across the room. */}
+      <header className="page-header">
+        <div className="min-w-0">
+          <h1 className="display">{t("home.title")}</h1>
+          <p className="page-lede">{t("home.subtitle")}</p>
         </div>
         {session?.ok && (
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 shrink-0">
             <StatusBadge
               status={session.data.is_open ? "good" : "info"}
               label={session.data.is_open ? t("home.marketOpen") : t("home.marketClosed")}

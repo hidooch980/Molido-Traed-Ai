@@ -18,6 +18,10 @@ htmlcov/
 
 # Node
 node_modules/
+# Next.js local overrides. `.env` and `*.env` do not match `.env.local`, so it
+# was one `git add -A` away from committing whichever API a developer happened
+# to be pointing at - including a production one.
+.env*.local
 .next/
 out/
 npm-debug.log*
