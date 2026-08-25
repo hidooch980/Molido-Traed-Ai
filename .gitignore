@@ -21,6 +21,9 @@ node_modules/
 .next/
 out/
 npm-debug.log*
+# TypeScript's incremental build cache. Tracked until now, so every
+# `npm run typecheck` produced a diff nobody meant to commit.
+*.tsbuildinfo
 
 # Data / artifacts
 data/raw/
