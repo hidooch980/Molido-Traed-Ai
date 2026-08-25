@@ -51,6 +51,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.errors import ValidationFailedError
+from app.execution.broker import BrokerAdapter
 from app.execution.contracts import (
     Approval,
     OrderIntent,
@@ -113,6 +114,25 @@ MAX_SPREAD_COST_R = 0.25
 DECISION_BAR_MINUTES = 60
 
 
+def _number(value: Any) -> float:
+    """A published field as a float, raising on anything that is not one.
+
+    Every caller wraps its conversions in `except (TypeError, ValueError)` and
+    treats a failure as "the terminal has not published enough to price this".
+    `dict.get` on those payloads is typed `Any | None`, so `float(None)` was
+    the path a missing field took to that handler - correct at runtime and
+    invisible to the type checker, which read six calls that could be passed
+    None and said so.
+
+    This raises the same `TypeError` on the same input, so the handlers above
+    are unchanged. What it adds is that the contract is now written down: a
+    missing field is not a zero, and nothing here substitutes one.
+    """
+    if value is None:
+        raise TypeError("the terminal published no value for this field")
+    return float(value)
+
+
 def _feed_age_bars(published: dict[str, Any], moment: datetime) -> float | None:
     """How stale the terminal's own publication is, in decision bars.
 
@@ -132,7 +152,7 @@ def _feed_age_bars(published: dict[str, Any], moment: datetime) -> float | None:
     if seconds is None:
         seconds = published.get("age_seconds")
     try:
-        minutes = abs(float(seconds)) / 60.0
+        minutes = abs(_number(seconds)) / 60.0
     except (TypeError, ValueError):
         return None
     return minutes / max(DECISION_BAR_MINUTES, 1)
@@ -306,11 +326,11 @@ def _open_risk_r(
     treats an unpriceable position as unknown exposure rather than none.
     """
     try:
-        opened = float(position.get("price_open"))
-        stop = float(position.get("stop"))
-        volume = float(position.get("volume"))
-        tick_value = float(specification.get("tick_value"))
-        tick_size = float(specification.get("tick_size"))
+        opened = _number(position.get("price_open"))
+        stop = _number(position.get("stop"))
+        volume = _number(position.get("volume"))
+        tick_value = _number(specification.get("tick_value"))
+        tick_size = _number(specification.get("tick_size"))
     except (TypeError, ValueError):
         return None
     if tick_size <= 0 or one_r_money <= 0 or volume <= 0:
@@ -637,7 +657,7 @@ def run_cycle(
     session: Session,
     *,
     now: datetime | None = None,
-    broker: MetaTraderBroker | None = None,
+    broker: BrokerAdapter | None = None,
     bridge: Any = None,
     kill_switch: Any = None,
 ) -> dict[str, Any]:
@@ -657,7 +677,7 @@ def run_cycle(
 
     moment = (now or datetime.now(UTC)).astimezone(UTC)
     feed = bridge or MetaTraderBridge()
-    sender = broker or MetaTraderBroker()
+    sender: BrokerAdapter = broker or MetaTraderBroker()
 
     # First gate, before the mode, the account and the decisions. A halt that
     # can be reached only after four other things succeed is not a halt.
@@ -675,9 +695,9 @@ def run_cycle(
     # is. The first run of the sizing, the gates and the lot arithmetic should
     # not be on real money.
     if mode == autopilot.PAPER:
-        from app.execution.paper_broker import PaperBroker
+        from app.execution.paper_broker import LivePaperBroker
 
-        sender = broker if broker is not None else PaperBroker()
+        sender = broker if broker is not None else LivePaperBroker()
 
     published = feed.account()
     allowed, account_reason = autopilot.account_gate(published)

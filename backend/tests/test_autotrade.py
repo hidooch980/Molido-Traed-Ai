@@ -325,13 +325,13 @@ class TestTheGates:
         refusing before any of it. What must stay true is that nothing reaches
         an adapter that can place an order."""
         from app.execution import autopilot
-        from app.execution.paper_broker import PaperBroker
+        from app.execution.paper_broker import LivePaperBroker
 
         monkeypatch.setattr(
             autopilot, "mode_now", lambda: ("paper", "no proven edge", False)
         )
         decide(session)
-        paper = PaperBroker()
+        paper = LivePaperBroker()
 
         report = autotrade.run_cycle(
             session, now=NOW, broker=paper, bridge=FakeBridge()

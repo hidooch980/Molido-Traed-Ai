@@ -15,10 +15,13 @@ limits or permission. Those checks live in `safety.preflight`, and an adapter
 that repeated them would eventually disagree with it — at which point there
 are two answers and no way to tell which one is authoritative.
 
-`PaperBroker` is the only adapter here. A real one is a separate module with
-credentials the operator supplies on the server; this file deliberately
-contains no network client, so nothing in this repository can reach a live
-account.
+`PaperBroker` is the only adapter *in this file*, and it is the engine's
+simulator: it fills against `client_order_id`, applies slippage, and rehearses
+the failure paths. Two others live in sibling modules and are not
+interchangeable with it - `metatrader_broker.MetaTraderBroker`, which reaches a
+terminal through a file bridge, and `paper_broker.LivePaperBroker`, which
+mirrors that adapter's contract and sends nothing. This file deliberately
+contains no network client.
 """
 
 from __future__ import annotations
