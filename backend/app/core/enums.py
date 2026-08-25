@@ -151,11 +151,55 @@ class UserRole(StrEnum):
 
 
 class Permission(StrEnum):
-    """Command-palette / API permission tiers (spec §45)."""
+    """What a caller is allowed to do (spec §45).
 
+    The first three were the whole model, and three tiers cannot express the
+    difference between the people who use this system. `OWNER`, `ADMIN` and
+    `TRADER` all held exactly `READ | SIMULATE | EXECUTE`, which is to say the
+    roles were distinct in the database and identical in effect: an account
+    added to read analysis could send an order. The rest exist so that a role
+    can be given what it needs and nothing else.
+
+    Two of them are one capability split in half, deliberately. `HALT` engages
+    the kill switch and `RELEASE` clears it, and they are not the same
+    authority: stopping moves toward safety and starting moves away from it.
+    Everyone trusted enough to watch the system is trusted enough to stop it;
+    only the account holder decides it may run again. A single `killswitch`
+    permission would have made those one decision, and whoever was given the
+    power to stop would have been given the power to start.
+
+    `VIEWER` is left out of `HALT` on purpose - self sign-up lands there, so a
+    stranger with an account would otherwise be able to halt trading.
+    """
+
+    #: The floor. Everything the dashboard displays.
     READ = "read"
+    #: Run the chain without sending anything: replay, backtest, dry-run.
     SIMULATE = "simulate"
+    #: Send a live order. Necessary and not sufficient - the plan must also
+    #: include live execution, and both are checked separately.
     EXECUTE = "execute"
+
+    #: Engage the kill switch. Wide on purpose.
+    HALT = "halt"
+    #: Clear a halt. Narrow on purpose.
+    RELEASE = "release"
+
+    #: Create users, disable them, change their roles.
+    USERS_MANAGE = "users.manage"
+    #: Issue and revoke API keys.
+    KEYS_MANAGE = "keys.manage"
+    #: Connect or disconnect a broker account. This is the permission that
+    #: stands next to real money, so it is not given to an infrastructure role.
+    BROKER_MANAGE = "broker.manage"
+    #: Change deployment settings: watchlist, autopilot mode, intervals.
+    SETTINGS_WRITE = "settings.write"
+    #: Enter or change a prop-firm rulebook. A wrong rule here ends an account,
+    #: which is why it stays with the person whose account it is.
+    RULEBOOK_WRITE = "rulebook.write"
+    #: Read the security and audit log. Not part of READ: the log records who
+    #: signed in from where, and that is not everybody's business.
+    AUDIT_READ = "audit.read"
 
 
 class AuditEventType(StrEnum):

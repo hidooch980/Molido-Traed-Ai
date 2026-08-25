@@ -49,13 +49,53 @@ class AuthorizationError(MolidoError):
     http_status = 403
 
 
-# Which permissions each role holds. A trader may execute; an analyst may
-# simulate but never execute; a viewer may only read.
+# Which permissions each role holds.
+#
+# Until now `OWNER`, `ADMIN` and `TRADER` held the same three, so the five
+# roles were three roles wearing five names: anyone added to administer the
+# deployment could send an order, and anyone added to trade could not be
+# stopped from also managing users, because there was nothing to stop.
+#
+# Three separations carry the table, and each answers a different question.
+#
+# **Who may spend money.** `EXECUTE` and `BROKER_MANAGE` belong to the roles
+# whose job is trading. An administrator keeps the deployment running and
+# never needs either; giving them anyway is how the person with the most
+# access ends up being the person with the least reason to have it.
+#
+# **Who may stop, and who may start again.** Every role above `VIEWER` holds
+# `HALT`. Only `OWNER` holds `RELEASE`. A halt anyone can lift is a
+# suggestion.
+#
+# **Who may see who signed in.** `AUDIT_READ` is not inside `READ`. The log
+# carries addresses, times and failures, and a role created to look at charts
+# does not need to know when the owner last logged in and from where.
 ROLE_PERMISSIONS: dict[UserRole, set[Permission]] = {
-    UserRole.OWNER: {Permission.READ, Permission.SIMULATE, Permission.EXECUTE},
-    UserRole.ADMIN: {Permission.READ, Permission.SIMULATE, Permission.EXECUTE},
-    UserRole.TRADER: {Permission.READ, Permission.SIMULATE, Permission.EXECUTE},
-    UserRole.ANALYST: {Permission.READ, Permission.SIMULATE},
+    # Everything. There is one of these and it is the account holder.
+    UserRole.OWNER: set(Permission),
+    UserRole.ADMIN: {
+        Permission.READ,
+        Permission.SIMULATE,
+        Permission.HALT,
+        Permission.USERS_MANAGE,
+        Permission.KEYS_MANAGE,
+        Permission.SETTINGS_WRITE,
+        Permission.AUDIT_READ,
+    },
+    UserRole.TRADER: {
+        Permission.READ,
+        Permission.SIMULATE,
+        Permission.EXECUTE,
+        Permission.HALT,
+    },
+    UserRole.ANALYST: {
+        Permission.READ,
+        Permission.SIMULATE,
+        Permission.HALT,
+    },
+    # Where self sign-up lands. Read, and nothing that moves - including the
+    # kill switch, which a stranger holding would be a way to stop the system
+    # by registering.
     UserRole.VIEWER: {Permission.READ},
 }
 

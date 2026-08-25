@@ -150,8 +150,10 @@ class TestTheSummarySplitsReadiness:
 
 class TestOverHttp:
     def test_creating_requires_more_than_read(self, client):
-        """The route carries SIMULATE, which `require()` refuses for an
-        anonymous caller whether or not authentication is switched on."""
+        """The route carries RULEBOOK_WRITE, which `require()` refuses for an
+        anonymous caller whether or not authentication is switched on. Which
+        role may reach it when signed in is `test_permissions`; this only says
+        that nobody reaches it without signing in at all."""
         response = client.post(
             "/api/v1/risk/challenge-accounts",
             json={

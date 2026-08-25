@@ -34,7 +34,9 @@ router = APIRouter(prefix="/brokers", tags=["brokers"])
 READ = Depends(require(Permission.READ))
 #: Not EXECUTE. Connecting a terminal is not placing an order, and a route that
 #: asks for more authority than it needs is how the two stop being separate.
-SIMULATE = Depends(require(Permission.SIMULATE))
+#: Not SIMULATE either, which an analyst holds: handing a broker login to the
+#: host agent is the point at which a deployment stops being a simulator.
+BROKER_MANAGE = Depends(require(Permission.BROKER_MANAGE))
 
 log = structlog.get_logger(__name__)
 
@@ -154,16 +156,20 @@ def read_link_result(request_id: str, _: Principal = READ) -> dict[str, Any]:
 @router.post("/link")
 def create_link(
     payload: LinkPayload,
-    principal: Principal = SIMULATE,
+    principal: Principal = BROKER_MANAGE,
 ) -> dict[str, Any]:
     """Hand a broker login to the host agent.
 
-    Carries SIMULATE rather than READ, which means an unauthenticated caller is
+    Carries a permission above READ, which means an unauthenticated caller is
     refused before the body is read - `require()` enforces that for every
     permission above READ regardless of whether authentication is switched on.
     It deliberately does not carry EXECUTE: this connects a terminal, it does
     not place an order, and a route that asked for more authority than it needs
     would be the first step in blurring the two.
+
+    `BROKER_MANAGE` rather than SIMULATE, which every analyst holds. Handing
+    over a broker login is the moment a deployment stops being a simulator,
+    and the roles that may do it are the ones whose accounts they are.
 
     The password is validated, written into the request, and kept nowhere in
     this application. MetaTrader holds it in its own config, which it would do

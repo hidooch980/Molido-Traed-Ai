@@ -44,7 +44,13 @@ READ = Depends(require(Permission.READ))
 #: EXECUTE: recording which rules an account is measured against is not
 #: permission to trade it, and a route asking for more authority than it needs
 #: is how those two stop being separate questions.
-SIMULATE = Depends(require(Permission.SIMULATE))
+#:
+#: It is its own permission rather than SIMULATE because of what a wrong entry
+#: here does. A transcribed rulebook is what the challenge engine measures the
+#: account against; a daily-loss limit typed one digit out does not fail, it
+#: passes a trade that ends the account. That is the account holder's decision
+#: to get wrong, so `RULEBOOK_WRITE` belongs to the owner alone.
+RULEBOOK_WRITE = Depends(require(Permission.RULEBOOK_WRITE))
 
 
 
@@ -360,7 +366,7 @@ def read_challenge_accounts(
 @router.post("/challenge-accounts")
 def create_challenge_account(
     payload: ChallengeAccountPayload,
-    _: Principal = SIMULATE,
+    _: Principal = RULEBOOK_WRITE,
     session: Session = Depends(get_db),
 ) -> dict[str, Any]:
     """Record a challenge account against a transcribed rulebook.
@@ -400,7 +406,7 @@ def create_challenge_account(
 def confirm_challenge_account(
     account_id: uuid.UUID,
     payload: ConfirmPayload,
-    _: Principal = SIMULATE,
+    _: Principal = RULEBOOK_WRITE,
     session: Session = Depends(get_db),
 ) -> dict[str, Any]:
     """Mark an account's rules as checked against its own contract.

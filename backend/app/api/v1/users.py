@@ -48,21 +48,21 @@ router = APIRouter(prefix="/users", tags=["users"])
 
 READ = Depends(require(Permission.READ))
 
-#: Creating an account and switching one off are mutations, so they carry a
-#: permission above READ - which is what the execution gate checks and what an
-#: anonymous caller does not hold.
-#:
-#: SIMULATE rather than EXECUTE, for the same reason `brokers/link` gives:
-#: EXECUTE is the tier that sends orders, and it refuses to boot at all unless
-#: MOLIDO_REQUIRE_AUTH is on. Declaring it here would tie account management to
-#: a switch about order execution. The control that actually matters is the
-#: owner-or-admin check below, which no permission tier can express: trader and
-#: admin both hold EXECUTE, and a trader must not be able to mint an admin.
+#: Acting on your own account: changing your password, asking for a fresh
+#: verification link. A mutation, so above READ, but not account management -
+#: needing the permission that mints admins in order to change your own
+#: password would give every user the power to mint one.
 SIMULATE = Depends(require(Permission.SIMULATE))
 
-#: Who may create accounts and switch them off. Not a permission tier: trader
-#: and admin both hold EXECUTE, and a trader must not be able to mint an admin.
-MANAGING_ROLES: frozenset[UserRole] = frozenset({UserRole.OWNER, UserRole.ADMIN})
+#: Creating accounts, switching them off, and reading the roster.
+#:
+#: This used to be SIMULATE plus a hand-written owner-or-admin check, and the
+#: comment above it explained why: the three tiers could not express "manages
+#: accounts" at all, because trader and admin both held EXECUTE and a trader
+#: must not be able to mint an admin. The permission now says exactly that, so
+#: the second check is gone rather than kept alongside it. Two places deciding
+#: one question is how they come to disagree, and then neither is the answer.
+USERS_MANAGE = Depends(require(Permission.USERS_MANAGE))
 
 
 class Signup(BaseModel):
@@ -107,15 +107,6 @@ class VerificationToken(BaseModel):
 class PasswordChange(BaseModel):
     current: str = Field(min_length=1, max_length=256, repr=False)
     replacement: str = Field(min_length=1, max_length=256, repr=False)
-
-
-def _require_manager(principal: Principal) -> None:
-    if principal.role not in MANAGING_ROLES:
-        raise ValidationFailedError(
-            "Only an owner or an admin can manage accounts.",
-            your_role=principal.role.value,
-            required=sorted(r.value for r in MANAGING_ROLES),
-        )
 
 
 @router.get("/setup")
@@ -197,11 +188,10 @@ def register_user(
 
 @router.get("")
 def list_users(
-    principal: Principal = READ,
+    _: Principal = USERS_MANAGE,
     session: Session = Depends(get_db),
 ) -> dict[str, Any]:
-    """Everybody who exists, for an owner or admin. No hashes, no tokens."""
-    _require_manager(principal)
+    """Everybody who exists, for whoever manages accounts. No hashes, no tokens."""
     people = user_service.listing(session)
     return {
         "count": len(people),
@@ -213,11 +203,10 @@ def list_users(
 @router.post("", status_code=201)
 def create_user(
     body: NewUser,
-    principal: Principal = SIMULATE,
+    _: Principal = USERS_MANAGE,
     session: Session = Depends(get_db),
 ) -> dict[str, Any]:
     """Add somebody at a chosen role. Owner and admin only."""
-    _require_manager(principal)
     created = user_service.create(
         session,
         email=body.email,
@@ -233,11 +222,10 @@ def create_user(
 def set_user_active(
     user_id: uuid.UUID,
     body: ActiveFlag,
-    principal: Principal = SIMULATE,
+    principal: Principal = USERS_MANAGE,
     session: Session = Depends(get_db),
 ) -> dict[str, Any]:
     """Switch an account on or off. Never deletes - the audit trail stays."""
-    _require_manager(principal)
     result = user_service.set_active(
         session, user_id, active=body.active, actor_id=principal.user_id
     )
