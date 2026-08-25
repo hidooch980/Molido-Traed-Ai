@@ -18,6 +18,12 @@ import { NAV, reachable, type NavItem } from "@/lib/nav";
  * visitor has no access to. Worse, the header carries a "sign in" button on
  * the sign-in page.
  *
+ * `/` is here for a related but separate reason: it is the landing page, it
+ * carries its own header, and drawing the dashboard rail behind it published
+ * the entire navigation of a system the visitor cannot reach - thirty-five
+ * link labels describing features, beside a status strip about an account they
+ * do not have.
+ *
  * Next's intended mechanism for this is a route group: move every dashboard
  * page under `(dashboard)/` with its own layout and leave `/login` outside it.
  * That is the better structure and it is not what this does, because it means
@@ -30,7 +36,7 @@ import { NAV, reachable, type NavItem } from "@/lib/nav";
  * so the bare page is bare in the first byte of HTML - no frame of a rail
  * appearing and then vanishing.
  */
-const BARE_ROUTES = ["/login", "/register"];
+const BARE_ROUTES = ["/", "/login", "/register"];
 
 const GROUPS: NavItem["group"][] = [
   "overview",
