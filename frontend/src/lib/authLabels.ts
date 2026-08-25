@@ -62,6 +62,16 @@ export async function authLabels() {
 
       heroTitle: t("login.heroTitle"),
       heroBody: t("login.heroBody"),
+
+      humanCheck: {
+        idle: t("human.idle"),
+        solving: t("human.solving"),
+        ready: t("human.ready"),
+        stale: t("human.stale"),
+        failed: t("human.failed"),
+        notNeeded: t("human.notNeeded"),
+        explain: t("human.explain"),
+      },
     },
   };
 }

@@ -3,7 +3,12 @@
 import { useEffect, useRef, useState } from "react";
 import QRCode from "qrcode";
 
-import { proofFor } from "@/lib/humanCheck";
+import {
+  HumanCheckBox,
+  useHumanCheck,
+  type CheckState,
+  type HumanCheckLabels,
+} from "@/components/HumanCheck";
 
 /**
  * The sign-in page.
@@ -74,6 +79,8 @@ export interface LoginLabels {
 
   heroTitle: string;
   heroBody: string;
+
+  humanCheck: HumanCheckLabels;
 }
 
 interface Enrolment {
@@ -101,7 +108,6 @@ export function LoginPanel({
   const [password, setPassword] = useState("");
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
-  const [solving, setSolving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const [enrolment, setEnrolment] = useState<Enrolment | null>(null);
@@ -113,6 +119,10 @@ export function LoginPanel({
   const [copied, setCopied] = useState(false);
 
   const codeInput = useRef<HTMLInputElement>(null);
+
+  // Started as soon as there is an address to bind it to, so the search runs
+  // while the password is being typed rather than after the button is pressed.
+  const human = useHumanCheck(email, mode === "register" ? "register" : "sign-in");
 
   // Focus follows the step. Moving to a six-digit field and having to click it
   // is the kind of small friction that, on a screen somebody reaches through
@@ -174,18 +184,18 @@ export function LoginPanel({
     setBusy(true);
     setError(null);
     try {
-      setSolving(true);
-      const proof = await proofFor(email);
-      setSolving(false);
-
       const { ok, status, payload } = await post("/api/v1/session/sign-in", {
         email,
         password,
         ...(withCode ? { code: withCode } : {}),
-        ...proof,
+        ...human.proof.current,
       });
 
       if (!ok) {
+        // A proof is spent on the first attempt that presents it and expires
+        // after five minutes. Either way the next attempt needs a new one, and
+        // leaving the old one in place would refuse every retry.
+        if (payload?.error === "human_check_failed") human.refresh();
         if (payload?.error === "two_factor_required") {
           // Not a failure. The password was right and the account wants more.
           setStage("code");
@@ -207,7 +217,6 @@ export function LoginPanel({
     } catch {
       setError(labels.failed);
     } finally {
-      setSolving(false);
       setBusy(false);
     }
   }
@@ -216,20 +225,16 @@ export function LoginPanel({
     setBusy(true);
     setError(null);
     try {
-      // The same proof the sign-in form solves, bound to this form. A proof
-      // solved for sign-in cannot be spent here - otherwise the cheaper of the
-      // two becomes the mint for both.
-      setSolving(true);
-      const proof = await proofFor(email, undefined, "register");
-      setSolving(false);
-
+      // Bound to this form. A proof solved for sign-in cannot be spent here -
+      // otherwise the cheaper of the two becomes the mint for both.
       const { ok, status, payload } = await post("/api/v1/users/register", {
         email,
         password,
         display_name: displayName,
-        ...proof,
+        ...human.proof.current,
       });
       if (!ok) {
+        if (payload?.error === "human_check_failed") human.refresh();
         setError(describe(status, payload));
         return;
       }
@@ -237,7 +242,6 @@ export function LoginPanel({
     } catch {
       setError(labels.failed);
     } finally {
-      setSolving(false);
       setBusy(false);
     }
   }
@@ -273,7 +277,9 @@ export function LoginPanel({
     }
   }
 
-  const buttonLabel = solving ? labels.verifying : busy ? labels.working : null;
+  // The button no longer reports the search: the box below does, and it
+  // started long before the button was reachable.
+  const buttonLabel = busy ? labels.working : null;
 
   return (
     <div className="auth-shell">
@@ -282,6 +288,8 @@ export function LoginPanel({
           {stage === "password" && (
             <PasswordStep
               labels={labels}
+              checkState={human.state}
+              attempts={human.attempts}
               email={email}
               password={password}
               busy={busy}
@@ -295,6 +303,8 @@ export function LoginPanel({
           {stage === "register" && !registered && (
             <RegisterStep
               labels={labels}
+              checkState={human.state}
+              attempts={human.attempts}
               email={email}
               password={password}
               displayName={displayName}
@@ -395,9 +405,11 @@ function Field({
 }
 
 function PasswordStep({
-  labels, email, password, busy, buttonLabel, onEmail, onPassword, onSubmit,
+  labels, checkState, attempts, email, password, busy, buttonLabel,
+  onEmail, onPassword, onSubmit,
 }: {
-  labels: LoginLabels; email: string; password: string; busy: boolean;
+  labels: LoginLabels; checkState: CheckState; attempts: number;
+  email: string; password: string; busy: boolean;
   buttonLabel: string | null;
   onEmail: (v: string) => void; onPassword: (v: string) => void; onSubmit: () => void;
 }) {
@@ -430,6 +442,8 @@ function PasswordStep({
         dir="ltr"
       />
 
+      <HumanCheckBox labels={labels.humanCheck} state={checkState} attempts={attempts} />
+
       <button type="submit" className="auth-button" disabled={busy}>
         {buttonLabel ?? labels.submit}
       </button>
@@ -438,10 +452,11 @@ function PasswordStep({
 }
 
 function RegisterStep({
-  labels, email, password, displayName, busy, buttonLabel,
+  labels, checkState, attempts, email, password, displayName, busy, buttonLabel,
   onEmail, onPassword, onDisplayName, onSubmit,
 }: {
-  labels: LoginLabels; email: string; password: string; displayName: string;
+  labels: LoginLabels; checkState: CheckState; attempts: number;
+  email: string; password: string; displayName: string;
   busy: boolean; buttonLabel: string | null;
   onEmail: (v: string) => void; onPassword: (v: string) => void;
   onDisplayName: (v: string) => void; onSubmit: () => void;
@@ -481,6 +496,8 @@ function RegisterStep({
         autoComplete="new-password"
         dir="ltr"
       />
+
+      <HumanCheckBox labels={labels.humanCheck} state={checkState} attempts={attempts} />
 
       <button type="submit" className="auth-button" disabled={busy}>
         {buttonLabel ?? labels.registerSubmit}

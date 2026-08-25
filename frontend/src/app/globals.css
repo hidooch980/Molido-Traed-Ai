@@ -1171,3 +1171,88 @@ body {
   font-weight: 700;
   color: var(--ink-2);
 }
+
+/* ------------------------------------------------------------ human check
+ *
+ * The proof of work, made visible. It had been running since it was built and
+ * nobody could tell: it happened at submit time, and the only evidence was a
+ * pause. A control the person cannot see is one they do not believe in - this
+ * was asked for repeatedly by somebody who already had it.
+ *
+ * Deliberately not a checkbox. A checkbox invites a click, and clicking is
+ * exactly what this does not need; the work is already done by the time the
+ * box says so. It reads as a status line because that is what it is.
+ */
+.human-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.65rem;
+  margin: 1rem 0 0.25rem;
+  padding: 0.7rem 0.85rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel-raised);
+  transition: border-color 160ms ease, background 160ms ease;
+}
+
+.human-check[data-state="ready"] {
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  background: var(--accent-soft);
+}
+
+.human-check[data-state="failed"],
+.human-check[data-state="stale"] {
+  border-color: color-mix(in srgb, var(--warning) 45%, transparent);
+}
+
+.human-check-mark {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 1.15rem;
+  height: 1.15rem;
+  margin-top: 0.1rem;
+  border-radius: 5px;
+  border: 1px solid var(--border-strong);
+  font-size: 0.7rem;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--accent-ink);
+}
+
+.human-check[data-state="ready"] .human-check-mark {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.human-check[data-state="failed"] .human-check-mark,
+.human-check[data-state="stale"] .human-check-mark {
+  background: var(--warning);
+  border-color: var(--warning);
+  color: #1a1204;
+}
+
+/* While it searches, the square breathes. Slow enough not to nag, and gone
+   entirely for anybody who asked their system to stop moving things. */
+.human-check[data-state="solving"] .human-check-mark {
+  animation: human-check-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes human-check-pulse {
+  0%, 100% { background: var(--panel); }
+  50% { background: var(--accent-soft); }
+}
+
+.human-check-text {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  line-height: 1.5;
+  font-variant-numeric: tabular-nums;
+}
+
+.human-check-explain {
+  margin-top: 0.2rem;
+  font-size: 0.6875rem;
+  line-height: 1.6;
+  color: var(--ink-3);
+}
