@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from "react";
 
+import { proofFor } from "@/lib/humanCheck";
+
 /**
  * Sign in, and show whether this browser is signed in at all.
  *
@@ -23,6 +25,10 @@ export interface SignInLabels {
   cancel: string;
   working: string;
   failed: string;
+  /** Shown while the proof of work is being solved. */
+  verifying: string;
+  /** Shown when the server is refusing attempts for a while. */
+  tooMany: string;
   signedInAs: string;
   anonymous: string;
   anonymousHint: string;
@@ -40,6 +46,7 @@ export function SignIn({ labels }: { labels: SignInLabels }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
+  const [solving, setSolving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function refresh() {
@@ -60,13 +67,26 @@ export function SignIn({ labels }: { labels: SignInLabels }) {
     setBusy(true);
     setError(null);
     try {
+      // Asked for before the attempt, not after a refusal. The server counts a
+      // missing proof as a failed attempt, so retrying after being told one was
+      // needed would spend two attempts per sign-in and reach the cooldown
+      // twice as fast. When no proof is being asked for this is one cheap GET
+      // and an empty object.
+      setSolving(true);
+      const proof = await proofFor(email);
+      setSolving(false);
+
       const response = await fetch("/api/v1/session/sign-in", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ email, password, ...proof }),
       });
       if (!response.ok) {
-        setError(labels.failed);
+        // 429 is not a wrong password and must not be reported as one - the
+        // person retyping a password they know is right needs to be told the
+        // server is asking them to wait, or they will assume the account is
+        // broken and try harder, which is the one thing that makes it worse.
+        setError(response.status === 429 ? labels.tooMany : labels.failed);
         return;
       }
       // Dropped the moment it has been sent; nothing here keeps it.
@@ -76,6 +96,7 @@ export function SignIn({ labels }: { labels: SignInLabels }) {
     } catch {
       setError(labels.failed);
     } finally {
+      setSolving(false);
       setBusy(false);
     }
   }
@@ -162,7 +183,7 @@ export function SignIn({ labels }: { labels: SignInLabels }) {
           className="pill"
           style={{ color: "var(--accent)", borderColor: "var(--accent)", cursor: "pointer" }}
         >
-          {busy ? labels.working : labels.submit}
+          {solving ? labels.verifying : busy ? labels.working : labels.submit}
         </button>
         <button
           type="button"

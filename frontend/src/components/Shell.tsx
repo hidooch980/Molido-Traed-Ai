@@ -164,6 +164,8 @@ export default function Shell({
             cancel: t("signin.cancel"),
             working: t("signin.working"),
             failed: t("signin.failed"),
+            verifying: t("signin.verifying"),
+            tooMany: t("signin.tooMany"),
             signedInAs: t("signin.signedInAs"),
             anonymous: t("signin.anonymous"),
             anonymousHint: t("signin.anonymousHint"),

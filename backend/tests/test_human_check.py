@@ -13,6 +13,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from app.models.human_checks import HumanChallenge
 from app.services import human_check
 
 NOW = datetime(2026, 8, 25, 12, 0, tzinfo=UTC)
@@ -218,3 +219,58 @@ class TestCountingZeroBits:
         """Bits, so difficulty can double instead of multiplying by sixteen.
         A ladder whose only step is 16x has one usable rung."""
         assert human_check.leading_zero_bits(digest) == expected
+
+
+class TestTheBrowserAndTheServerHashTheSameString:
+    """The failure this guards against has no good symptom.
+
+    The proof is found in `frontend/src/lib/humanCheck.ts` and checked here. If
+    the two sides ever disagree about what is hashed - one colon, one order of
+    concatenation - every correct password is rejected with a message about the
+    human check, and nothing in either codebase looks wrong.
+
+    The vectors below were produced by the browser implementation and are
+    asserted against this one. They are constants on purpose: a test that
+    called the Python solver for both halves would agree with itself forever.
+    """
+
+    #: (salt, difficulty, nonce) - the output of the TypeScript solver, run
+    #: and copied here rather than guessed. A vector nobody measured proves
+    #: nothing about a second implementation.
+    VECTORS = [
+        ("test-salt", 16, 10177),
+        ("test-salt", 12, 281),
+        ("fixed-salt", 8, 62),
+        ("molido-shop", 18, 43973),
+        ("a", 4, 0),
+    ]
+
+    @pytest.mark.parametrize("salt, difficulty, nonce", VECTORS)
+    def test_a_nonce_found_in_the_browser_verifies_here(self, salt, difficulty, nonce):
+        assert human_check.leading_zero_bits(human_check._digest(salt, nonce)) >= difficulty
+
+    @pytest.mark.parametrize("salt, difficulty, nonce", VECTORS)
+    def test_both_solvers_find_the_same_first_nonce(self, salt, difficulty, nonce):
+        """Both search upward from zero, so the first answer is the same one.
+        This is what catches a difficulty comparison that drifted by a bit."""
+        assert human_check.solve(salt, difficulty) == nonce
+
+    @pytest.mark.parametrize("salt, difficulty, nonce", VECTORS)
+    def test_such_a_nonce_is_accepted_by_the_endpoint_path(self, session, salt, difficulty, nonce):
+        """Not just the arithmetic - the whole verify, including spending.
+
+        The issued challenge's salt is overwritten with the vector's, because
+        a real salt is random and a fixed vector needs a fixed one."""
+        challenge = human_check.issue(session, purpose=human_check.SIGN_IN, now=NOW)
+        row = session.get(HumanChallenge, challenge.challenge_id)
+        assert row is not None
+        row.salt, row.difficulty = salt, difficulty
+        session.flush()
+
+        human_check.verify(
+            session,
+            challenge_id=challenge.challenge_id,
+            nonce=nonce,
+            purpose=human_check.SIGN_IN,
+            now=NOW,
+        )
