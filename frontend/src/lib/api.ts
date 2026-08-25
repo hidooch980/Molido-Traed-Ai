@@ -273,6 +273,33 @@ export interface WorldState {
   quality: WorldStateBlock;
 }
 
+/** One prop-firm challenge account, from `/risk/challenge-accounts`. */
+export interface ChallengeAccountView {
+  id: string;
+  label: string;
+  provider: string | null;
+  program: string | null;
+  phase: string | null;
+  starting_balance: string | null;
+  currency: string | null;
+  currency_per_r: string | null;
+  rulebook_key: string | null;
+  rulebook_available: boolean;
+  /** Whether the holder has checked the transcribed rules against their own
+   *  contract. Until they have, tracking stays shut - a confident verdict
+   *  about the wrong document is worse than no verdict. */
+  confirmed: boolean;
+}
+
+export interface ChallengeAccountsView {
+  accounts: ChallengeAccountView[];
+  total: number;
+  confirmed: number;
+  unconfirmed: number;
+  trackable: number;
+  note: string;
+}
+
 /** One connection, from `/brokers`. */
 export interface Connection {
   name: string;
@@ -868,6 +895,13 @@ export const api = {
   rulebooks: () => request<RulebookView>("/api/v1/risk/rulebooks"),
   executionPolicy: () => request<ExecutionPolicyView>("/api/v1/execution/policy"),
   accounts: () => request<AccountsView>("/api/v1/execution/accounts"),
+  /** Prop-firm challenge accounts. A different kind of account from the broker
+   *  connection above and deliberately a separate call: one is "which terminal
+   *  is logged in", the other is "which sets of somebody else's rules are we
+   *  being measured against". Merging them would make a page that cannot say
+   *  which of the two is missing. */
+  challengeAccounts: () =>
+    request<ChallengeAccountsView>("/api/v1/risk/challenge-accounts"),
   learningThresholds: () =>
     request<LearningThresholds>("/api/v1/learning/thresholds"),
   drift: () => request<DriftView>("/api/v1/learning/drift"),

@@ -24,6 +24,15 @@
 set -euo pipefail
 
 PREFIX="${HOME}/.mt5"
+
+# Who the units run as. Derived rather than hardcoded: the first server this
+# was written against had an `ubuntu` user and the second does not, and a unit
+# naming a user that does not exist fails to start *after* an install that
+# otherwise reported success - which is the most expensive kind of wrong.
+#
+# `SUDO_USER` when invoked through sudo, the invoking user otherwise, so the
+# prefix in `$HOME` and the account in the unit are always the same person.
+RUN_USER="${SUDO_USER:-$(id -un)}"
 DISPLAY_NUM=99
 VNC_PORT=5999
 WEB_PORT=6080
@@ -99,7 +108,7 @@ install_python() {
 install_services() {
   log "systemd units"
 
-  # System units running as ubuntu rather than user units: user units need
+  # System units running as the invoking user rather than user units: those need
   # lingering enabled to start at boot without a login, and one more thing that
   # has to be remembered is one more thing that gets forgotten.
   # The launcher holds the Windows path, so systemd never sees a backslash.
@@ -122,7 +131,7 @@ Description=Virtual display for MetaTrader
 After=network.target
 
 [Service]
-User=ubuntu
+User=${RUN_USER}
 ExecStart=/usr/bin/Xvfb :${DISPLAY_NUM} -screen 0 1280x900x24 -nolisten tcp
 Restart=always
 RestartSec=3
@@ -141,7 +150,7 @@ After=molido-xvfb.service
 Requires=molido-xvfb.service
 
 [Service]
-User=ubuntu
+User=${RUN_USER}
 Environment=DISPLAY=:${DISPLAY_NUM}
 ExecStart=/usr/bin/openbox --sm-disable
 Restart=always
@@ -158,7 +167,7 @@ After=molido-xvfb.service
 Requires=molido-xvfb.service
 
 [Service]
-User=ubuntu
+User=${RUN_USER}
 # -localhost is the whole security posture here. A remote desktop reachable
 # from the internet on a host that gets brute-forced would undo the rest.
 ExecStart=/usr/bin/x11vnc -display :${DISPLAY_NUM} -rfbport ${VNC_PORT} -localhost -forever -shared -nopw -quiet
@@ -176,7 +185,7 @@ After=molido-vnc.service
 Requires=molido-vnc.service
 
 [Service]
-User=ubuntu
+User=${RUN_USER}
 ExecStart=/usr/bin/websockify --web /usr/share/novnc 127.0.0.1:${WEB_PORT} 127.0.0.1:${VNC_PORT}
 Restart=always
 RestartSec=3
@@ -192,7 +201,7 @@ After=molido-wm.service
 Requires=molido-wm.service
 
 [Service]
-User=ubuntu
+User=${RUN_USER}
 Environment=DISPLAY=:${DISPLAY_NUM}
 Environment=WINEPREFIX=${PREFIX}
 Environment=WINEDEBUG=-all
@@ -223,7 +232,7 @@ After=molido-mt5.service
 Requires=molido-mt5.service
 
 [Service]
-User=ubuntu
+User=${RUN_USER}
 Environment=DISPLAY=:${DISPLAY_NUM}
 Environment=WINEPREFIX=${PREFIX}
 Environment=WINEDEBUG=-all
@@ -246,22 +255,22 @@ UNIT
   # unit are on the other side of that boundary. Handing the container the
   # host's systemd to close the gap would be worse than the gap.
   # Shared between two users that are not the same user: the agent runs on the
-  # host as ubuntu, the API runs in its container as uid 10001. A group both
+  # host as RUN_USER, the API runs in its container as uid 10001. A group both
   # can be in is the narrow fix; widening the mode to 777 would be the broad
   # one, and this directory carries broker passwords in transit.
   sudo groupadd -f -g 10001 molido 2>/dev/null || true
   sudo mkdir -p /var/molido/mt5-queue
-  sudo chown ubuntu:molido /var/molido/mt5-queue
+  sudo chown "${RUN_USER}:molido" /var/molido/mt5-queue
   # setgid so files created by either side stay group-owned and the other side
   # can still read them - without it the first write locks the second out
   # again, one directory deeper.
   sudo chmod 2770 /var/molido/mt5-queue
-  sudo usermod -aG molido ubuntu 2>/dev/null || true
+  sudo usermod -aG molido "${RUN_USER}" 2>/dev/null || true
 
   # One narrow sudo rule rather than blanket rights: this agent restarts one
   # unit and can do nothing else as root.
-  printf 'ubuntu ALL=(root) NOPASSWD: /usr/bin/systemctl restart molido-mt5
-' |
+  printf '%s ALL=(root) NOPASSWD: /usr/bin/systemctl restart molido-mt5
+'     "$RUN_USER" |
     sudo tee /etc/sudoers.d/molido-mt5-agent >/dev/null
   sudo chmod 440 /etc/sudoers.d/molido-mt5-agent
 
@@ -271,7 +280,7 @@ Description=Applies broker logins the API cannot apply itself
 After=molido-mt5.service
 
 [Service]
-User=ubuntu
+User=${RUN_USER}
 Environment=WINEPREFIX=${PREFIX}
 Environment=MOLIDO_MT5_QUEUE=/var/molido/mt5-queue
 ExecStart=/usr/bin/python3 ${REPO}/infra/mt5-agent.py
