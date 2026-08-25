@@ -66,7 +66,6 @@ export interface LoginLabels {
   statPagesLabel: string;
   statEdgeValue: string;
   statEdgeLabel: string;
-  back: string;
 }
 
 interface Enrolment {

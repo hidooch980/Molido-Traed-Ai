@@ -63,7 +63,6 @@ export default async function LoginPage() {
         statPagesLabel: t("login.statPages"),
         statEdgeValue: t("login.statEdgeValue"),
         statEdgeLabel: t("login.statEdge"),
-        back: t("login.back"),
       }}
     />
   );
