@@ -36,11 +36,11 @@ export default async function SessionsPage() {
     : null;
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       <header className="flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-xl font-bold">{t("sessions.title")}</h1>
-          <p className="text-xs ink-3 mt-0.5">{t("sessions.subtitle")}</p>
+          <h1 className="display">{t("sessions.title")}</h1>
+          <p className="page-lede">{t("sessions.subtitle")}</p>
         </div>
         {tehran && (
           <div className="text-end shrink-0">

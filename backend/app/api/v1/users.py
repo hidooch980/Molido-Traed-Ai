@@ -29,19 +29,27 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, Cookie, Depends
+from fastapi import APIRouter, Cookie, Depends, Request
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
 
 from app.api.deps import Principal, require
 from app.api.guard import public_mutation
+from app.api.net import client_address, user_agent
 from app.core.config import get_settings
-from app.core.enums import Permission, UserRole
-from app.core.errors import ValidationFailedError
+from app.core.enums import AuditEventType, Permission, UserRole
+from app.core.errors import MolidoError, ValidationFailedError
 from app.db.session import get_db
 from app.integrations import email
 from app.models.tenancy import User
-from app.services import referrals, sessions_auth, verification
+from app.services import (
+    human_check,
+    login_guard,
+    referrals,
+    security_log,
+    sessions_auth,
+    verification,
+)
 from app.services import users as user_service
 
 router = APIRouter(prefix="/users", tags=["users"])
@@ -71,6 +79,12 @@ USERS_MANAGE = Depends(require(Permission.USERS_MANAGE))
 
 class Signup(BaseModel):
     email: str = Field(min_length=3, max_length=320)
+    #: The proof of work, when one is being asked for. Optional in the schema
+    #: and demanded by the handler, so the first registration on a quiet
+    #: deployment costs nothing and the thousandth from one address costs real
+    #: time.
+    challenge_id: str | None = None
+    nonce: str | int | None = None
     #: Optional. A code that does not exist fails the registration rather than
     #: being dropped - see `referrals.resolve_code` for why silence is worse.
     referral_code: str = Field(default="", max_length=32)
@@ -113,6 +127,75 @@ class PasswordChange(BaseModel):
     replacement: str = Field(min_length=1, max_length=256, repr=False)
 
 
+def _guard_public_signup(
+    session: Session,
+    request: Request,
+    *,
+    email: str,
+    purpose: str,
+    event: AuditEventType,
+    challenge_id: str | None,
+    nonce: str | int | None,
+) -> None:
+    """The same door `sign-in` has, on the two routes that create accounts.
+
+    Both are `public_mutation`: they must be reachable without a session,
+    because a door that needs a key to reach the key is not a door. That is
+    exactly what makes them worth guarding. An unauthenticated POST that writes
+    a row is a machine for filling a table, and `register` also sends mail -
+    which makes it a machine for sending mail to addresses somebody else owns,
+    from this deployment's reputation.
+
+    Refusals are recorded and committed, for the reason the sign-in route
+    learned the expensive way: `get_db` rolls back on the exception this
+    raises, so a record written without a commit is destroyed by the failure it
+    was recording.
+    """
+    address = client_address(request)
+    agent = user_agent(request)
+
+    try:
+        verdict = login_guard.enforce(session, email=email, address=address)
+    except login_guard.TooManyAttemptsError:
+        security_log.record(
+            session,
+            AuditEventType.SIGN_IN_THROTTLED,
+            summary=f"{purpose} refused by the rate limiter",
+            subject=login_guard.normalise(email),
+            address=address,
+            user_agent=agent,
+        )
+        session.commit()
+        raise
+
+    if not verdict.human_check_required:
+        return
+
+    try:
+        human_check.verify(
+            session, challenge_id=challenge_id, nonce=nonce, purpose=purpose
+        )
+    except MolidoError:
+        login_guard.record(
+            session,
+            email=email,
+            address=address,
+            succeeded=False,
+            reason=f"{purpose}: human check failed",
+            user_agent=agent,
+        )
+        security_log.record(
+            session,
+            event,
+            summary=f"{purpose} attempted without a valid proof of work",
+            subject=login_guard.normalise(email),
+            address=address,
+            user_agent=agent,
+        )
+        session.commit()
+        raise
+
+
 @router.get("/setup")
 def read_setup(
     _: Principal = READ,
@@ -147,10 +230,20 @@ def read_setup(
 )
 def claim_deployment(
     body: Signup,
+    request: Request,
     _: Principal = READ,
     session: Session = Depends(get_db),
 ) -> dict[str, Any]:
     """Become the owner. Refused with 409 once anybody has a password."""
+    _guard_public_signup(
+        session,
+        request,
+        email=body.email,
+        purpose=human_check.CLAIM,
+        event=AuditEventType.DEPLOYMENT_CLAIMED,
+        challenge_id=body.challenge_id,
+        nonce=body.nonce,
+    )
     created = user_service.claim(
         session,
         email=body.email,
@@ -168,10 +261,20 @@ def claim_deployment(
 )
 def register_user(
     body: Signup,
+    request: Request,
     _: Principal = READ,
     session: Session = Depends(get_db),
 ) -> dict[str, Any]:
     """Sign yourself up as a viewer."""
+    _guard_public_signup(
+        session,
+        request,
+        email=body.email,
+        purpose=human_check.REGISTER,
+        event=AuditEventType.USER_REGISTERED,
+        challenge_id=body.challenge_id,
+        nonce=body.nonce,
+    )
     created = user_service.register(
         session,
         email=body.email,

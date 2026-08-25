@@ -29,10 +29,12 @@ export default async function ReadinessPage() {
     source === "metatrader" ? t("journal.broker") : t("journal.public");
 
   return (
-    <div className="space-y-4">
-      <header>
-        <h1 className="text-xl font-bold">{t("readiness.title")}</h1>
+    <div className="space-y-6">
+      <header className="page-header">
+        <div className="min-w-0">
+          <h1 className="display">{t("readiness.title")}</h1>
         <p className="text-xs ink-3 mt-0.5 max-w-3xl">{t("readiness.subtitle")}</p>
+      </div>
       </header>
 
       {SOURCES.map((source) => {

@@ -39,10 +39,10 @@ export default async function MemoryPage({
   };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       <header className="flex items-end justify-between gap-4 flex-wrap">
         <div>
-          <h1 className="text-xl font-bold">{t("memory.title")}</h1>
+          <h1 className="display">{t("memory.title")}</h1>
           <p className="text-xs ink-3 mt-0.5 max-w-2xl">{t("memory.subtitle")}</p>
         </div>
         {instruments.data.length > 1 && (

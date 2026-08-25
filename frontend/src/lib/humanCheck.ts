@@ -173,9 +173,10 @@ export async function solve(
 export async function proofFor(
   email: string,
   onProgress?: (attempts: number) => void,
+  purpose: "sign-in" | "register" | "claim" = "sign-in",
 ): Promise<{ challenge_id?: string; nonce?: number }> {
   const response = await fetch(
-    `/api/v1/session/challenge?email=${encodeURIComponent(email)}`,
+    `/api/v1/session/challenge?email=${encodeURIComponent(email)}&purpose=${purpose}`,
     { cache: "no-store" },
   );
   if (!response.ok) return {};

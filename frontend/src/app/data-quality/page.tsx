@@ -32,11 +32,11 @@ export default async function DataQualityPage({
   const quality = await api.dataQuality(selectedId);
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       <header className="flex items-end justify-between gap-4 flex-wrap">
         <div>
-          <h1 className="text-xl font-bold">{t("quality.title")}</h1>
-          <p className="text-xs ink-3 mt-0.5">
+          <h1 className="display">{t("quality.title")}</h1>
+          <p className="page-lede">
             {t("quality.subtitle")}
           </p>
         </div>

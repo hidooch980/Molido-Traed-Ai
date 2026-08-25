@@ -33,10 +33,10 @@ export default async function EpisodesPage({
   const result = await api.episodes(selectedId);
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       <header className="flex items-end justify-between gap-4 flex-wrap">
         <div>
-          <h1 className="text-xl font-bold">{t("episodes.title")}</h1>
+          <h1 className="display">{t("episodes.title")}</h1>
           <p className="text-xs ink-3 mt-0.5 max-w-2xl">{t("episodes.subtitle")}</p>
         </div>
         {instruments.data.length > 1 && (

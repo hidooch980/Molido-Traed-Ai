@@ -18,6 +18,7 @@ import { proofFor } from "@/lib/humanCheck";
  */
 export interface SignInLabels {
   signIn: string;
+  register: string;
   signOut: string;
   email: string;
   password: string;
@@ -136,14 +137,22 @@ export function SignIn({ labels }: { labels: SignInLabels }) {
 
   // Signing out stays here: it is one button and it needs no page. Signing in
   // does not - the real flow is four steps, and this popover could hold one.
+  //
+  // Both doors, side by side. Registration existed already and lived inside
+  // `/access`, a page somebody has to know about to find; the two things a
+  // visitor arrives wanting to do should not be one link and one rumour.
   return (
-    <a
-      href="/login"
-      className="pill"
-      style={{ color: "var(--accent)", borderColor: "var(--accent)" }}
-      title={labels.anonymousHint}
-    >
-      {labels.signIn}
-    </a>
+    <span className="flex items-center gap-1.5">
+      <a href="/register" className="pill" style={{ color: "var(--ink-2)" }}>
+        {labels.register}
+      </a>
+      <a
+        href="/login"
+        className="pill pill-accent"
+        title={labels.anonymousHint}
+      >
+        {labels.signIn}
+      </a>
+    </span>
   );
 }

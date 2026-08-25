@@ -847,7 +847,9 @@ body {
 .auth-hero {
   position: relative;
   overflow: hidden;
-  background: var(--panel);
+  background:
+    radial-gradient(ellipse 60% 50% at 50% 40%, var(--accent-soft), transparent 70%),
+    var(--panel);
   border-inline-start: 1px solid var(--border);
   display: flex;
   align-items: stretch;
@@ -863,19 +865,31 @@ body {
     linear-gradient(to right, var(--grid) 1px, transparent 1px),
     linear-gradient(to bottom, var(--grid) 1px, transparent 1px);
   background-size: 2.5rem 2.5rem;
-  mask-image: radial-gradient(ellipse 90% 70% at 70% 30%, #000 35%, transparent 100%);
-  -webkit-mask-image: radial-gradient(ellipse 90% 70% at 70% 30%, #000 35%, transparent 100%);
-  opacity: 0.9;
+  /* Centred on the panel and fading at every edge. Anchored off to one side it
+     left the half nearest the form empty, which read as a rendering fault
+     rather than as restraint. */
+  mask-image: radial-gradient(ellipse 75% 65% at 50% 45%, #000 20%, transparent 100%);
+  -webkit-mask-image: radial-gradient(ellipse 75% 65% at 50% 45%, #000 20%, transparent 100%);
+  opacity: 1;
 }
 
+/* Brand at the top, statement in the middle, facts at the bottom - but the
+   middle takes the slack rather than the gaps taking it. `space-between` over
+   a tall viewport pushed the three apart until the panel read as three things
+   that happened to share a box, with a field of black between each. */
 .auth-hero-body {
   position: relative;
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-  gap: 2rem;
-  padding: 3rem;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  align-items: start;
+  row-gap: 2rem;
+  padding: clamp(2rem, 4vw, 3.5rem);
   width: 100%;
+}
+
+.auth-hero-statement {
+  align-self: center;
+  max-width: 34rem;
 }
 
 .auth-brand {

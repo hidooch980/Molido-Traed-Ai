@@ -25,7 +25,7 @@ from app.api.deps import AuthenticationError, Principal, require
 from app.api.guard import public_mutation
 from app.api.net import client_address, user_agent
 from app.core.enums import AuditEventType, Permission
-from app.core.errors import MolidoError
+from app.core.errors import MolidoError, ValidationFailedError
 from app.db.session import get_db
 from app.models.tenancy import User
 from app.services import (
@@ -89,6 +89,7 @@ class Credentials(BaseModel):
 def read_challenge(
     request: Request,
     email: str = "",
+    purpose: str = human_check.SIGN_IN,
     _: Principal = READ,
     session: Session = Depends(get_db),
 ) -> dict[str, Any]:
@@ -105,9 +106,18 @@ def read_challenge(
     verdict = login_guard.check(
         session, email=email or "unknown", address=client_address(request)
     )
+    # Checked against the known set rather than passed through. `purpose` binds
+    # a solved proof to one form, and a caller who could name an arbitrary one
+    # could mint a purpose nothing verifies against - which is a proof that is
+    # never spent and therefore never a cost.
+    if purpose not in {human_check.SIGN_IN, human_check.REGISTER, human_check.CLAIM}:
+        raise ValidationFailedError(
+            "That is not a form this server issues challenges for.", purpose=purpose
+        )
+
     challenge = human_check.issue(
         session,
-        purpose=human_check.SIGN_IN,
+        purpose=purpose,
         failures=max(verdict.subject_failures, verdict.address_failures),
     )
     session.commit()

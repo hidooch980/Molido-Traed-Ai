@@ -41,13 +41,13 @@ export default async function InstrumentPage({
   const dataset = quality.ok ? quality.data.datasets[0] : undefined;
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       <header className="flex items-end justify-between gap-4 flex-wrap">
         <div>
           <Link href="/markets" className="text-xs ink-3">
             ← {t("nav.markets")}
           </Link>
-          <h1 className="text-xl font-bold mt-0.5">
+          <h1 className="display">
             {bars.data.symbol}
             <span className="ink-3 font-normal text-sm ms-2">{instrument?.name}</span>
           </h1>

@@ -38,11 +38,11 @@ export default async function ChartsPage({
   const bars = await api.bars(selectedId, timeframe, 500);
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       <header className="flex items-end justify-between gap-4 flex-wrap">
         <div>
-          <h1 className="text-xl font-bold">{t("charts.title")}</h1>
-          <p className="text-xs ink-3 mt-0.5">{t("charts.subtitle")}</p>
+          <h1 className="display">{t("charts.title")}</h1>
+          <p className="page-lede">{t("charts.subtitle")}</p>
         </div>
         <div className="flex flex-wrap gap-1.5">
           {instruments.data.slice(0, 12).map((x) => (

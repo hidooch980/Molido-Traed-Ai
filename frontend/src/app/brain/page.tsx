@@ -46,11 +46,11 @@ export default async function BrainPage({
     decision === "wait" ? "neutral" : ("good" as const);
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       <header className="flex items-end justify-between gap-4 flex-wrap">
         <div>
-          <h1 className="text-xl font-bold">{t("brain.title")}</h1>
-          <p className="text-xs ink-3 mt-0.5">{t("brain.subtitle")}</p>
+          <h1 className="display">{t("brain.title")}</h1>
+          <p className="page-lede">{t("brain.subtitle")}</p>
         </div>
         <div className="flex flex-wrap gap-1.5">
           {instruments.data.slice(0, 12).map((x) => (

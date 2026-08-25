@@ -44,10 +44,10 @@ export default async function DecisionsPage({
   const trace = await api.decisionChain(selectedId);
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       <header className="flex items-end justify-between gap-4 flex-wrap">
         <div>
-          <h1 className="text-xl font-bold">{t("decisions.title")}</h1>
+          <h1 className="display">{t("decisions.title")}</h1>
           <p className="text-xs ink-3 mt-0.5 max-w-2xl">{t("decisions.subtitle")}</p>
         </div>
         {rows.length > 1 && (

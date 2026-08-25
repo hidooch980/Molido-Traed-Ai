@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import QRCode from "qrcode";
 
 import { proofFor } from "@/lib/humanCheck";
@@ -61,11 +61,19 @@ export interface LoginLabels {
   codesCopied: string;
   codesDone: string;
 
+  registerTitle: string;
+  registerSubtitle: string;
+  registerSubmit: string;
+  registerName: string;
+  registerDone: string;
+  registerDoneBody: string;
+  haveAccount: string;
+  needAccount: string;
+  signInHere: string;
+  registerHere: string;
+
   heroTitle: string;
   heroBody: string;
-  statPagesLabel: string;
-  statEdgeValue: string;
-  statEdgeLabel: string;
 }
 
 interface Enrolment {
@@ -75,10 +83,20 @@ interface Enrolment {
   account: string;
 }
 
-type Stage = "password" | "code" | "enrol" | "codes";
+type Stage = "password" | "register" | "code" | "enrol" | "codes";
 
-export function LoginPanel({ labels, version }: { labels: LoginLabels; version: string }) {
-  const [stage, setStage] = useState<Stage>("password");
+export type Mode = "sign-in" | "register";
+
+export function LoginPanel({
+  labels,
+  version,
+  mode = "sign-in",
+}: {
+  labels: LoginLabels;
+  version: string;
+  mode?: Mode;
+}) {
+  const [stage, setStage] = useState<Stage>(mode === "register" ? "register" : "password");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [code, setCode] = useState("");
@@ -89,6 +107,8 @@ export function LoginPanel({ labels, version }: { labels: LoginLabels; version: 
   const [enrolment, setEnrolment] = useState<Enrolment | null>(null);
   const [qr, setQr] = useState<string | null>(null);
   const [manual, setManual] = useState(false);
+  const [displayName, setDisplayName] = useState("");
+  const [registered, setRegistered] = useState(false);
   const [recoveryCodes, setRecoveryCodes] = useState<string[] | null>(null);
   const [copied, setCopied] = useState(false);
 
@@ -192,6 +212,36 @@ export function LoginPanel({ labels, version }: { labels: LoginLabels; version: 
     }
   }
 
+  async function register() {
+    setBusy(true);
+    setError(null);
+    try {
+      // The same proof the sign-in form solves, bound to this form. A proof
+      // solved for sign-in cannot be spent here - otherwise the cheaper of the
+      // two becomes the mint for both.
+      setSolving(true);
+      const proof = await proofFor(email, undefined, "register");
+      setSolving(false);
+
+      const { ok, status, payload } = await post("/api/v1/users/register", {
+        email,
+        password,
+        display_name: displayName,
+        ...proof,
+      });
+      if (!ok) {
+        setError(describe(status, payload));
+        return;
+      }
+      setRegistered(true);
+    } catch {
+      setError(labels.failed);
+    } finally {
+      setSolving(false);
+      setBusy(false);
+    }
+  }
+
   async function beginEnrolment() {
     const { ok, status, payload } = await post("/api/v1/session/two-factor/begin", {});
     if (!ok) {
@@ -242,6 +292,31 @@ export function LoginPanel({ labels, version }: { labels: LoginLabels; version: 
             />
           )}
 
+          {stage === "register" && !registered && (
+            <RegisterStep
+              labels={labels}
+              email={email}
+              password={password}
+              displayName={displayName}
+              busy={busy}
+              buttonLabel={buttonLabel}
+              onEmail={setEmail}
+              onPassword={setPassword}
+              onDisplayName={setDisplayName}
+              onSubmit={() => void register()}
+            />
+          )}
+
+          {stage === "register" && registered && (
+            <div>
+              <h1 className="auth-title">{labels.registerDone}</h1>
+              <p className="auth-sub">{labels.registerDoneBody}</p>
+              <a href="/login" className="auth-button block text-center">
+                {labels.submit}
+              </a>
+            </div>
+          )}
+
           {stage === "code" && (
             <CodeStep
               labels={labels}
@@ -286,6 +361,15 @@ export function LoginPanel({ labels, version }: { labels: LoginLabels; version: 
           {error && (
             <p className="auth-error" role="alert">
               {error}
+            </p>
+          )}
+
+          {(stage === "password" || (stage === "register" && !registered)) && (
+            <p className="auth-switch">
+              {mode === "register" ? labels.haveAccount : labels.needAccount}{" "}
+              <a href={mode === "register" ? "/login" : "/register"}>
+                {mode === "register" ? labels.signInHere : labels.registerHere}
+              </a>
             </p>
           )}
 
@@ -348,6 +432,58 @@ function PasswordStep({
 
       <button type="submit" className="auth-button" disabled={busy}>
         {buttonLabel ?? labels.submit}
+      </button>
+    </form>
+  );
+}
+
+function RegisterStep({
+  labels, email, password, displayName, busy, buttonLabel,
+  onEmail, onPassword, onDisplayName, onSubmit,
+}: {
+  labels: LoginLabels; email: string; password: string; displayName: string;
+  busy: boolean; buttonLabel: string | null;
+  onEmail: (v: string) => void; onPassword: (v: string) => void;
+  onDisplayName: (v: string) => void; onSubmit: () => void;
+}) {
+  return (
+    <form
+      onSubmit={(e) => {
+        e.preventDefault();
+        onSubmit();
+      }}
+    >
+      <h1 className="auth-title">{labels.registerTitle}</h1>
+      <p className="auth-sub">{labels.registerSubtitle}</p>
+
+      <Field
+        label={labels.registerName}
+        value={displayName}
+        onChange={(e) => onDisplayName(e.target.value)}
+        autoComplete="name"
+      />
+      <Field
+        label={labels.email}
+        type="email"
+        value={email}
+        onChange={(e) => onEmail(e.target.value)}
+        required
+        autoComplete="username"
+        dir="ltr"
+      />
+      <Field
+        label={labels.password}
+        type="password"
+        value={password}
+        onChange={(e) => onPassword(e.target.value)}
+        required
+        minLength={12}
+        autoComplete="new-password"
+        dir="ltr"
+      />
+
+      <button type="submit" className="auth-button" disabled={busy}>
+        {buttonLabel ?? labels.registerSubmit}
       </button>
     </form>
   );
@@ -486,17 +622,15 @@ function CodesStep({
 }
 
 function Hero({ labels }: { labels: LoginLabels }) {
-  // Two facts, and both are refusals. A sign-in page is where somebody forms
-  // their idea of what this system claims about itself, and the honest claim
-  // here is that it has not proven an edge and does not trade.
-  const stats = useMemo(
-    () => [
-      { value: labels.statEdgeValue, label: labels.statEdgeLabel },
-      { value: "۳۵", label: labels.statPagesLabel },
-    ],
-    [labels],
-  );
-
+  // No figures.
+  //
+  // This carried two - the page count and the number of proven edges - on the
+  // argument that a sign-in page is where somebody forms their idea of what a
+  // system claims, and that the honest claim was a pair of refusals. That is
+  // true and it is still the wrong place for it: both are facts about the
+  // inside of a deployment, read by anybody who loads the URL, and neither
+  // means anything to a person who has not signed in. A door does not need to
+  // publish the floor plan.
   return (
     <section className="auth-hero" aria-hidden="true">
       <div className="auth-hero-grid" />
@@ -508,18 +642,9 @@ function Hero({ labels }: { labels: LoginLabels }) {
           </span>
         </div>
 
-        <div>
+        <div className="auth-hero-statement">
           <h2 className="auth-hero-title">{labels.heroTitle}</h2>
           <p className="auth-hero-text">{labels.heroBody}</p>
-        </div>
-
-        <div className="auth-stats">
-          {stats.map((s) => (
-            <div key={s.label}>
-              <div className="auth-stat-value">{s.value}</div>
-              <div className="auth-stat-label">{s.label}</div>
-            </div>
-          ))}
         </div>
       </div>
     </section>

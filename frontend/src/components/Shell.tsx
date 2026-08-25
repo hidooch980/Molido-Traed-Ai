@@ -9,6 +9,29 @@ import type { Theme } from "@/lib/locale";
 import { SignIn } from "@/components/SignIn";
 import { NAV, reachable, type NavItem } from "@/lib/nav";
 
+/**
+ * Routes that get no chrome at all.
+ *
+ * A sign-in page framed by the thing you have not signed into is a page that
+ * spends its first impression listing what you cannot have - a rail of
+ * thirty-five links, a language switcher, a status strip about a system the
+ * visitor has no access to. Worse, the header carries a "sign in" button on
+ * the sign-in page.
+ *
+ * Next's intended mechanism for this is a route group: move every dashboard
+ * page under `(dashboard)/` with its own layout and leave `/login` outside it.
+ * That is the better structure and it is not what this does, because it means
+ * moving thirty-four directories, and the backend test that checks every page
+ * either reads the API or is a declared exception indexes them by directory
+ * name. The trade is recorded here rather than in a commit message nobody
+ * reads twice: this is a list, and a list has to be maintained.
+ *
+ * `usePathname` resolves during the server render as well as in the browser,
+ * so the bare page is bare in the first byte of HTML - no frame of a rail
+ * appearing and then vanishing.
+ */
+const BARE_ROUTES = ["/login", "/register"];
+
 const GROUPS: NavItem["group"][] = [
   "overview",
   "market",
@@ -71,6 +94,13 @@ export default function Shell({
   const coverage = t("app.coverage")
     .replace("{linked}", String(linked))
     .replace("{total}", String(total));
+
+  // After every hook, never inside a condition above them: React counts hooks
+  // per render and a component that runs a different number of them on one
+  // path than another is one that crashes on the navigation between the two.
+  if (BARE_ROUTES.includes(pathname)) {
+    return <>{children}</>;
+  }
 
   /**
    * The language lives in a cookie, not in React state.
@@ -162,6 +192,7 @@ export default function Shell({
         <SignIn
           labels={{
             signIn: t("signin.signIn"),
+            register: t("signin.register"),
             signOut: t("signin.signOut"),
             email: t("signin.email"),
             password: t("signin.password"),
