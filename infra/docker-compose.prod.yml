@@ -231,6 +231,10 @@ services:
     environment:
       DOMAIN: ${DOMAIN}
       ACME_EMAIL: ${ACME_EMAIL}
+      # Both default to the previous behaviour, so a deployment whose
+      # .env.prod predates them keeps serving exactly as it did.
+      SITE_ADDRESS: ${SITE_ADDRESS:-${DOMAIN}}
+      CADDY_TLS: ${CADDY_TLS:-}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data

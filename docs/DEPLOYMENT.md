@@ -1,10 +1,62 @@
 # VPS deployment
 
-What this deploys, precisely: the **data layer and the collector**. The
-cognitive brain, risk brain and execution engine do not exist yet (phases 14+),
-so nothing here trades, and nothing here can. What it does do is start
-accumulating real market history and features immediately, so those later
-phases inherit years of data instead of an empty database.
+What this deploys, precisely: **the whole system, with the trading engine
+switched off**. The brain, the risk layer and the execution engine all exist
+now, and every one of their switches defaults to refusing - execution
+disabled, dry-run on, autopilot halted, kill switch engaged. Nothing trades
+until somebody decides it should, deliberately, more than once.
+
+(This page used to say those layers did not exist. They were built; the
+sentence was not updated, which is the ordinary way a deployment document
+starts lying.)
+
+What it does from the first minute is accumulate real market history and
+features, so the measurement that has not yet found an edge has more to work
+with tomorrow than it did today.
+
+## The short way
+
+On a **fresh** Ubuntu 22.04 or 24.04 server, as root:
+
+```bash
+DOMAIN=trade.molido.shop TLS_MODE=internal TRUSTED_PROXY_HOPS=2 bash infra/provision.sh
+```
+
+That installs Docker, clones the project, generates a database password it
+never prints, configures the firewall and fail2ban, starts everything, seeds
+the market calendar and schedules the nightly verified backup. It is
+idempotent - the second run changes nothing.
+
+`TLS_MODE` and `TRUSTED_PROXY_HOPS` are facts about the network in front of
+the machine, not preferences. See **Behind a CDN** below; the values above are
+for `trade.molido.shop`, which sits behind ArvanCloud.
+
+The rest of this page is what that script does, in case it has to be done or
+undone by hand.
+
+## Behind a CDN
+
+`trade.molido.shop` resolves to ArvanCloud, not to the server. Three things
+follow, and getting any of them wrong is quiet rather than loud:
+
+**TLS.** Caddy cannot complete a Let's Encrypt HTTP-01 challenge from behind a
+CDN unless the CDN passes `/.well-known/acme-challenge/` through to the origin.
+A certificate that issues once and then cannot renew is a site that goes dark
+sixty days later, on a day nobody is looking. `TLS_MODE=internal` avoids the
+question: Caddy serves a self-signed certificate, the CDN terminates public
+TLS, and the origin link is still encrypted. Set the CDN's origin mode to its
+permissive HTTPS setting - ArvanCloud and Cloudflare both call it "full",
+as distinct from "full (strict)".
+
+**The caller's address.** `MOLIDO_TRUSTED_PROXY_HOPS` must be **2** here: the
+CDN, then Caddy. The sign-in rate limiter counts failures per caller address.
+Set too low, every request appears to come from the CDN and the whole world
+shares one bucket - the first fifteen failed logins anywhere lock out
+everybody. Set too high, the address counted is one the caller wrote in a
+header, which is no limit at all while looking exactly like one.
+
+**Denial of service.** The CDN is the layer that can absorb it. Nothing in
+this application can, and nothing in it pretends to.
 
 ## What runs
 

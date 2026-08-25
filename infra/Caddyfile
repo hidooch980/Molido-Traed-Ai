@@ -1,14 +1,30 @@
-# Caddy obtains and renews TLS certificates automatically for {$DOMAIN}.
+# How this site is served, and how it is certified.
 #
-# The API is exposed under /api and /health only. There is no authentication
-# yet, so nothing here mutates state — but that also means the surface must
-# stay exactly this small until auth ships.
+# Both are parameters rather than fixed text, because they are facts about the
+# network in front of this machine rather than preferences. A deployment whose
+# DNS points straight here wants its own Let's Encrypt certificate. One behind
+# a CDN that terminates TLS itself may never be able to complete an ACME
+# challenge - and a certificate that cannot renew is a site that goes dark
+# sixty days after somebody stopped watching.
+#
+#   SITE_ADDRESS  the host, optionally prefixed http:// to serve plain HTTP
+#                 (a CDN in front terminating TLS, reaching this origin
+#                 unencrypted). Defaults to DOMAIN, which means HTTPS.
+#   CADDY_TLS     empty for a real certificate; `tls internal` for a
+#                 self-signed one, which is what an origin behind a CDN set to
+#                 "full" wants. Empty substitutes to an empty line, which is
+#                 not a directive.
+#
+# `infra/provision.sh` sets both. The API is exposed under /api and /health
+# only, and that surface stays exactly this small.
 
 {
 	email {$ACME_EMAIL}
 }
 
-{$DOMAIN} {
+{$SITE_ADDRESS} {
+	{$CADDY_TLS}
+
 	encode zstd gzip
 
 	header {
@@ -16,6 +32,10 @@
 		X-Content-Type-Options "nosniff"
 		X-Frame-Options "DENY"
 		Referrer-Policy "strict-origin-when-cross-origin"
+		# Nothing here uses a camera, a microphone or a location, so nothing
+		# here should be able to ask for one - including anything that ends up
+		# embedded on a page later without this being reconsidered.
+		Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
 		-Server
 	}
 
