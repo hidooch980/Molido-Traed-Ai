@@ -186,8 +186,14 @@ maxretry = 5
 findtime = 10m
 bantime  = 1h
 JAIL
-systemctl restart fail2ban || true
+# `enable --now`, not `restart`. Restart alone starts it for this boot and
+# leaves it disabled, so the jail is up until the machine reboots and then
+# silently is not - and the first reboot is usually months later, unattended,
+# on a host that is being scanned the whole time. This deployment shipped that
+# way once and the reboot found it.
+systemctl enable --now fail2ban || true
 echo "-> sshd jail: 5 failures in 10 minutes, banned for an hour"
+echo "   enabled, so it survives a reboot: $(systemctl is-enabled fail2ban 2>&1)"
 
 say "building and starting"
 docker compose -f infra/docker-compose.prod.yml --env-file infra/.env.prod up -d --build
@@ -211,6 +217,21 @@ CRON_LINE="15 3 * * * ${TARGET}/infra/backup.sh >> /var/log/molido-backup.log 2>
 ( crontab -l 2>/dev/null | grep -v 'infra/backup.sh' ; echo "$CRON_LINE" ) | crontab -
 echo "-> 03:15 daily. The script restores its own dump into a scratch database"
 echo "   and counts rows before reporting success; an unverified dump is not a backup."
+
+say "what survives a reboot"
+# Asserted rather than assumed. Every one of these starts correctly on the day
+# it is installed; the question is whether it comes back, and nothing asks that
+# until something has already been down for a while.
+for unit in docker containerd fail2ban ufw; do
+  state="$(systemctl is-enabled "$unit" 2>&1 || true)"
+  printf '  %-12s %s
+' "$unit" "$state"
+  case "$state" in
+    enabled|enabled-runtime|static|alias) ;;
+    *) echo "     ^ not enabled - it will not come back after a reboot" ;;
+  esac
+done
+echo "  containers    restart: unless-stopped (declared in the compose file)"
 
 say "done"
 cat <<SUMMARY
