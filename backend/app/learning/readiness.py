@@ -30,11 +30,11 @@ would be a forecast of the assumption.
 from __future__ import annotations
 
 import math
-
-from app.workers.resolve import HORIZON
 from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Any
+
+from app.workers.resolve import HORIZON
 
 #: The significance bar. The same 1.96 the edge registry demands.
 CONFIDENCE_Z = 1.96

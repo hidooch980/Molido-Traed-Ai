@@ -40,7 +40,6 @@ bet on the market, which is the thing it was built not to be.
 from __future__ import annotations
 
 from collections.abc import Sequence
-
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any

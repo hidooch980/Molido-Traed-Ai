@@ -562,8 +562,8 @@ class TestWhichTimeframesTheRuleDecidesOn:
         assert len(_forward_timeframes()) == len(set(_forward_timeframes()))
 
     def test_an_empty_setting_still_decides(self, monkeypatch):
-        from app.core.enums import Timeframe
         from app.core.config import get_settings
+        from app.core.enums import Timeframe
         from app.workers.collector import _forward_timeframes
 
         monkeypatch.setattr(get_settings(), "forward_timeframes", "", raising=False)

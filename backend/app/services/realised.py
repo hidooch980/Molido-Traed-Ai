@@ -29,7 +29,7 @@ from collections import defaultdict
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from app.providers.metatrader import DEFAULT_BRIDGE_DIR, bridge_dir_for
+from app.providers.metatrader import bridge_dir_for
 
 DEALS_FILE = "molido_deals.json"
 

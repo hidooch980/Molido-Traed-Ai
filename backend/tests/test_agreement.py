@@ -14,7 +14,6 @@ from datetime import UTC, datetime
 from app.brain import crosssection
 from app.brain.crosssection import MIN_AGREEMENT, agreement, confirmed
 
-
 AT = datetime(2026, 8, 18, 12, 0, tzinfo=UTC)
 
 

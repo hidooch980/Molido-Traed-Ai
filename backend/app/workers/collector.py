@@ -447,7 +447,6 @@ def ingest_broker_bars() -> dict[str, Any]:
     Each timeframe commits on its own. A malformed M1 file must not roll back
     the hourly bars, which are the ones the live rule is deciding on.
     """
-    from app.core.enums import Timeframe
     from app.workers.broker_bars import ingest
 
     reports: dict[str, Any] = {}
