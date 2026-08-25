@@ -24,10 +24,10 @@ from sqlalchemy.orm import Session
 from app.api.deps import Principal, require
 from app.api.guard import public_mutation
 from app.api.net import client_address, user_agent
-from app.core.enums import Permission
+from app.core.enums import AuditEventType, Permission
 from app.core.errors import MolidoError
 from app.db.session import get_db
-from app.services import human_check, login_guard, sessions_auth
+from app.services import human_check, login_guard, security_log, sessions_auth
 
 router = APIRouter(prefix="/session", tags=["session"])
 
@@ -123,7 +123,22 @@ def sign_in(
     address = client_address(request)
     agent = user_agent(request)
 
-    verdict = login_guard.enforce(session, email=credentials.email, address=address)
+    try:
+        verdict = login_guard.enforce(session, email=credentials.email, address=address)
+    except login_guard.TooManyAttemptsError:
+        # Its own event type rather than a failure with a flag. A throttled
+        # attempt says nothing about whether the password was right, and
+        # counting it among the failures overstates how close anybody got.
+        security_log.record(
+            session,
+            AuditEventType.SIGN_IN_THROTTLED,
+            summary="sign-in refused by the rate limiter before the password was read",
+            subject=login_guard.normalise(credentials.email),
+            address=address,
+            user_agent=agent,
+        )
+        session.commit()
+        raise
 
     if verdict.human_check_required:
         try:
@@ -146,6 +161,14 @@ def sign_in(
                 reason="human check failed",
                 user_agent=agent,
             )
+            security_log.record(
+                session,
+                AuditEventType.HUMAN_CHECK_FAILED,
+                summary="sign-in attempted without a valid proof of work",
+                subject=login_guard.normalise(credentials.email),
+                address=address,
+                user_agent=agent,
+            )
             session.commit()
             raise
 
@@ -162,6 +185,14 @@ def sign_in(
             reason="credentials rejected",
             user_agent=agent,
         )
+        security_log.record(
+            session,
+            AuditEventType.SIGN_IN_FAILED,
+            summary="sign-in refused: the details did not match an account",
+            subject=login_guard.normalise(credentials.email),
+            address=address,
+            user_agent=agent,
+        )
         session.commit()
         raise
 
@@ -175,7 +206,22 @@ def sign_in(
     )
     # Five wrong attempts and then the right one must not leave the ladder
     # standing against somebody who has just proved they own the account.
-    login_guard.clear(session, email=credentials.email)
+    cleared = login_guard.clear(session, email=credentials.email)
+    security_log.record(
+        session,
+        AuditEventType.SIGN_IN_SUCCEEDED,
+        summary=f"signed in as {result.role.value}",
+        subject=login_guard.normalise(credentials.email),
+        user_id=result.user_id,
+        tenant_id=result.tenant_id,
+        role=result.role.value,
+        address=address,
+        user_agent=agent,
+        # The count that was standing when it worked. A success after five
+        # failures is a different line in the log from a success after none,
+        # and it is the one worth looking at twice.
+        detail={"failures_cleared": cleared},
+    )
     session.commit()
 
     response.set_cookie(

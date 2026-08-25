@@ -203,6 +203,16 @@ class Permission(StrEnum):
 
 
 class AuditEventType(StrEnum):
+    """Everything worth being able to look up afterwards.
+
+    The `auth.`, `user.`, `key.`, `broker.` and `killswitch.` families are the
+    security log. They are listed here rather than in a separate enum because
+    they land in the same table as everything else, and one timeline is the
+    point: "the collector failed, then somebody signed in from a new address,
+    then the kill switch was released" is a sentence you can only read if all
+    three are in one place, in order.
+    """
+
     INGESTION_STARTED = "ingestion.started"
     INGESTION_COMPLETED = "ingestion.completed"
     INGESTION_FAILED = "ingestion.failed"
@@ -211,3 +221,39 @@ class AuditEventType(StrEnum):
     SAFE_MODE_ENGAGED = "safe_mode.engaged"
     SAFE_MODE_CLEARED = "safe_mode.cleared"
     API_REQUEST = "api.request"
+
+    # --- the security log ------------------------------------------------
+    #
+    # Failures are recorded as carefully as successes, and the two are
+    # separate event types rather than one with an outcome field, so "show me
+    # every failed sign-in" is an indexed lookup rather than a scan that has
+    # to open every payload.
+    SIGN_IN_SUCCEEDED = "auth.sign_in.succeeded"
+    SIGN_IN_FAILED = "auth.sign_in.failed"
+    #: Refused by the rate limiter before the password was read. Distinct from
+    #: a failure: it says nothing about whether the password was right, and
+    #: counting it as a failure would overstate how close an attacker got.
+    SIGN_IN_THROTTLED = "auth.sign_in.throttled"
+    HUMAN_CHECK_FAILED = "auth.human_check.failed"
+    SIGN_OUT = "auth.sign_out"
+    #: Somebody authenticated reached for authority they do not hold. Rare by
+    #: construction, and the most interesting line in the log when it is not.
+    PERMISSION_DENIED = "auth.permission.denied"
+
+    USER_CREATED = "user.created"
+    USER_REGISTERED = "user.registered"
+    USER_ROLE_CHANGED = "user.role_changed"
+    USER_ACTIVE_CHANGED = "user.active_changed"
+    # The value is the name of an event, not a password. Ruff reads any
+    # constant with "password" in its name as a leaked secret, which is
+    # the right default and wrong here.
+    PASSWORD_CHANGED = "user.password_changed"  # noqa: S105
+    DEPLOYMENT_CLAIMED = "user.deployment_claimed"
+
+    KEY_ISSUED = "key.issued"
+    KEY_REVOKED = "key.revoked"
+
+    BROKER_LINKED = "broker.linked"
+
+    KILL_SWITCH_ENGAGED = "killswitch.engaged"
+    KILL_SWITCH_RELEASED = "killswitch.released"

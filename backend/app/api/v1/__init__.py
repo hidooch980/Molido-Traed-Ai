@@ -17,6 +17,7 @@ from app.api.v1 import (
     market_map,
     memory,
     risk,
+    security,
     sessions,
     similarity,
     symbol_dna,
@@ -52,5 +53,6 @@ api_router.include_router(users.router)
 api_router.include_router(system.router)
 api_router.include_router(market_map.router)
 api_router.include_router(brokers.router)
+api_router.include_router(security.router)
 
 __all__ = ["api_router"]
