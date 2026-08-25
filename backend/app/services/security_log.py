@@ -69,6 +69,7 @@ SECURITY_EVENTS: tuple[AuditEventType, ...] = (
     AuditEventType.KEY_ISSUED,
     AuditEventType.KEY_REVOKED,
     AuditEventType.BROKER_LINKED,
+    AuditEventType.ANALYST_SPOKE,
     AuditEventType.KILL_SWITCH_ENGAGED,
     AuditEventType.KILL_SWITCH_RELEASED,
 )

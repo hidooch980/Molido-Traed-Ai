@@ -255,5 +255,10 @@ class AuditEventType(StrEnum):
 
     BROKER_LINKED = "broker.linked"
 
+    #: The second brain said something. Recorded whether or not it was any
+    #: good: "was the analyst right" cannot be a question with an answer
+    #: if only the answers somebody liked were kept.
+    ANALYST_SPOKE = "analyst.spoke"
+
     KILL_SWITCH_ENGAGED = "killswitch.engaged"
     KILL_SWITCH_RELEASED = "killswitch.released"

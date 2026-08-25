@@ -32,23 +32,26 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import Principal, require
 from app.api.guard import find_ungated_routes, mutating_routes
+from app.brain import analyst
 from app.brain import calibration as cal
 from app.brain import risk as risk_brain
 from app.brain import stress as stress_brain
 from app.core.config import get_settings
-from app.core.enums import Permission, Timeframe
+from app.core.enums import AuditEventType, Permission, Timeframe
 from app.db.session import get_db
 from app.execution.safety import ExecutionPolicy, KillSwitch
 from app.ops import bottlenecks, disk, health_score, self_healing
 from app.ops import incidents as incident_memory
 from app.ops import readiness as rd
 from app.pipeline import decide as pipeline
-from app.services import retention
+from app.services import retention, security_log
 from app.services.instruments import get_instrument
 
 router = APIRouter(prefix="/decisions", tags=["decisions"])
 
 READ = Depends(require(Permission.READ))
+#: The analysis endpoint costs money to answer, so it is not READ.
+SIMULATE = Depends(require(Permission.SIMULATE))
 
 
 @router.get("/posture")
@@ -248,6 +251,68 @@ def read_healing(
     }
 
 
+@router.get("/{instrument_id}/analysis")
+def read_decision_analysis(
+    instrument_id: uuid.UUID,
+    timeframe: Timeframe = Query(default=Timeframe.H1),
+    as_of: datetime | None = Query(default=None),
+    equity: float = Query(default=100_000.0, gt=0),
+    language: str = Query(default="fa", max_length=8),
+    principal: Principal = SIMULATE,
+    session: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """The same chain, with the second brain's reading of it.
+
+    Two things are returned, and keeping them separate is the point: the trace
+    is what the system decided, and the analysis is one opinion about that
+    decision. A response that merged them would let a sentence the model wrote
+    be read as a step the chain took.
+
+    Behind SIMULATE rather than READ because it costs money to answer. Every
+    call is a request to a model; a page that polled this on READ would bill
+    the account holder for a refresh they did not know they made.
+
+    The verdict is recorded whether or not it is any good - "was the analyst
+    right" has to be a question with an answer, and it cannot be one if only
+    the answers somebody liked were kept.
+    """
+    trace = _trace_for(session, instrument_id, timeframe, as_of=as_of, equity=equity)
+    verdict = analyst.analyse(trace, language=language)
+
+    security_log.record(
+        session,
+        AuditEventType.ANALYST_SPOKE,
+        summary=verdict.headline[:200],
+        user_id=principal.user_id,
+        tenant_id=principal.tenant_id,
+        detail={
+            "instrument_id": str(instrument_id),
+            "timeframe": str(timeframe),
+            "available": verdict.available,
+            "objection_strength": verdict.objection_strength,
+            "would_have_traded": verdict.would_have_traded,
+            # The trace's own words for where it ended. Recorded beside the
+            # analyst's `would_have_traded` because the pair is the whole
+            # scoring question: the chain refused at this gate, the analyst
+            # would or would not have.
+            "stopped_at": trace.get("stopped_at"),
+            "reached_intent": trace.get("reached_intent"),
+            "model": verdict.model,
+            "unavailable_because": verdict.unavailable_because,
+        },
+    )
+    session.commit()
+
+    return {
+        "trace": trace,
+        "analysis": verdict.as_dict(),
+        "note": (
+            "the trace is what the system decided; the analysis is one opinion "
+            "about it, produced afterwards and connected to nothing"
+        ),
+    }
+
+
 @router.get("/{instrument_id}")
 def read_decision(
     instrument_id: uuid.UUID,
@@ -307,6 +372,29 @@ def read_decision(
         as_of=cutoff,
     )
     return trace.as_dict()
+
+
+def _trace_for(
+    session: Session,
+    instrument_id: uuid.UUID,
+    timeframe: Timeframe,
+    *,
+    as_of: datetime | None,
+    equity: float,
+) -> dict[str, Any]:
+    """The trace, built exactly the way `read_decision` builds it.
+
+    Shared rather than reimplemented so the analysed trace is provably the
+    trace the plain endpoint returns. Two constructions that drift would mean
+    the analysis explains a decision the operator never saw.
+    """
+    return read_decision(
+        instrument_id,
+        timeframe=timeframe,
+        as_of=as_of,
+        equity=equity,
+        session=session,
+    )
 
 
 def _measured_history() -> stress_brain.TradeHistory | None:

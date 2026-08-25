@@ -83,6 +83,31 @@ class Settings(BaseSettings):
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
 
+    # ------------------------------------------------------------------ analyst
+    #
+    #: The key for the second brain's language half. Empty means the analyst is
+    #: not configured, and `brain.analyst` says exactly that rather than
+    #: returning a plausible paragraph it made up - which is the one failure
+    #: mode a commentary layer must not have.
+    #:
+    #: Never logged. `safe_summary` reports whether it is set, never its value.
+    anthropic_api_key: str = ""
+
+    #: Which model reads the trace. The analyst reasons about a chain of
+    #: eighteen gates and is asked to disagree with it; that is not a task for
+    #: the cheap tier, and it runs at most a few times per decision rather than
+    #: per bar.
+    analyst_model: str = "claude-opus-5"
+
+    #: How hard it is allowed to think. `high` is the default across the API;
+    #: named here so lowering it is a visible decision rather than a silent one.
+    analyst_effort: Literal["low", "medium", "high", "xhigh", "max"] = "high"
+
+    #: Ceiling per call. Non-streaming, so this stays well under the SDK's HTTP
+    #: timeout - the analyst answers one question about one trace and has no
+    #: reason to produce a long document.
+    analyst_max_tokens: int = 8000
+
     #: An SMTP relay, not a mail server on this host. A fresh VPS address has no
     #: sending reputation, and mail from one lands in spam whatever SPF, DKIM
     #: and DMARC say - reputation is earned over months, so verification mail
@@ -185,6 +210,10 @@ class Settings(BaseSettings):
             "env": self.env,
             "database": _redact_dsn(self.database_url),
             "redis": _redact_dsn(self.redis_url),
+            # Whether, not what. An operator needs to know the analyst can run;
+            # nobody needs the key in a log line.
+            "analyst_configured": bool(self.anthropic_api_key),
+            "analyst_model": self.analyst_model,
             "log_level": self.log_level,
             "min_quality_score": self.min_quality_score,
         }

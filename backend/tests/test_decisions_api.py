@@ -177,3 +177,108 @@ class TestDecisionPreview:
         stress = [s for s in payload["stages"] if s["stage"] == "stress"]
 
         assert stress == [] or stress[0]["passed"] is False
+
+
+class TestTheSecondBrainReadsTheSameTrace:
+    """The analysis endpoint returns the chain's decision and one opinion about
+    it, side by side and never merged. A response that blended them would let a
+    sentence the model wrote be read as a step the chain took."""
+
+    @pytest.fixture()
+    def signed_in(self, session):
+        """A caller holding SIMULATE, which the analysis endpoint requires."""
+        import uuid as uuid_module
+
+        from app.api.deps import ROLE_PERMISSIONS, Principal, resolve_principal
+        from app.core.enums import UserRole
+        from app.db.session import get_db
+        from app.main import app
+
+        app.dependency_overrides[get_db] = lambda: session
+        app.dependency_overrides[resolve_principal] = lambda: Principal(
+            tenant_id=uuid_module.uuid4(),
+            user_id=uuid_module.uuid4(),
+            role=UserRole.ANALYST,
+            permissions=frozenset(ROLE_PERMISSIONS[UserRole.ANALYST]),
+            authenticated=True,
+        )
+        with TestClient(app) as test_client:
+            yield test_client
+        app.dependency_overrides.clear()
+
+    def test_reading_alone_is_not_enough_to_reach_it(self, client, session, instrument, provider):
+        """It costs money to answer. A page polling it on READ would bill the
+        account holder for a refresh they did not know they made."""
+        seed(session, instrument, provider)
+
+        response = client.get(f"/api/v1/decisions/{instrument.id}/analysis")
+
+        assert response.status_code in (401, 403)
+
+    def test_the_trace_and_the_analysis_stay_apart(self, signed_in, session, instrument, provider):
+        seed(session, instrument, provider)
+
+        payload = signed_in.get(f"/api/v1/decisions/{instrument.id}/analysis").json()
+
+        assert "trace" in payload
+        assert "analysis" in payload
+        assert payload["trace"]["symbol"] == instrument.symbol
+
+    def test_it_is_the_same_trace_the_plain_endpoint_returns(
+        self, signed_in, session, instrument, provider
+    ):
+        """Two constructions that drifted would mean the analysis explains a
+        decision the operator never saw."""
+        seed(session, instrument, provider)
+
+        plain = signed_in.get(f"/api/v1/decisions/{instrument.id}").json()
+        analysed = signed_in.get(f"/api/v1/decisions/{instrument.id}/analysis").json()
+
+        assert analysed["trace"]["stopped_at"] == plain["stopped_at"]
+        assert analysed["trace"]["reached_intent"] == plain["reached_intent"]
+        assert analysed["trace"]["symbol"] == plain["symbol"]
+
+    def test_with_no_key_it_says_so_rather_than_failing(
+        self, signed_in, session, instrument, provider
+    ):
+        """The deployment's actual state. A missing commentary layer must not
+        turn a working decision endpoint into a 500."""
+        seed(session, instrument, provider)
+
+        response = signed_in.get(f"/api/v1/decisions/{instrument.id}/analysis")
+
+        assert response.status_code == 200
+        assert response.json()["analysis"]["available"] is False
+        assert response.json()["analysis"]["unavailable_because"]
+
+    def test_the_answer_says_it_reaches_nothing(self, signed_in, session, instrument, provider):
+        seed(session, instrument, provider)
+
+        payload = signed_in.get(f"/api/v1/decisions/{instrument.id}/analysis").json()
+
+        assert "connected to nothing" in payload["note"]
+
+    def test_what_it_said_is_recorded_even_when_it_said_nothing(
+        self, signed_in, session, instrument, provider
+    ):
+        """Only keeping the answers somebody liked would make "was the analyst
+        right" unanswerable."""
+        from sqlalchemy import select
+
+        from app.core.enums import AuditEventType
+        from app.models.audit import AuditEvent
+
+        seed(session, instrument, provider)
+        signed_in.get(f"/api/v1/decisions/{instrument.id}/analysis")
+
+        rows = list(
+            session.scalars(
+                select(AuditEvent).where(
+                    AuditEvent.event_type == str(AuditEventType.ANALYST_SPOKE)
+                )
+            )
+        )
+
+        assert len(rows) == 1
+        assert rows[0].payload["available"] is False
+        assert rows[0].payload["stopped_at"], "the gate that ended it is the scoring question"
