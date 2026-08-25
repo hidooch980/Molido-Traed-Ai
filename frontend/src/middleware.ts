@@ -51,15 +51,89 @@ const PUBLIC_PREFIXES = [
 
 const SESSION_COOKIE = "molido_session";
 
+/**
+ * The content security policy, with a fresh nonce on every request.
+ *
+ * A nonce rather than `'unsafe-inline'`, and the difference is the whole
+ * value: Next inlines a hydration script into every page, so a policy that
+ * permitted inline scripts to allow it would permit *any* inline script -
+ * which is precisely the injection class a policy exists to stop. With a
+ * nonce, the only inline script that runs is the one this server stamped.
+ *
+ * `strict-dynamic` means scripts loaded *by* a trusted script are trusted too,
+ * so the chunk graph works without listing every filename. It also makes
+ * modern browsers ignore the `'self'` beside it, which is left in only as the
+ * fallback for browsers that do not implement it.
+ *
+ * `style-src` still allows inline, and that is a real weakness stated rather
+ * than hidden. Tailwind and this application's `style={{}}` props both emit
+ * style attributes, and there is no nonce for an attribute. An injected style
+ * can deface a page and can read some things through selectors; it cannot
+ * execute. That is a smaller hole than the one closed above, and closing it
+ * means removing every inline style in thirty-five pages.
+ *
+ * `connect-src 'self'` is honest here because the API is same-origin behind
+ * Caddy. If the dashboard is ever pointed at an API on another host, this line
+ * is what will refuse it - loudly, in the console, which is the correct way to
+ * find out that the deployment shape changed.
+ */
+function policyFor(nonce: string): string {
+  // Next's dev server compiles modules through `eval` for hot reloading. The
+  // production build does not, so the exemption is scoped to the one mode that
+  // needs it rather than left in the policy that ships - a CSP with
+  // `unsafe-eval` in it permits exactly the injection technique it is there to
+  // stop, and it would have been invisible: the policy header still looks
+  // strict at a glance.
+  const evalForHotReload =
+    process.env.NODE_ENV === "development" ? " 'unsafe-eval'" : "";
+
+  return [
+    "default-src 'self'",
+    `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'${evalForHotReload}`,
+    "style-src 'self' 'unsafe-inline'",
+    // `data:` for the QR and the icons; nothing remote.
+    "img-src 'self' data: blob:",
+    "font-src 'self'",
+    "connect-src 'self'",
+    // Nothing here is ever framed, and clickjacking a kill switch is a real
+    // shape of attack rather than a theoretical one.
+    "frame-ancestors 'none'",
+    "frame-src 'none'",
+    "object-src 'none'",
+    "base-uri 'self'",
+    // A form that posts anywhere but here is a form somebody else wrote.
+    "form-action 'self'",
+    "upgrade-insecure-requests",
+  ].join("; ");
+}
+
+function withPolicy(response: NextResponse, policy: string): NextResponse {
+  response.headers.set("Content-Security-Policy", policy);
+  return response;
+}
+
 export function middleware(request: NextRequest) {
   const { pathname, search } = request.nextUrl;
 
-  if (PUBLIC_PATHS.has(pathname)) return NextResponse.next();
+  // 128 bits from the platform's own generator. `Math.random` is not a source
+  // of nonces: a predictable nonce is the same as no nonce at all.
+  const nonce = btoa(crypto.randomUUID());
+  const policy = policyFor(nonce);
+
+  // Next reads the policy off the *request* to find the nonce, and stamps it
+  // onto the scripts it generates. Without this the page's own hydration
+  // script is the first thing the policy blocks.
+  const headers = new Headers(request.headers);
+  headers.set("x-nonce", nonce);
+  headers.set("Content-Security-Policy", policy);
+  const pass = () => withPolicy(NextResponse.next({ request: { headers } }), policy);
+
+  if (PUBLIC_PATHS.has(pathname)) return pass();
   if (PUBLIC_PREFIXES.some((prefix) => pathname.startsWith(prefix))) {
-    return NextResponse.next();
+    return pass();
   }
 
-  if (request.cookies.get(SESSION_COOKIE)) return NextResponse.next();
+  if (request.cookies.get(SESSION_COOKIE)) return pass();
 
   // Where they were going, so signing in finishes the journey rather than
   // dropping them on a dashboard and making them navigate again. Carried as a
@@ -71,7 +145,7 @@ export function middleware(request: NextRequest) {
   if (pathname !== "/dashboard") {
     destination.searchParams.set("next", `${pathname}${search}`);
   }
-  return NextResponse.redirect(destination);
+  return withPolicy(NextResponse.redirect(destination), policy);
 }
 
 export const config = {
