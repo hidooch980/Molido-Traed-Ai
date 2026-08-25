@@ -11,6 +11,7 @@ from app.models.challenge_accounts import ChallengeAccount
 from app.models.episodes import Episode
 from app.models.equity import EquitySample
 from app.models.features import FeatureValue
+from app.models.human_checks import HumanChallenge
 from app.models.incidents import Incident
 from app.models.ingestion import (
     DataQualityFinding,
@@ -20,13 +21,16 @@ from app.models.ingestion import (
 )
 from app.models.instruments import BrokerSymbol, Instrument, Provider
 from app.models.journal import JournalEntry
+from app.models.login_attempts import LoginAttempt
 from app.models.market_data import Bar, Tick
 from app.models.symbol_dna import SymbolProfile
 from app.models.tenancy import ApiKey, Tenant, User
 
 __all__ = [
+    "HumanChallenge",
     "Incident",
     "JournalEntry",
+    "LoginAttempt",
     "ChallengeAccount",
     "ApiKey",
     "AuditEvent",

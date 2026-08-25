@@ -49,6 +49,28 @@ class Settings(BaseSettings):
     # false, so the first execution endpoint cannot ship without it.
     require_auth: bool = False
 
+    #: How many reverse proxies sit in front of this application.
+    #:
+    #: The rate limiter counts failures per caller address, and an address a
+    #: caller can choose is not a limit. `X-Forwarded-For` is a header, so
+    #: anybody can send one; the only entries in it that mean anything are the
+    #: ones a proxy this deployment controls appended itself, counted from the
+    #: right.
+    #:
+    #: 0 - nothing in front. The socket address is used and the header is
+    #:     ignored entirely, which is the safe default: a deployment that
+    #:     trusted the header while directly exposed would let every attacker
+    #:     pick a fresh address per request.
+    #: 1 - one proxy, which is this project's Caddy. The last entry is what
+    #:     Caddy saw, and everything to its left was supplied by the caller.
+    #: 2+ - a CDN in front of Caddy. Set it to the real number: setting it too
+    #:     high reads an address the caller wrote.
+    #:
+    #: Getting this wrong in the other direction is not silent either - with 0
+    #: behind a proxy, every request appears to come from the proxy and the
+    #: address ladder becomes one bucket holding everybody.
+    trusted_proxy_hops: int = 0
+
     #: Where the API drops broker-login requests for the host agent to apply.
     #: The API runs in a container and MetaTrader runs on the host under Wine,
     #: so a shared directory is the seam - the alternative is handing a
