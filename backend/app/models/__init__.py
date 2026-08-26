@@ -26,6 +26,7 @@ from app.models.market_data import Bar, Tick
 from app.models.recovery_codes import RecoveryCode
 from app.models.symbol_dna import SymbolProfile
 from app.models.tenancy import ApiKey, Tenant, User
+from app.models.terminals import Terminal
 
 __all__ = [
     "HumanChallenge",
@@ -50,6 +51,7 @@ __all__ = [
     "MarketHoliday",
     "Provider",
     "SymbolProfile",
+    "Terminal",
     "Tenant",
     "Tick",
     "User",

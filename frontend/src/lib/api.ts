@@ -85,13 +85,45 @@ export interface Health {
  */
 const INTERNAL_KEY = process.env.MOLIDO_INTERNAL_API_KEY ?? "";
 
+/**
+ * The signed-in visitor's session, forwarded to the API.
+ *
+ * Without this the API sees an anonymous caller on every request, and an
+ * anonymous caller holds `READ` - so every instrument, bar, journal entry,
+ * risk limit and account figure on this deployment was readable by anybody who
+ * knew the path. The pages were gated by the middleware and the data
+ * underneath them was not, which is the more expensive half of the pair.
+ *
+ * Forwarded rather than replaced by a service key. A single privileged
+ * identity for every visitor would work and would quietly hand a viewer
+ * whatever an owner can read; passing the cookie keeps the permission the API
+ * applies the permission the person actually has.
+ *
+ * `cookies()` only exists inside a request, and every page here is
+ * `force-dynamic` so there always is one - but a build-time call would throw
+ * rather than return nothing, and a thrown error in a data reader is a page
+ * that says "backend unreachable" about a backend that is fine.
+ */
+async function sessionHeader(): Promise<Record<string, string>> {
+  try {
+    const { cookies } = await import("next/headers");
+    const jar = await cookies();
+    const session = jar.get("molido_session")?.value;
+    return session ? { cookie: `molido_session=${session}` } : {};
+  } catch {
+    return {};
+  }
+}
+
 async function request<T>(path: string): Promise<ApiResult<T>> {
   try {
     const response = await fetch(`${BASE_URL}${path}`, {
       cache: "no-store",
-      headers: INTERNAL_KEY
-        ? { accept: "application/json", "X-API-Key": INTERNAL_KEY }
-        : { accept: "application/json" },
+      headers: {
+        accept: "application/json",
+        ...(INTERNAL_KEY ? { "X-API-Key": INTERNAL_KEY } : {}),
+        ...(await sessionHeader()),
+      },
     });
     if (!response.ok) {
       const body = await response.json().catch(() => ({}));
@@ -756,6 +788,30 @@ export interface PositioningView {
   note?: string;
 }
 
+export interface TerminalRow {
+  id: string;
+  key: string;
+  label: string;
+  broker: string;
+  kind: string;
+  is_active: boolean;
+  created_at: string | null;
+  /** Whether a heartbeat is arriving. A registration is a claim; this is the
+   *  evidence, and the two are different questions on one screen. */
+  publishing: boolean;
+  usable?: boolean;
+  login: number;
+  age_seconds?: number | null;
+  reason?: string | null;
+}
+
+export interface TerminalsView {
+  terminals: TerminalRow[];
+  total: number;
+  publishing: number;
+  note: string;
+}
+
 export interface SetupView {
   claimed: boolean;
   password_min_length: number;
@@ -956,6 +1012,10 @@ export const api = {
   positions: () => request<PositionsView>("/api/v1/execution/positions"),
   autopilot: () => request<AutopilotView>("/api/v1/execution/autopilot"),
   setup: () => request<SetupView>("/api/v1/users/setup"),
+  /** Every registered MetaTrader terminal, with whether it is actually
+   *  publishing. Eleven rows that all look configured and none of which
+   *  are alive is the state this call exists to make visible. */
+  terminals: () => request<TerminalsView>("/api/v1/terminals"),
   /** What the world's central banks charge, and the gap between any two of
    *  them. The only reading in this client that is not derived from a price. */
   policyRates: () => request<PolicyRatesView>("/api/v1/fundamentals/policy-rates"),

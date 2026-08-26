@@ -45,11 +45,13 @@ from typing import Any
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session
 
 from app.api.deps import Principal, require
 from app.core.enums import Permission
 from app.core.errors import ValidationFailedError
 from app.core.logging import get_logger
+from app.db.session import get_db
 from app.providers.metatrader import (
     DEFAULT_ACCOUNT_KEY,
     STAMP_FORMAT,
@@ -129,9 +131,14 @@ def _write_atomically(path: pathlib.Path, payload: str) -> None:
 def publish(
     body: BridgePublish,
     principal: Principal = BROKER,
+    session: Session = Depends(get_db),
 ) -> dict[str, Any]:
     """Accept one terminal's published state and write it into its directory."""
-    known = bridge_dirs()
+    # The session is passed so terminals registered through the interface
+    # resolve here too. Without it this route only knows the environment
+    # variable, and a terminal somebody had just added on screen would be
+    # refused by the endpoint the screen had told them to point it at.
+    known = bridge_dirs(session=session)
     directory = known.get(body.account_key)
     if directory is None:
         # Named, with the alternatives, because the usual cause is a typo in

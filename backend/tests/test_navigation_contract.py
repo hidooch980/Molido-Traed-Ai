@@ -361,3 +361,37 @@ class TestWhereSigningOutLands:
         block = source.split("async function signOut")[1][:1400]
         assert "response.ok" in block
         assert "refresh()" in block
+
+
+class TestTheApiIsNotOpenToStrangers:
+    """The middleware gates the pages. It does not gate the data.
+
+    An anonymous caller holds `READ`, so with `require_auth` off every
+    instrument, bar, journal entry, risk limit and account figure on the
+    deployment was readable by anybody who knew the path - while the pages
+    above them redirected politely to a login screen. The gate on the pages is
+    the cheaper half of the pair and was the only half that existed.
+    """
+
+    def test_the_reader_forwards_the_visitors_session(self):
+        source = (FRONTEND / "lib" / "api.ts").read_text(encoding="utf-8")
+        assert "molido_session" in source, (
+            "without the cookie the API sees an anonymous caller on every "
+            "request, whatever the person signed in as"
+        )
+        assert "next/headers" in source
+
+    def test_forwarding_never_throws_into_a_page(self):
+        """`cookies()` raises outside a request rather than returning nothing,
+        and a thrown error in a data reader renders as "backend unreachable"
+        about a backend that is perfectly fine."""
+        source = (FRONTEND / "lib" / "api.ts").read_text(encoding="utf-8")
+        block = source.split("async function sessionHeader")[1].split("\n}")[0]
+        assert "catch" in block
+
+    def test_the_session_is_forwarded_rather_than_replaced_by_a_service_key(self):
+        """One privileged identity for every visitor would work, and would
+        hand a viewer whatever an owner can read."""
+        source = (FRONTEND / "lib" / "api.ts").read_text(encoding="utf-8")
+        request_body = source.split("async function request<T>")[1][:600]
+        assert "sessionHeader()" in request_body

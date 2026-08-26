@@ -47,7 +47,7 @@ x-backend-env: &backend-env
   # Separate from the three above on purpose: those are decisions about this
   # deployment, this is a decision about the account being traded.
   MOLIDO_ALLOW_REAL_MONEY_ORDERS: ${MOLIDO_ALLOW_REAL_MONEY_ORDERS:-false}
-  MOLIDO_REQUIRE_AUTH: ${MOLIDO_REQUIRE_AUTH:-false}
+  MOLIDO_REQUIRE_AUTH: ${MOLIDO_REQUIRE_AUTH:-true}
 
   # Outbound mail, for account verification. Unset means this deployment does
   # not send, stated rather than silent.

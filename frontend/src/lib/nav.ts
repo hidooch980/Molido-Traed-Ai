@@ -51,6 +51,7 @@ export const NAV: NavItem[] = [
   { key: "data-quality", labelKey: "nav.dataQuality", href: "/data-quality", group: "operations" },
   { key: "ai-health", labelKey: "nav.aiHealth", href: "/health", group: "operations" },
   { key: "accounts", labelKey: "nav.accounts", href: "/accounts", group: "operations" },
+  { key: "terminals", labelKey: "nav.terminals", href: "/terminals", group: "operations" },
   { key: "brokers", labelKey: "nav.brokers", href: "/brokers", group: "operations" },
   { key: "telegram", labelKey: "nav.telegram", href: "/security", group: "operations" },
   { key: "automation", labelKey: "nav.automation", href: "/automation", group: "operations" },
