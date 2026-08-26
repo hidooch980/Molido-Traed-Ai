@@ -255,3 +255,46 @@ class TestTheFirstAccount:
             "claiming needs its own proof - reusing the register purpose would "
             "make the cheaper form a mint for the more powerful one"
         )
+
+
+class TestWhereSigningInLands:
+    """The landing page is public, so arriving there proves nothing.
+
+    Signing in used to send people to `/`, which was the dashboard until a
+    marketing page took that address. After the move the redirect still worked
+    perfectly and still went to `/` - a page that greets strangers, carries a
+    "sign in" button, and shows no sign of a session. The result was four
+    consecutive successful sign-ins, every one recorded by the server, and a
+    person who could not tell any of them had happened.
+    """
+
+    def test_the_panel_does_not_send_people_to_the_public_page(self):
+        source = (FRONTEND / "components" / "LoginPanel.tsx").read_text(
+            encoding="utf-8"
+        )
+        assert 'window.location.href = "/"' not in source, (
+            "`/` is the landing page; sending a freshly signed-in person there "
+            "is indistinguishable from refusing them"
+        )
+        assert "/dashboard" in source
+
+    def test_the_destination_refuses_to_leave_this_site(self):
+        """`next` comes out of the URL, where anybody can put anything.
+
+        A login page that forwards anywhere after authenticating is how a
+        phishing link borrows a domain people already trust. `//elsewhere` is
+        a URL rather than a path, so testing only for a leading slash is the
+        version of this check that does not work.
+        """
+        source = (FRONTEND / "components" / "LoginPanel.tsx").read_text(
+            encoding="utf-8"
+        )
+        assert 'startsWith("/")' in source
+        assert 'startsWith("//")' in source
+
+    def test_the_middleware_moves_a_signed_in_visitor_off_the_landing_page(self):
+        source = (FRONTEND / "middleware.ts").read_text(encoding="utf-8")
+        assert 'pathname === "/"' in source, (
+            "somebody who is signed in and types the domain should arrive in "
+            "the application, not on the page explaining it to strangers"
+        )

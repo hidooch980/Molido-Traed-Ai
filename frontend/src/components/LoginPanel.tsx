@@ -101,6 +101,34 @@ type Stage = "password" | "register" | "code" | "enrol" | "codes";
 
 export type Mode = "sign-in" | "register";
 
+/**
+ * Where to land once the session exists.
+ *
+ * Not `/` any more, and that single character was the whole of a bug that
+ * looked exactly like a broken password. `/` is the public landing page - the
+ * one written for somebody who has no account - so signing in successfully
+ * dropped people back onto a marketing page with a "sign in" button on it,
+ * which is indistinguishable from not having signed in at all. The server was
+ * recording `auth.sign_in.succeeded` the whole time.
+ *
+ * It also honours the `next` the middleware sets. That parameter has been
+ * written on every redirect to this page since the gate was built and read by
+ * nothing, so being bounced off `/risk` and signing in took you somewhere else
+ * and made you navigate again.
+ *
+ * **Only a path on this site.** `next` arrives in the URL, where anybody can
+ * put anything, and a login page that will forward to an arbitrary address
+ * after authenticating is how a phishing link borrows a domain people trust.
+ * `//elsewhere.example` is a URL, not a path, which is why the second test is
+ * not redundant.
+ */
+function destination(): string {
+  if (typeof window === "undefined") return "/dashboard";
+  const next = new URLSearchParams(window.location.search).get("next");
+  if (next && next.startsWith("/") && !next.startsWith("//")) return next;
+  return "/dashboard";
+}
+
 export function LoginPanel({
   labels,
   version,
@@ -238,7 +266,7 @@ export function LoginPanel({
         await beginEnrolment();
         return;
       }
-      window.location.href = "/";
+      window.location.href = destination();
     } catch {
       setError(labels.failed);
     } finally {
@@ -401,7 +429,7 @@ export function LoginPanel({
                 void navigator.clipboard?.writeText(recoveryCodes.join("\n"));
                 setCopied(true);
               }}
-              onDone={() => (window.location.href = "/")}
+              onDone={() => (window.location.href = destination())}
             />
           )}
 

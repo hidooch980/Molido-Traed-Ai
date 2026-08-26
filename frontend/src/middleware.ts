@@ -128,6 +128,20 @@ export function middleware(request: NextRequest) {
   headers.set("Content-Security-Policy", policy);
   const pass = () => withPolicy(NextResponse.next({ request: { headers } }), policy);
 
+  // Somebody who is already signed in has no use for the page written to
+  // explain the product to strangers. Sending them past it is not a
+  // convenience: the landing page carries a "sign in" button and nothing that
+  // acknowledges a session, so arriving there after authenticating looks
+  // exactly like having failed to authenticate - which is precisely how it was
+  // read, four successful sign-ins in a row, while the server recorded every
+  // one of them.
+  if (pathname === "/" && request.cookies.get(SESSION_COOKIE)) {
+    const home = request.nextUrl.clone();
+    home.pathname = "/dashboard";
+    home.search = "";
+    return withPolicy(NextResponse.redirect(home), policy);
+  }
+
   if (PUBLIC_PATHS.has(pathname)) return pass();
   if (PUBLIC_PREFIXES.some((prefix) => pathname.startsWith(prefix))) {
     return pass();
