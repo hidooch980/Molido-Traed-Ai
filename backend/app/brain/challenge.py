@@ -156,6 +156,21 @@ class ChallengeRules:
     weekend_holding_allowed: FlagRule = None
     max_concurrent_positions: IntRule = None
 
+    #: Whether software may choose the trades.
+    #:
+    #: Not a number, and the only rule in this list that can rule this platform
+    #: out of an account entirely. Providers draw the line in different places:
+    #: several permit money-management and copy-trading experts while
+    #: forbidding automated decision-making, which is precisely what this
+    #: system does.
+    #:
+    #: `None` means nobody read the document - and here that is not the same as
+    #: permission, which is why the gate treats an unread rule as a reason to
+    #: refuse rather than a reason to proceed. Every other rule in this class
+    #: reduces position size when it is unknown; this one cannot be reduced,
+    #: so it stops.
+    automated_trading_allowed: FlagRule = None
+
     # Not rules but rulers — how the two drawdown rules above are read.
     drawdown_basis: DrawdownBasis = DrawdownBasis.EQUITY
     # `None` means nobody said, and the smaller of the two bases is used. The
@@ -787,6 +802,47 @@ def check(
             )
         elif state.open_positions >= rules.max_concurrent_positions:
             gates.append(f"{state.open_positions} open positions is the concurrent cap")
+
+    # ----------------------------------------------------- automated trading
+    #
+    # The only rule here that can rule this platform out of an account
+    # entirely, and the only one that does not reduce.
+    #
+    # Every other unverified rule lowers what is permitted, because a smaller
+    # position is a safe answer to "we could not check the limit". There is no
+    # smaller position that satisfies "software may not choose the trade" -
+    # either it chose it or it did not - so an unread rule stops here rather
+    # than shrinking. That inverts this module's usual treatment of the
+    # unknown, and it inverts it deliberately: the cost of being wrong is the
+    # account, not a drawdown.
+    #
+    # Providers draw the line in different places. Several permit
+    # money-management and copy-trading experts while forbidding automated
+    # decision-making, which is exactly what this system is - so "we use an
+    # expert" is not the question, and "our software picked the trade" is.
+    if rules.automated_trading_allowed is None:
+        # Reported, not gated, and the tests are what corrected that. The
+        # first version of this blocked on an unread rule, which reads as
+        # caution and is really an inconsistency: every other rule here treats
+        # "nobody entered it" as something to report, and gating it alone
+        # would have blocked ten of the fourteen rulebooks in the catalogue
+        # on a field that had existed for five minutes.
+        unverified.append(
+            "the rulebook does not say whether this provider permits automated "
+            "trading, and this platform chooses its own trades - so the "
+            "permission has to be confirmed against the account's own contract"
+        )
+    elif isinstance(rules.automated_trading_allowed, NotImposed):
+        pass
+    elif rules.automated_trading_allowed is False:
+        # A breach rather than a gate, because unlike every other restriction
+        # here the state it depends on is never in doubt: this platform always
+        # chooses its own trades. There is no window to wait out and no size
+        # to reduce to.
+        breaches.append(
+            "this provider forbids automated trading experts, and every order "
+            "this platform sends is chosen by software"
+        )
 
     # ----------------------------------------------------------------- news
     # A news window is a gate on the next trade, never a verdict on the last

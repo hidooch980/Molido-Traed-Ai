@@ -844,3 +844,70 @@ class TestTheMarkerDidNotBreakTheRulesItTouched:
 
         assert ch.check(rules(), healthy, 1.0).allowed is False
         assert ch.check(rules(), state(currency_per_r=200.0), 1.0).allowed is True
+
+
+class TestAutomatedTrading:
+    """The one rule here that can rule this platform out of an account.
+
+    Several providers permit money-management and copy-trading experts while
+    forbidding automated decision-making, which is exactly what this system
+    does. "Do you use an expert" is not the question; "did your software pick
+    the trade" is, and the answer is always yes.
+    """
+
+    def test_a_provider_that_forbids_it_is_a_breach(self):
+        verdict = ch.check(
+            rules(automated_trading_allowed=False), state(), proposed_risk_r=0.5
+        )
+
+        assert verdict.breaches, "a forbidden account must not be tradeable"
+        assert any("automated" in b.lower() for b in verdict.breaches)
+        assert verdict.allowed is False
+
+    def test_it_is_a_breach_rather_than_a_gate(self):
+        """Unlike every other restriction here, the state it depends on is
+        never in doubt. There is no window to wait out and no size to reduce
+        to - so it is not something that can be satisfied by trading smaller.
+        """
+        verdict = ch.check(
+            rules(automated_trading_allowed=False), state(), proposed_risk_r=0.01
+        )
+        assert verdict.allowed is False
+
+    def test_a_provider_that_permits_it_says_nothing(self):
+        verdict = ch.check(
+            rules(automated_trading_allowed=True), state(), proposed_risk_r=0.5
+        )
+        assert not any("automated" in b.lower() for b in verdict.breaches)
+        assert not any("automated" in u.lower() for u in verdict.unverified)
+
+    def test_an_explicit_absence_of_the_rule_says_nothing(self):
+        verdict = ch.check(
+            rules(automated_trading_allowed=ch.NOT_IMPOSED),
+            state(),
+            proposed_risk_r=0.5,
+        )
+        assert not any("automated" in u.lower() for u in verdict.unverified)
+
+    def test_an_unread_rule_is_reported_and_does_not_block(self):
+        """Reported, not gated - which is what every other unread rule here
+        does. Blocking on this one alone would refuse ten of the fourteen
+        rulebooks in the catalogue over a field nobody had filled in yet.
+        """
+        verdict = ch.check(
+            rules(automated_trading_allowed=None), state(), proposed_risk_r=0.5
+        )
+
+        assert any("automated" in u.lower() for u in verdict.unverified)
+        assert verdict.allowed is True
+
+    def test_the_catalogue_marks_the_provider_that_forbids_it(self):
+        """End to end: the rulebook says it, and the brain acts on it."""
+        from app.brain.rulebooks import get
+
+        book = get("sgb-plan-a-phase1")
+        assert book is not None
+        verdict = ch.check(book.rules, state(), proposed_risk_r=0.5)
+
+        assert verdict.allowed is False
+        assert any("automated" in b.lower() for b in verdict.breaches)

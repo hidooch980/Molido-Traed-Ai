@@ -122,6 +122,15 @@ def _publish(value: Any) -> Any:
 #   be held than for one about how they are scored.
 
 _COMMON: dict[str, Any] = {
+    # Left unread on purpose, which is not the same as an omission.
+    #
+    # The page permits Expert Advisors on every model *subject to a paid
+    # add-on bought per account*. That is neither a permission nor a
+    # prohibition for any particular account, and there is no value here for
+    # "conditional" - so it stays `None`, the gate reports the permission as
+    # unread, and the holder confirms it for the account they actually bought.
+    # Writing `True` would assert an add-on nobody has evidence of.
+    "automated_trading_allowed": None,
     "drawdown_basis": DrawdownBasis.EQUITY,
     "allowance_basis": AllowanceBasis.STARTING_BALANCE,
     "total_drawdown_trailing": False,
@@ -184,6 +193,11 @@ FTMO_SOURCE = "https://ftmo.com/en/trading-objectives/"
 #   "No time limit" on the challenge, so there is no deadline to pass.
 
 _FTMO_COMMON: dict[str, Any] = {
+    # Not stated on this page, like the four fields below it. Inferring
+    # permission from silence is how a rulebook acquires a rule its provider
+    # never wrote - and this is the one rule where the wrong inference costs
+    # the account rather than a position size.
+    "automated_trading_allowed": None,
     "drawdown_basis": DrawdownBasis.EQUITY,
     "allowance_basis": AllowanceBasis.STARTING_BALANCE,
     "total_drawdown_trailing": True,
@@ -448,6 +462,11 @@ _SGB_COMMON: dict[str, Any] = {
     "weekend_holding_allowed": None,
     "max_leverage": None,
     "max_concurrent_positions": None,
+    # Stated on their rules page, not inferred: automated decision-making
+    # experts are forbidden while money-management and copy-trading ones are
+    # allowed. Recorded as a field rather than only as prose, so the execution
+    # gate refuses without anybody having to remember the note.
+    "automated_trading_allowed": False,
 }
 
 _SGB_NOTES = (_SGB_NO_ROBOTS, _SGB_EQUITY, _SGB_TRADING_DAY, _SGB_CLOCK)
