@@ -744,11 +744,9 @@ void PostToPlatform()
 
    char post[];
    char result[];
-   string headers = "Content-Type: application/json
-";
+   string headers = "Content-Type: application/json\r\n";
    if(StringLen(PublishApiKey) > 0)
-      headers += "X-API-Key: " + PublishApiKey + "
-";
+      headers += "X-API-Key: " + PublishApiKey + "\r\n";
 
    //--- Without the trailing zero the request carries a stray byte and the
    //--- backend rejects the JSON for a reason nothing here would explain.
