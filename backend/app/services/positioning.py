@@ -43,7 +43,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
-from datetime import UTC, date, datetime, time as clock, timedelta
+from datetime import UTC, date, datetime, timedelta
+from datetime import time as clock
 from typing import Any
 from zoneinfo import ZoneInfo
 
