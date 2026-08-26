@@ -1028,6 +1028,10 @@ export const api = {
       `/api/v1/decisions/${instrumentId}?timeframe=${timeframe}`,
     ),
   instruments: () => request<Instrument[]>("/api/v1/instruments"),
+  /** Every active instrument's market state in one call. The per-instrument
+   *  version below is still right for a detail page; using it for a list meant
+   *  one round trip per row, which is why that list used to be truncated. */
+  allSessionStatus: () => request<SessionStatus[]>("/api/v1/sessions/status"),
   dataQuality: (instrumentId: string) =>
     request<DataQuality>(`/api/v1/data-quality/${instrumentId}`),
   sessionStatus: (instrumentId: string) =>
