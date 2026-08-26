@@ -41,7 +41,10 @@ UTC = timezone.utc
 #: the permission model is the filesystem's, which both sides already agree on.
 QUEUE = pathlib.Path(os.environ.get("MOLIDO_MT5_QUEUE", "/opt/molidotrade/var/mt5-queue"))
 PREFIX = pathlib.Path(os.environ.get("WINEPREFIX", str(pathlib.Path.home() / ".mt5")))
-UNIT = "molido-mt5"
+#: Which systemd unit this agent restarts. Env-driven so one agent binary
+#: serves any number of terminals, each instance pointed at its own prefix,
+#: queue and unit.
+UNIT = os.environ.get("MOLIDO_MT5_UNIT", "molido-mt5")
 
 _TERMINAL = PREFIX / "drive_c/Program Files/MetaTrader 5"
 
