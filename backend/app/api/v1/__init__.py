@@ -10,6 +10,7 @@ from app.api.v1 import (
     episodes,
     execution,
     features,
+    fundamentals,
     instruments,
     integrations,
     learning,
@@ -46,6 +47,7 @@ api_router.include_router(similarity.router)
 api_router.include_router(world_state.router)
 api_router.include_router(decisions.router)
 api_router.include_router(risk.router)
+api_router.include_router(fundamentals.router)
 api_router.include_router(learning.router)
 api_router.include_router(execution.router)
 api_router.include_router(integrations.router)
