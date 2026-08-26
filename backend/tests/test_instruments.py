@@ -57,8 +57,21 @@ def test_classify_known_shapes(symbol, asset_class, base, quote):
 
 
 def test_unknown_symbol_is_not_guessed():
-    """An unrecognised shape returns OTHER rather than a plausible invention."""
-    assert classify_symbol("US500") == (AssetClass.OTHER, None, None)
+    """An unrecognised shape returns OTHER rather than a plausible invention.
+
+    The example used to be `US500`, which stopped being an example when that
+    symbol was added to the named table - it is a recognised index future now,
+    and this test was asserting that the classifier did not know something it
+    had just been taught. The rule it protects is unchanged and is the reason
+    the named table is a list of names rather than a new pattern: a class
+    invented for a symbol nobody recognises routes the instrument to somebody
+    else's holiday calendar and trading hours, and every number downstream
+    stays plausible.
+    """
+    assert classify_symbol("ZZQQWW") == (AssetClass.OTHER, None, None)
+    # Six characters, which is the shape the currency rule matches, but
+    # neither half is a currency. Length alone must not be enough.
+    assert classify_symbol("FOOBAR") == (AssetClass.OTHER, None, None)
 
 
 def test_upsert_instrument_is_idempotent(session):

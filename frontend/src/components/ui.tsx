@@ -101,17 +101,41 @@ export function StatusBadge({ status, label }: { status: string; label?: string 
   );
 }
 
+/**
+ * A small state label.
+ *
+ * Carries the same five tones `Stat` does, and did not used to: it stopped at
+ * good, neutral and muted, so a pill that needed to say "this is real money"
+ * had nothing louder than the one that says "closed". Pages worked around
+ * that with inline colours, which is how two things meaning "danger" end up
+ * different shades on different screens.
+ */
 export function Pill({
   children,
   tone = "neutral",
 }: {
   children: ReactNode;
-  tone?: "neutral" | "good" | "muted";
+  tone?: "neutral" | "good" | "muted" | "warning" | "critical";
 }) {
-  const color =
-    tone === "good" ? "var(--good)" : tone === "muted" ? "var(--ink-3)" : "var(--ink-2)";
+  const color = {
+    good: "var(--good)",
+    muted: "var(--ink-3)",
+    warning: "var(--warning)",
+    critical: "var(--critical)",
+    neutral: "var(--ink-2)",
+  }[tone];
   return (
-    <span className="pill" style={{ color, borderColor: "var(--border-strong)" }}>
+    <span
+      className="pill"
+      style={{
+        color,
+        // The border follows the tone for the two that mean something is
+        // wrong. A red word inside a grey outline reads as a colour choice;
+        // the outline is what makes it read as a state.
+        borderColor:
+          tone === "critical" || tone === "warning" ? color : "var(--border-strong)",
+      }}
+    >
       {children}
     </span>
   );

@@ -1,7 +1,7 @@
 import Link from "next/link";
 
 import { AnalogClock } from "@/components/AnalogClock";
-import { Empty, Offline, Panel, Sparkline, Stat, StatusBadge } from "@/components/ui";
+import { Empty, Offline, Panel, Pill, Sparkline, Stat, StatusBadge } from "@/components/ui";
 import { api } from "@/lib/api";
 import { getLocale, getT } from "@/lib/locale";
 
@@ -10,13 +10,19 @@ export const dynamic = "force-dynamic";
 export default async function HomePage() {
   const { t } = await getT();
   const locale = await getLocale();
-  const [health, instruments, clocks, accounts, equity] = await Promise.all([
-    api.health(),
-    api.instruments(),
-    api.timezones(),
-    api.accounts(),
-    api.equity(200),
-  ]);
+  const [health, instruments, clocks, accounts, equity, challenges] =
+    await Promise.all([
+      api.health(),
+      api.instruments(),
+      api.timezones(),
+      api.accounts(),
+      api.equity(200),
+      // Prop accounts are a different kind of thing from the broker
+      // connection above - one is "which terminal is signed in", the other is
+      // "whose rules are we being measured against" - and a deployment can
+      // easily have one without the other.
+      api.challengeAccounts(),
+    ]);
 
   const primary = instruments.ok ? instruments.data[0] : undefined;
   const [quality, session, bars] = await Promise.all([
@@ -91,6 +97,113 @@ export default async function HomePage() {
       </header>
 
       {!health.ok && <Offline error={health.error} />}
+
+      {/* Both kinds of account, on the page that claims to show the state of
+          the system.
+
+          The empty case is the reason this renders unconditionally. Before
+          this, a deployment with no broker signed in and no prop account drew
+          nothing at all here - not "no accounts yet", just an absence, which
+          reads as a feature that does not exist rather than as one nobody has
+          used. The one question somebody opening this page has is "what am I
+          trading with", and no answer is a worse answer than none. */}
+      <Panel
+        title={t("home.accounts")}
+        subtitle={t("home.accountsSubtitle")}
+        actions={
+          <Link href="/accounts" className="text-xs" style={{ color: "var(--accent)" }}>
+            {t("home.manageAccounts")} ←
+          </Link>
+        }
+      >
+        {!accounts.ok || !challenges.ok ? (
+          <Empty>{t("home.accountsUnavailable")}</Empty>
+        ) : !accounts.data.live_account.login &&
+          challenges.data.accounts.length === 0 ? (
+          <Empty>{t("home.noAccounts")}</Empty>
+        ) : (
+          <div className="scroll-x">
+            <table className="data">
+              <thead>
+                <tr>
+                  <th>{t("home.accountName")}</th>
+                  <th>{t("home.accountType")}</th>
+                  <th>{t("home.accountWhere")}</th>
+                  <th className="num">{t("home.accountBalance")}</th>
+                  <th>{t("home.accountState")}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {accounts.data.live_account.login && (
+                  <tr>
+                    <td className="font-semibold" dir="ltr">
+                      {accounts.data.live_account.login}
+                    </td>
+                    <td className="ink-2">
+                      {accounts.data.live_account.is_demo
+                        ? t("home.demo")
+                        : t("home.realMoney")}
+                    </td>
+                    <td className="ink-3" dir="ltr">
+                      {accounts.data.live_account.server ?? "—"}
+                    </td>
+                    <td className="num" dir="ltr">
+                      {accounts.data.live_account.balance != null
+                        ? `${accounts.data.live_account.balance.toLocaleString()} ${
+                            accounts.data.live_account.currency ?? ""
+                          }`
+                        : "—"}
+                    </td>
+                    <td>
+                      {/* Demo is the safe state, so it reads as good. Anything
+                          that is not exactly trade_mode 0 is real money. */}
+                      <Pill
+                        tone={
+                          accounts.data.live_account.is_demo ? "good" : "critical"
+                        }
+                      >
+                        {accounts.data.live_account.is_demo
+                          ? t("home.demo")
+                          : t("home.realMoney")}
+                      </Pill>
+                    </td>
+                  </tr>
+                )}
+
+                {challenges.data.accounts.map((account) => (
+                  <tr key={account.id}>
+                    <td className="font-semibold">{account.label}</td>
+                    <td className="ink-2">
+                      {[account.provider, account.program, account.phase]
+                        .filter(Boolean)
+                        .join(" · ") || t("home.propAccount")}
+                    </td>
+                    <td className="ink-3" dir="ltr">
+                      {account.rulebook_key ?? "—"}
+                    </td>
+                    <td className="num" dir="ltr">
+                      {account.starting_balance
+                        ? `${account.starting_balance} ${account.currency ?? ""}`
+                        : "—"}
+                    </td>
+                    <td>
+                      {/* Confirmed is not decoration. Until the holder has
+                          checked the transcribed rules against their own
+                          contract, tracking stays shut - a confident verdict
+                          about the wrong document is worse than no verdict. */}
+                      <Pill tone={account.confirmed ? "good" : "warning"}>
+                        {account.confirmed
+                          ? t("home.tracked")
+                          : t("home.unconfirmed")}
+                      </Pill>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Panel>
 
       {/* The connected account, on the page people actually open.
           It lived only on /accounts, which meant the one fact that decides
