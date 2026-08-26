@@ -273,6 +273,25 @@ export interface WorldState {
   quality: WorldStateBlock;
 }
 
+/** One account that can sign in, from `/users`. */
+export interface UserRow {
+  id: string;
+  email: string;
+  display_name: string;
+  role: string;
+  is_active: boolean;
+  /** Stated rather than inferred: an account nobody has ever signed in to and
+   *  one that was switched off look identical from the outside otherwise. */
+  can_sign_in: boolean;
+  last_login_at: string | null;
+}
+
+export interface UsersView {
+  count: number;
+  users: UserRow[];
+  assignable_roles: string[];
+}
+
 /** One prop-firm challenge account, from `/risk/challenge-accounts`. */
 export interface ChallengeAccountView {
   id: string;
@@ -882,6 +901,10 @@ export const api = {
   positions: () => request<PositionsView>("/api/v1/execution/positions"),
   autopilot: () => request<AutopilotView>("/api/v1/execution/autopilot"),
   setup: () => request<SetupView>("/api/v1/users/setup"),
+  /** Everybody who exists. Behind `users.manage`, so an unauthorised caller
+   *  gets a refusal rather than an empty list - a page that renders "no users"
+   *  when it was actually refused is a page that lies quietly. */
+  users: () => request<UsersView>("/api/v1/users"),
   health: () => request<Health>("/health/ready"),
   systemSettings: () => request<SystemSettings>("/api/v1/system/settings"),
   riskLimits: () => request<RiskLimits>("/api/v1/risk/limits"),

@@ -72,6 +72,13 @@ export interface LoginLabels {
   registerName: string;
   registerDone: string;
   registerDoneBody: string;
+
+  claimTitle: string;
+  claimSubtitle: string;
+  claimWarning: string;
+  claimSubmit: string;
+  claimDone: string;
+  claimDoneBody: string;
   haveAccount: string;
   needAccount: string;
   signInHere: string;
@@ -98,10 +105,22 @@ export function LoginPanel({
   labels,
   version,
   mode = "sign-in",
+  unclaimed = false,
 }: {
   labels: LoginLabels;
   version: string;
   mode?: Mode;
+  /**
+   * True when no account on this deployment has a password yet.
+   *
+   * The sign-up form then creates the *owner* rather than a viewer, and it
+   * has to, because of how narrow the window is: `is_claimed` becomes true
+   * the moment any account has a password, so a deployment whose first
+   * account was made through the ordinary register endpoint is a deployment
+   * with no owner and no way to ever get one. The form said "create an
+   * account" and quietly spent the only chance to make an administrator.
+   */
+  unclaimed?: boolean;
 }) {
   const [stage, setStage] = useState<Stage>(mode === "register" ? "register" : "password");
   const [email, setEmail] = useState("");
@@ -122,7 +141,13 @@ export function LoginPanel({
 
   // Started as soon as there is an address to bind it to, so the search runs
   // while the password is being typed rather than after the button is pressed.
-  const human = useHumanCheck(email, mode === "register" ? "register" : "sign-in");
+  // Three purposes, not two. The server binds each solved proof to the form
+  // it was issued for, so claiming needs a proof minted for claiming.
+  const claiming = mode === "register" && unclaimed;
+  const human = useHumanCheck(
+    email,
+    mode === "register" ? (claiming ? "claim" : "register") : "sign-in",
+  );
 
   // Focus follows the step. Moving to a six-digit field and having to click it
   // is the kind of small friction that, on a screen somebody reaches through
@@ -227,12 +252,19 @@ export function LoginPanel({
     try {
       // Bound to this form. A proof solved for sign-in cannot be spent here -
       // otherwise the cheaper of the two becomes the mint for both.
-      const { ok, status, payload } = await post("/api/v1/users/register", {
-        email,
-        password,
-        display_name: displayName,
-        ...human.proof.current,
-      });
+      const { ok, status, payload } = await post(
+        // The whole point of the distinction. `/register` lands as a viewer;
+        // `/claim` makes an owner and refuses with 409 once anybody has a
+        // password, so sending a claim at the wrong moment fails loudly
+        // rather than quietly creating the wrong kind of account.
+        claiming ? "/api/v1/users/claim" : "/api/v1/users/register",
+        {
+          email,
+          password,
+          display_name: displayName,
+          ...human.proof.current,
+        },
+      );
       if (!ok) {
         if (payload?.error === "human_check_failed") human.refresh();
         setError(describe(status, payload));
@@ -303,6 +335,7 @@ export function LoginPanel({
           {stage === "register" && !registered && (
             <RegisterStep
               labels={labels}
+              claiming={claiming}
               checkState={human.state}
               attempts={human.attempts}
               email={email}
@@ -319,8 +352,12 @@ export function LoginPanel({
 
           {stage === "register" && registered && (
             <div>
-              <h1 className="auth-title">{labels.registerDone}</h1>
-              <p className="auth-sub">{labels.registerDoneBody}</p>
+              <h1 className="auth-title">
+                {claiming ? labels.claimDone : labels.registerDone}
+              </h1>
+              <p className="auth-sub">
+                {claiming ? labels.claimDoneBody : labels.registerDoneBody}
+              </p>
               <a href="/login" className="auth-button block text-center">
                 {labels.submit}
               </a>
@@ -452,10 +489,11 @@ function PasswordStep({
 }
 
 function RegisterStep({
-  labels, checkState, attempts, email, password, displayName, busy, buttonLabel,
-  onEmail, onPassword, onDisplayName, onSubmit,
+  labels, claiming, checkState, attempts, email, password, displayName, busy,
+  buttonLabel, onEmail, onPassword, onDisplayName, onSubmit,
 }: {
-  labels: LoginLabels; checkState: CheckState; attempts: number;
+  labels: LoginLabels; claiming: boolean;
+  checkState: CheckState; attempts: number;
   email: string; password: string; displayName: string;
   busy: boolean; buttonLabel: string | null;
   onEmail: (v: string) => void; onPassword: (v: string) => void;
@@ -468,8 +506,16 @@ function RegisterStep({
         onSubmit();
       }}
     >
-      <h1 className="auth-title">{labels.registerTitle}</h1>
-      <p className="auth-sub">{labels.registerSubtitle}</p>
+      <h1 className="auth-title">
+        {claiming ? labels.claimTitle : labels.registerTitle}
+      </h1>
+      <p className="auth-sub">
+        {claiming ? labels.claimSubtitle : labels.registerSubtitle}
+      </p>
+      {/* Said before the fields rather than after the button. Somebody about
+          to create the only account that can ever move money should read that
+          it happens once before they choose a password, not after. */}
+      {claiming && <p className="auth-warning">{labels.claimWarning}</p>}
 
       <Field
         label={labels.registerName}
@@ -500,7 +546,7 @@ function RegisterStep({
       <HumanCheckBox labels={labels.humanCheck} state={checkState} attempts={attempts} />
 
       <button type="submit" className="auth-button" disabled={busy}>
-        {buttonLabel ?? labels.registerSubmit}
+        {buttonLabel ?? (claiming ? labels.claimSubmit : labels.registerSubmit)}
       </button>
     </form>
   );

@@ -1,66 +1,78 @@
-import { AccessForm } from "@/components/AccessForm";
-import { Offline, Panel } from "@/components/ui";
+import { UserAdmin } from "@/components/UserAdmin";
+import { Panel } from "@/components/ui";
 import { api } from "@/lib/api";
 import { getT } from "@/lib/locale";
 
-/**
- * The one page that works before anybody can sign in.
- *
- * It asks the API a single question - has this deployment been claimed - and
- * that answer decides which form appears. Rendering the choice on the server
- * means a visitor never sees a sign-in box on a deployment that has no
- * accounts, which is the state this system sat in while looking healthy.
- */
 export const dynamic = "force-dynamic";
 
+/**
+ * The accounts that can sign in, and who may do what.
+ *
+ * This page used to be the sign-in form. That moved to `/login`, which left
+ * the route holding a door nobody needed and no account management anywhere -
+ * the endpoints for it existed and nothing called them, so the only way to
+ * create a trader or an administrator was a POST somebody wrote by hand.
+ *
+ * Read on the server; the listing is behind `users.manage`, so an unauthorised
+ * caller gets a refusal rather than an empty list. Those are shown as different
+ * things, because a page that renders "no users" when it was actually refused
+ * is a page that lies quietly.
+ */
 export default async function AccessPage() {
   const { t } = await getT();
-  const setup = await api.setup();
-  if (!setup.ok) return <Offline error={setup.error} />;
+  const [users, setup, roles] = await Promise.all([
+    api.users(),
+    api.setup(),
+    api.roles(),
+  ]);
 
-  const { claimed, password_min_length } = setup.data;
+  const roleNames: Record<string, string> = {};
+  if (roles.ok) {
+    for (const row of roles.data.roles) {
+      roleNames[row.role] = t(`role.${row.role}`);
+    }
+  }
 
   return (
-    <div className="mx-auto max-w-md space-y-4">
+    <div className="space-y-6">
       <header className="page-header">
         <div className="min-w-0">
-          <h1 className="display">{t("signin.title")}</h1>
-          <p className="page-lede">{claimed ? t("signin.subtitleClaimed") : t("signin.subtitleUnclaimed")}</p>
+          <h1 className="display">{t("users.title")}</h1>
+          <p className="page-lede">{t("users.subtitle")}</p>
         </div>
       </header>
 
-      <Panel title={claimed ? t("signin.signIn") : t("signin.claim")}>
+      <Panel title={t("users.people")} subtitle={t("users.peopleSubtitle")}>
         <div className="p-4">
-          <AccessForm
-            claimed={claimed}
-            minLength={password_min_length}
+          <UserAdmin
+            refused={!users.ok}
+            users={users.ok ? users.data.users : []}
+            assignableRoles={users.ok ? users.data.assignable_roles : []}
+            passwordMinLength={setup.ok ? setup.data.password_min_length : 12}
             labels={{
-              // Resolved here and handed over as plain strings. A `t` function
-              // cannot cross into a Client Component - React refuses to
-              // serialise it and the page 500s at runtime, which no type check
-              // and no build catches.
-              claimTitle: t("signin.claimTitle"),
-              claimBody: t("signin.claimBody"),
-              signInTitle: t("signin.signInTitle"),
-              registerTitle: t("signin.registerTitle"),
-              registerBody: t("signin.registerBody"),
+              title: t("users.title"),
+              subtitle: t("users.subtitle"),
+              name: t("login.registerName"),
               email: t("signin.email"),
               password: t("signin.password"),
-              displayName: t("signin.displayName"),
-              claim: t("signin.claim"),
-              signIn: t("signin.signIn"),
-              register: t("signin.register"),
-              working: t("signin.working"),
-              tooShort: t("signin.tooShort"),
-              switchToRegister: t("signin.switchToRegister"),
-              switchToSignIn: t("signin.switchToSignIn"),
-              viewerNote: t("signin.viewerNote"),
+              role: t("users.role"),
+              create: t("users.create"),
+              creating: t("users.creating"),
+              created: t("users.created"),
+              failed: t("users.failed"),
+              minLength: t("users.minLength"),
+              activate: t("users.activate"),
+              deactivate: t("users.deactivate"),
+              active: t("users.active"),
+              inactive: t("users.inactive"),
+              neverSignedIn: t("users.neverSignedIn"),
+              lastSeen: t("users.lastSeen"),
+              refused: t("users.refused"),
+              roleNames,
             }}
           />
         </div>
       </Panel>
-
-      <p className="text-xs ink-3 leading-relaxed">{t("signin.passwordNote")}</p>
     </div>
   );
 }

@@ -55,6 +55,13 @@ export async function authLabels() {
       registerName: t("login.registerName"),
       registerDone: t("login.registerDone"),
       registerDoneBody: t("login.registerDoneBody"),
+
+      claimTitle: t("login.claimTitle"),
+      claimSubtitle: t("login.claimSubtitle"),
+      claimWarning: t("login.claimWarning"),
+      claimSubmit: t("login.claimSubmit"),
+      claimDone: t("login.claimDone"),
+      claimDoneBody: t("login.claimDoneBody"),
       haveAccount: t("login.haveAccount"),
       needAccount: t("login.needAccount"),
       signInHere: t("login.signInHere"),

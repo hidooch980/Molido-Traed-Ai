@@ -1256,3 +1256,20 @@ body {
   line-height: 1.6;
   color: var(--ink-3);
 }
+
+/* The account form. Four fields and a button, laid out so the password field
+   is not the widest thing on the screen - a form where the secret is the
+   visual focus is a form people fill in with somebody behind them. */
+.user-form {
+  display: grid;
+  gap: 0 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 13rem), 1fr));
+  align-items: end;
+}
+
+.user-form-submit {
+  width: auto;
+  min-width: 10rem;
+  margin-top: 0;
+  margin-bottom: 1rem;
+}

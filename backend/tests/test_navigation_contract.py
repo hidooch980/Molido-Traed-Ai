@@ -196,3 +196,62 @@ class TestThePagesThatClaimToBeBuiltActuallyRead:
             return
 
         assert "api." in source, f"{page.parent.name} renders without reading anything"
+
+
+class TestTheFirstAccount:
+    """The one form whose job changes on a deployment nobody owns yet.
+
+    `is_claimed` is false until some account has a password, and the service
+    refuses ordinary registration until one does - correctly, because the
+    first account has to be the administrator rather than a viewer who can
+    read everything and grant nothing. The consequence is that a sign-up form
+    which only knows how to register answers every attempt on a fresh
+    installation with a refusal telling the person to do something the
+    interface does not offer, and the only route to a new deployment's first
+    account is a dead end. That is what these keep closed.
+    """
+
+    def test_the_register_page_asks_whether_anybody_owns_this(self):
+        source = (APP_DIR / "register" / "page.tsx").read_text(encoding="utf-8")
+        assert "api.setup()" in source, (
+            "the register page cannot know which form to show without reading "
+            "whether the deployment has been claimed"
+        )
+        assert "unclaimed" in source
+
+    def test_the_panel_can_send_both_kinds_of_sign_up(self):
+        source = (FRONTEND / "components" / "LoginPanel.tsx").read_text(
+            encoding="utf-8"
+        )
+        assert "/api/v1/users/claim" in source, (
+            "without this the first account on a fresh deployment cannot be "
+            "created through the browser at all"
+        )
+        assert "/api/v1/users/register" in source, (
+            "and an installation that already has an owner still needs the "
+            "ordinary door"
+        )
+
+    def test_the_human_check_purposes_are_ones_the_server_accepts(self):
+        """A proof is minted for one form and refused at every other.
+
+        The server binds each solved challenge to a purpose, so a frontend
+        that asks for a purpose the backend does not know gets a challenge it
+        cannot spend - and the failure appears as a rejected sign-up rather
+        than as anything naming the cause.
+        """
+        from app.services import human_check
+
+        source = (FRONTEND / "components" / "HumanCheck.tsx").read_text(
+            encoding="utf-8"
+        )
+        match = re.search(r'purpose:\s*((?:"[a-z-]+"\s*\|?\s*)+)', source)
+        assert match, "the purpose union is not where this test can read it"
+
+        asked = set(re.findall(r'"([a-z-]+)"', match.group(1)))
+        served = {human_check.SIGN_IN, human_check.REGISTER, human_check.CLAIM}
+        assert asked <= served, f"the browser asks for purposes the API refuses: {asked - served}"
+        assert human_check.CLAIM in asked, (
+            "claiming needs its own proof - reusing the register purpose would "
+            "make the cheaper form a mint for the more powerful one"
+        )

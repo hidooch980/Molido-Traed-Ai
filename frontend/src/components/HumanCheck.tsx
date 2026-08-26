@@ -46,7 +46,14 @@ export interface Proof {
   nonce?: number;
 }
 
-export function useHumanCheck(email: string, purpose: "sign-in" | "register") {
+export function useHumanCheck(
+  email: string,
+  // "claim" is its own purpose rather than a flavour of "register", because
+  // the server binds a solved proof to the form it was issued for. A proof
+  // minted for registration is refused at the claim endpoint, which is the
+  // point: the cheaper door must not become the mint for the expensive one.
+  purpose: "sign-in" | "register" | "claim",
+) {
   const [state, setState] = useState<CheckState>("idle");
   const [attempts, setAttempts] = useState(0);
   const proof = useRef<Proof>({});
