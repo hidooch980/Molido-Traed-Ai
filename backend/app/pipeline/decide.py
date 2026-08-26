@@ -38,7 +38,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from app.brain import cognitive
+from app.brain import carry, cognitive
 from app.brain import expected_value as ev
 from app.brain import portfolio as pf
 from app.brain import risk as risk_brain
@@ -188,6 +188,7 @@ def decide(
     correlations: dict[str, float] | None = None,
     measured_correlation: float | None = None,
     costs: ev.CostModel | None = None,
+    rate_differential: float | None = None,
     base_currency: str | None = None,
     quote_currency: str | None = None,
     challenge_rules: Any | None = None,
@@ -241,6 +242,35 @@ def decide(
 
     # ------------------------------------- 3. calibrated probability and EV
     direction = "buy" if proposal.decision is Decision.BUY else "sell"
+
+    # The interest on holding this position, which needs three things that only
+    # exist together at this point: the two countries' rate difference, which
+    # the caller supplies because fetching it here would make the pipeline
+    # unbacktestable; the direction, which the cognition stage has just
+    # decided; and a notional, which the levels stage has just placed.
+    #
+    # Supplied as a fallback only. A broker's own swap figure is the
+    # differential plus their markup and is what will actually be charged, so
+    # a `costs` that already carries one is left alone.
+    priced_costs = costs
+    if rate_differential is not None and (costs is None or costs.swap is None):
+        try:
+            estimate = carry.swap_cost(
+                differential_pct=rate_differential,
+                entry=levels.entry,
+                direction=direction,
+            )
+        except ValueError:
+            # A refusal here is about the inputs, not about the trade. It
+            # leaves the swap unmeasured, which is what it was before.
+            estimate = None
+        if estimate is not None:
+            priced_costs = ev.CostModel(
+                spread=costs.spread if costs else None,
+                commission=costs.commission if costs else None,
+                swap=estimate,
+                slippage=costs.slippage if costs else None,
+            )
     value = ev.compute(
         entry=levels.entry,
         stop=levels.stop,
@@ -248,7 +278,7 @@ def decide(
         direction=direction,
         score=proposal.conviction,
         calibration=calibration,
-        costs=costs,
+        costs=priced_costs,
     )
     if not trace._record(
         "expected_value",

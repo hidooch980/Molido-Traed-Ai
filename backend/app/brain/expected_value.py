@@ -54,19 +54,39 @@ class CostModel:
 
     spread: float | None = None
     commission: float | None = None
+    #: Signed, unlike everything else here. See `total`.
     swap: float | None = None
     slippage: float | None = None
 
     def total(self) -> tuple[float, list[str]]:
-        """(known cost, names of the costs that are not known)."""
+        """(known cost, names of the costs that are not known).
+
+        **Swap keeps its sign; everything else is taken as a magnitude.**
+        Spread, commission and slippage are money leaving under every
+        circumstance, so the direction they are supplied in says nothing and
+        `abs` protects the sum from a sign convention somebody got backwards.
+
+        Carry is not like that. Holding a currency that pays more than the one
+        it is quoted against is *paid* for, every night, and taking the
+        absolute value of that turns a position which earns interest into one
+        that is charged it - an error of twice the carry, pointing the wrong
+        way, and it lands hardest on exactly the trades where the carry is
+        large enough to matter.
+        """
         known = 0.0
         missing: list[str] = []
-        for name in ("spread", "commission", "swap", "slippage"):
+        for name in ("spread", "commission", "slippage"):
             value = getattr(self, name)
             if value is None:
                 missing.append(name)
             else:
                 known += abs(value)
+
+        if self.swap is None:
+            missing.append("swap")
+        else:
+            known += self.swap
+
         return known, missing
 
 
@@ -216,6 +236,7 @@ def costs_from_context(
     spread: float | None = None,
     broker_symbol: Any | None = None,
     round_trips: int = 2,
+    carry: float | None = None,
 ) -> CostModel:
     """Assemble a cost model from what the system actually knows.
 
@@ -223,6 +244,16 @@ def costs_from_context(
     Commission and swap come from the broker symbol when an operator has
     configured one; slippage stays unknown until real fills exist (phase 25),
     and is left as None rather than assumed to be zero.
+
+    `carry` is the interest cost derived from the two countries' policy rates
+    (see `brain.carry`), and it is a **fallback**, not an override. What a
+    broker actually charges is the interbank differential plus their markup,
+    which on a retail account can be several times the differential itself, so
+    a configured `swap_per_night` is always the better number and always wins.
+    The estimate exists because the alternative on a deployment with no broker
+    symbol is not a smaller number - it is `None`, and every decision made with
+    swap sitting in `unmeasured_costs` was made without knowing whether it was
+    paying to hold the position or being paid for it.
     """
     commission = None
     swap = None
@@ -232,6 +263,9 @@ def costs_from_context(
         raw_swap = rules.get("swap_per_night")
         commission = float(raw_commission) if raw_commission is not None else None
         swap = float(raw_swap) if raw_swap is not None else None
+
+    if swap is None and carry is not None:
+        swap = carry
 
     return CostModel(
         spread=abs(spread) * round_trips if spread is not None else None,
