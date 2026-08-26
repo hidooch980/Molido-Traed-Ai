@@ -1,4 +1,5 @@
-import { Empty, Offline, Panel, Stat, StatusBadge } from "@/components/ui";
+import { ChallengeAccountForm } from "@/components/ChallengeAccountForm";
+import { Empty, Offline, Panel, Pill, Stat, StatusBadge } from "@/components/ui";
 import { api } from "@/lib/api";
 import { getT } from "@/lib/locale";
 
@@ -32,8 +33,9 @@ export default async function ChallengePage() {
     { key: "targetMet", equity: 111_000, dayOpen: 111_000 },
   ];
 
-  const [books, ...verdicts] = await Promise.all([
+  const [books, recorded, ...verdicts] = await Promise.all([
     api.rulebooks(),
+    api.challengeAccounts(),
     ...STATES.map((state) =>
       api.challenge({
         starting_balance: START,
@@ -184,6 +186,96 @@ export default async function ChallengePage() {
             <li key={note}>· {note}</li>
           ))}
         </ul>
+      </Panel>
+
+      {/* The accounts actually recorded, and the form that records them.
+
+          Both are new. The endpoint behind this has existed since challenge
+          tracking was built and nothing in the browser could reach it, so the
+          rulebooks above described programs against which no account was ever
+          registered - a page explaining the rules of a game nobody had said
+          they were playing. */}
+      <Panel
+        title={t("challenge.yourAccounts")}
+        subtitle={
+          recorded.ok
+            ? t("challenge.yourAccountsCount")
+                .replace("{n}", String(recorded.data.total))
+                .replace("{tracked}", String(recorded.data.confirmed))
+            : t("challenge.yourAccountsSubtitle")
+        }
+      >
+        {!recorded.ok ? (
+          <Empty>{t("challenge.accountsUnavailable")}</Empty>
+        ) : recorded.data.accounts.length === 0 ? (
+          <Empty>{t("challenge.noAccounts")}</Empty>
+        ) : (
+          <div className="scroll-x">
+            <table className="data">
+              <thead>
+                <tr>
+                  <th>{t("challenge.accountLabel")}</th>
+                  <th>{t("challenge.accountProgram")}</th>
+                  <th className="num">{t("challenge.accountBalance")}</th>
+                  <th>{t("challenge.accountState")}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {recorded.data.accounts.map((account) => (
+                  <tr key={account.id}>
+                    <td className="font-semibold">{account.label}</td>
+                    <td className="ink-2">
+                      {[account.provider, account.program, account.phase]
+                        .filter(Boolean)
+                        .join(" · ") || account.rulebook_key}
+                    </td>
+                    <td className="num" dir="ltr">
+                      {account.starting_balance
+                        ? `${account.starting_balance} ${account.currency ?? ""}`
+                        : "—"}
+                    </td>
+                    <td>
+                      <Pill tone={account.confirmed ? "good" : "warning"}>
+                        {account.confirmed
+                          ? t("challenge.tracked")
+                          : t("challenge.unconfirmed")}
+                      </Pill>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Panel>
+
+      <Panel title={t("challenge.addAccount")} subtitle={t("challenge.addAccountSubtitle")}>
+        <div className="p-4">
+          <ChallengeAccountForm
+            labels={{
+              title: t("challenge.addAccount"),
+              subtitle: t("challenge.addAccountSubtitle"),
+              label: t("challenge.formLabel"),
+              labelHint: t("challenge.formLabelHint"),
+              program: t("challenge.formProgram"),
+              programHint: t("challenge.formProgramHint"),
+              balance: t("challenge.formBalance"),
+              balanceHint: t("challenge.formBalanceHint"),
+              currency: t("challenge.formCurrency"),
+              perR: t("challenge.formPerR"),
+              perRHint: t("challenge.formPerRHint"),
+              notes: t("challenge.formNotes"),
+              confirm: t("challenge.formConfirm"),
+              confirmHint: t("challenge.formConfirmHint"),
+              submit: t("challenge.formSubmit"),
+              submitting: t("challenge.formSubmitting"),
+              created: t("challenge.formCreated"),
+              failed: t("challenge.formFailed"),
+              choose: t("challenge.formChoose"),
+            }}
+            rulebooks={books.data.rulebooks}
+          />
+        </div>
       </Panel>
 
       <Panel title={t("challenge.whyUnconfirmed")}>

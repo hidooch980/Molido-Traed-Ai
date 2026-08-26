@@ -110,8 +110,11 @@ export default async function HomePage() {
       <Panel
         title={t("home.accounts")}
         subtitle={t("home.accountsSubtitle")}
+        // `/accounts` is the roles and permission tiers page, which is a
+        // different sense of the word entirely. Prop accounts are recorded on
+        // the challenge page, beside the rulebooks they are measured against.
         actions={
-          <Link href="/accounts" className="text-xs" style={{ color: "var(--accent)" }}>
+          <Link href="/challenge" className="text-xs" style={{ color: "var(--accent)" }}>
             {t("home.manageAccounts")} ←
           </Link>
         }
