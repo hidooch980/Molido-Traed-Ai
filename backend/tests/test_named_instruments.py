@@ -106,10 +106,16 @@ class TestFillingAnUnclassifiedInstrument:
         decision, and a pattern that disagrees is not entitled to undo it.
         """
         chosen = upsert_instrument(session, "US500", asset_class=AssetClass.FUTURE)
+        assert chosen.asset_class is AssetClass.FUTURE
+
         again = upsert_instrument(session, "US500")
+        assert again.id == chosen.id
         assert again.asset_class is AssetClass.FUTURE
 
     def test_an_instrument_that_stays_unknown_is_left_alone(self, session):
         unknown = upsert_instrument(session, "QQZZWW")
+        assert unknown.asset_class is AssetClass.OTHER
+
         again = upsert_instrument(session, "QQZZWW")
+        assert again.id == unknown.id
         assert again.asset_class is AssetClass.OTHER
