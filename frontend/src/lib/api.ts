@@ -701,6 +701,61 @@ export interface Readiness {
   note: string;
 }
 
+export interface PolicyRateRow {
+  currency: string;
+  area: string;
+  bank: string;
+  /** Per cent per year, as published. 3.625 means 3.625%. */
+  rate: number;
+  observed: string;
+}
+
+export interface RateDifferential {
+  pair: string;
+  base: string;
+  quote: string;
+  /** Base rate minus quote rate. Positive means the base pays more. */
+  differential: number;
+}
+
+export interface PolicyRatesView {
+  /** False when the upstream feed could not be read. Distinct from an empty
+   *  table: one means "we do not know", the other means "there is nothing",
+   *  and on a screen a stale rate looks exactly like a live one. */
+  available: boolean;
+  reason?: string;
+  rates: PolicyRateRow[];
+  differentials: RateDifferential[];
+  note?: string;
+}
+
+export interface PositioningRow {
+  key: string;
+  contract: string;
+  /** The Tuesday the positions were held. */
+  report_date: string;
+  /** The Friday it became public. Three days later, and the whole reason
+   *  both dates are carried rather than one. */
+  published_at: string;
+  long: number;
+  short: number;
+  net: number;
+  open_interest: number;
+  traders_long: number;
+  traders_short: number;
+}
+
+export interface PositioningView {
+  available: boolean;
+  key: string;
+  reason?: string;
+  known?: string[];
+  latest?: PositioningRow;
+  net_share?: number | null;
+  history?: PositioningRow[];
+  note?: string;
+}
+
 export interface SetupView {
   claimed: boolean;
   password_min_length: number;
@@ -901,6 +956,15 @@ export const api = {
   positions: () => request<PositionsView>("/api/v1/execution/positions"),
   autopilot: () => request<AutopilotView>("/api/v1/execution/autopilot"),
   setup: () => request<SetupView>("/api/v1/users/setup"),
+  /** What the world's central banks charge, and the gap between any two of
+   *  them. The only reading in this client that is not derived from a price. */
+  policyRates: () => request<PolicyRatesView>("/api/v1/fundamentals/policy-rates"),
+  /** Where the large speculators sit in one futures market, as of what had
+   *  actually been published - not as of the Tuesday the report describes. */
+  positioning: (key: string) =>
+    request<PositioningView>(
+      `/api/v1/fundamentals/positioning?key=${encodeURIComponent(key)}`,
+    ),
   /** Everybody who exists. Behind `users.manage`, so an unauthorised caller
    *  gets a refusal rather than an empty list - a page that renders "no users"
    *  when it was actually refused is a page that lies quietly. */

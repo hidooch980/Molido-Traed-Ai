@@ -22,6 +22,7 @@ export const NAV: NavItem[] = [
 
   { key: "markets", labelKey: "nav.markets", href: "/markets", group: "market" },
   { key: "sessions", labelKey: "nav.sessions", href: "/sessions", group: "market" },
+  { key: "fundamentals", labelKey: "nav.fundamentals", href: "/fundamentals", group: "market" },
   { key: "market-map", labelKey: "nav.marketMap", href: "/market-map", group: "market" },
   { key: "scanner", labelKey: "nav.scanner", href: "/scanner", group: "market" },
   { key: "charts", labelKey: "nav.charts", href: "/charts", group: "market" },

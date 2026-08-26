@@ -334,3 +334,30 @@ class TestTheProofBetweenTheTwoSignInCalls:
         source = self._panel()
         code_step = source.split("function CodeStep")[1]
         assert "HumanCheckBox" in code_step
+
+
+class TestWhereSigningOutLands:
+    """The mirror of the sign-in bug, and it arrived by the same route.
+
+    Signing out deleted the cookie and re-read the session, which turned the
+    header back into a "sign in" button and left the person standing on the
+    dashboard - server-rendered while they still had a session, so its
+    contents stay on screen. The gate runs on navigation and there was no
+    navigation, so nothing moved them. Signing out looked like not having
+    signed out.
+    """
+
+    def test_signing_out_leaves_the_page_it_happened_on(self):
+        source = (FRONTEND / "components" / "SignIn.tsx").read_text(encoding="utf-8")
+        block = source.split("async function signOut")[1].split("}\n")[0]
+        assert "window.location.href" in block, (
+            "deleting the cookie does not move anybody; the page already "
+            "rendered and the middleware only runs on a navigation"
+        )
+
+    def test_a_failed_sign_out_does_not_claim_to_have_worked(self):
+        """The session may still exist, and the header should say so."""
+        source = (FRONTEND / "components" / "SignIn.tsx").read_text(encoding="utf-8")
+        block = source.split("async function signOut")[1][:1400]
+        assert "response.ok" in block
+        assert "refresh()" in block

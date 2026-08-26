@@ -103,7 +103,25 @@ export function SignIn({ labels }: { labels: SignInLabels }) {
   }
 
   async function signOut() {
-    await fetch("/api/v1/session/sign-out", { method: "POST" });
+    const response = await fetch("/api/v1/session/sign-out", { method: "POST" });
+
+    // Navigated, not merely re-rendered. Re-reading the session turned this
+    // header back into a "sign in" button and left the person standing on the
+    // dashboard it belongs to - a page that was server-rendered while they
+    // still had a session, so its contents stay on screen. Nothing bounces
+    // them, because the gate runs on navigation and there was no navigation.
+    // Signing out looked exactly like not having signed out.
+    //
+    // A whole page load rather than a router push, because that is the only
+    // thing that also discards the state the signed-in session left in memory.
+    if (response.ok) {
+      window.location.href = "/";
+      return;
+    }
+
+    // The request failed, so the session may well still exist. Re-reading is
+    // right here: it makes the header agree with whatever is actually true
+    // rather than asserting a sign-out that did not happen.
     await refresh();
   }
 
