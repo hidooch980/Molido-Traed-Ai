@@ -171,3 +171,136 @@ def test_freshness_is_none_without_data(session, instrument, provider):
         )
         is None
     )
+
+
+class TestLookbackIsBoundedWithoutChangingTheAnswer:
+    """`lookback` is pushed inside the window function for speed.
+
+    A window function is computed over every row the WHERE admits before an
+    outer LIMIT can discard one, so asking for two bars used to rank an
+    instrument's whole history to return two - 3.4 seconds of a 7.5 second
+    page. The query now narrows to the newest `lookback` *event times* first.
+
+    Narrowing by event time rather than by row is the part that has to be
+    right, because several providers can cover one timestamp and then the two
+    numbers differ. These tests pin the cases where a row limit and a timestamp
+    limit disagree.
+    """
+
+    def test_two_providers_on_one_timestamp_still_fill_the_lookback(
+        self, session, instrument, provider
+    ):
+        """The newest event time carries two rows, so `lookback=2` is both of
+        them - not one row each from the two newest timestamps."""
+        from app.models.instruments import Provider
+
+        second = Provider(code="second", name="Second feed", capabilities={"ohlcv": True})
+        session.add(second)
+        session.flush()
+
+        for source in (provider, second):
+            for i in range(3):
+                insert_bar(
+                    session,
+                    instrument.id,
+                    source.id,
+                    event_time=BASE_TIME + timedelta(hours=i),
+                    ingested_at=BASE_TIME,
+                    close=1.1000 + i * 0.0001,
+                )
+
+        bars = get_bars(
+            session,
+            instrument.id,
+            Timeframe.H1,
+            BASE_TIME + timedelta(hours=4),
+            lookback=2,
+        )
+
+        assert len(bars) == 2
+        # Both from the newest visible timestamp, one per provider.
+        assert len({bar.event_time for bar in bars}) == 1
+        assert len({bar.provider_id for bar in bars}) == 2
+
+    def test_a_revision_does_not_consume_a_lookback_slot(
+        self, session, instrument, provider
+    ):
+        """Revisions share an event time. Counting them as separate slots would
+        make `lookback=2` return one bar and one older copy of it."""
+        _seed(session, instrument, provider, count=3)
+        newest = BASE_TIME + timedelta(hours=2)
+        insert_bar(
+            session,
+            instrument.id,
+            provider.id,
+            event_time=newest,
+            ingested_at=BASE_TIME,
+            close=9.9999,
+            revision=2,
+        )
+
+        bars = get_bars(
+            session, instrument.id, Timeframe.H1, BASE_TIME + timedelta(hours=4), lookback=2
+        )
+
+        assert len(bars) == 2
+        assert [bar.event_time for bar in bars] == [
+            BASE_TIME + timedelta(hours=1),
+            newest,
+        ]
+        assert bars[-1].close == pytest.approx(9.9999)
+
+    def test_the_bound_respects_the_same_visibility_rules(
+        self, session, instrument, provider
+    ):
+        """The horizon that narrows the scan must not see a row the caller
+        cannot. If it did, an unknown-yet bar would occupy a slot and push a
+        visible one out of the answer."""
+        _seed(session, instrument, provider, count=3)
+        # Known only later - invisible at the instant asked about.
+        insert_bar(
+            session,
+            instrument.id,
+            provider.id,
+            event_time=BASE_TIME + timedelta(hours=3),
+            ingested_at=BASE_TIME + timedelta(days=30),
+            close=5.5555,
+        )
+
+        bars = get_bars(
+            session, instrument.id, Timeframe.H1, BASE_TIME + timedelta(hours=5), lookback=2
+        )
+
+        assert len(bars) == 2
+        assert all(bar.close != pytest.approx(5.5555) for bar in bars)
+        assert bars[-1].event_time == BASE_TIME + timedelta(hours=2)
+
+    def test_asking_for_more_than_exists_returns_what_exists(
+        self, session, instrument, provider
+    ):
+        _seed(session, instrument, provider, count=3)
+
+        bars = get_bars(
+            session, instrument.id, Timeframe.H1, BASE_TIME + timedelta(hours=9), lookback=50
+        )
+
+        assert len(bars) == 3
+
+    def test_a_start_bound_and_a_lookback_together_still_agree(
+        self, session, instrument, provider
+    ):
+        _seed(session, instrument, provider, count=6)
+
+        bars = get_bars(
+            session,
+            instrument.id,
+            Timeframe.H1,
+            BASE_TIME + timedelta(hours=9),
+            start=BASE_TIME + timedelta(hours=3),
+            lookback=2,
+        )
+
+        assert [bar.event_time for bar in bars] == [
+            BASE_TIME + timedelta(hours=4),
+            BASE_TIME + timedelta(hours=5),
+        ]

@@ -35,8 +35,29 @@ from datetime import UTC, datetime
 #: the permission model is the filesystem's, which both sides already agree on.
 QUEUE = pathlib.Path(os.environ.get("MOLIDO_MT5_QUEUE", "/opt/molidotrade/var/mt5-queue"))
 PREFIX = pathlib.Path(os.environ.get("WINEPREFIX", str(pathlib.Path.home() / ".mt5")))
-CONFIG = PREFIX / "drive_c/Program Files/MetaTrader 5/config/molido-startup.ini"
 UNIT = "molido-mt5"
+
+_TERMINAL = PREFIX / "drive_c/Program Files/MetaTrader 5"
+
+
+def _config_dir() -> pathlib.Path:
+    """The terminal's own config directory, whichever case it was created with.
+
+    The installer writes `Config`; this agent used to write `config`. On a
+    Windows filesystem those are one directory; on the Linux filesystem the
+    prefix actually lives on they are two, and the terminal reads its startup
+    file out of the one this agent did not write to. The login then fails with
+    no error anywhere - the config was valid, permissioned, and in a directory
+    nothing reads.
+    """
+    for name in ("Config", "config"):
+        candidate = _TERMINAL / name
+        if candidate.is_dir():
+            return candidate
+    return _TERMINAL / "Config"
+
+
+CONFIG = _config_dir() / "molido-startup.ini"
 
 
 def log(message: str) -> None:
@@ -90,11 +111,31 @@ def restart_terminal() -> tuple[bool, str]:
 
 
 
-#: Where the in-terminal bridge publishes what it can see. Read rather than
-#: guessed: the terminal is the only thing that knows whether a login worked.
-BRIDGE_FILES = PREFIX / "drive_c/users" / os.environ.get("USER", "ubuntu") / (
-    "AppData/Roaming/MetaQuotes/Terminal/Common/Files"
-)
+def _bridge_files() -> pathlib.Path:
+    """Where the in-terminal bridge publishes what it can see.
+
+    The Wine user directory is found by looking, not by reading `$USER`: under
+    a systemd unit that variable is frequently unset, and the fallback then
+    named a user this prefix has never had. The agent would watch a directory
+    Wine never writes to and report every login as "restarted and did not
+    connect" - about logins that had connected.
+    """
+    users = PREFIX / "drive_c/users"
+    tail = "AppData/Roaming/MetaQuotes/Terminal/Common/Files"
+    named = users / os.environ.get("USER", "") / tail
+    if named.is_dir():
+        return named
+    for candidate in sorted(users.glob(f"*/{tail}")):
+        # parents[5] is the Wine user the path hangs off:
+        # Files < Common < Terminal < MetaQuotes < Roaming < AppData < user.
+        if candidate.parents[5].name.lower() != "public":
+            return candidate
+    return named
+
+
+#: Read rather than guessed: the terminal is the only thing that knows whether
+#: a login worked.
+BRIDGE_FILES = _bridge_files()
 
 
 def wait_for_connection(timeout: float = 90.0, interval: float = 3.0) -> dict:

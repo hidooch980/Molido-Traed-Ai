@@ -66,6 +66,7 @@ def _visible_bars_query(
     as_of: datetime,
     provider_id: uuid.UUID | None,
     start: datetime | None = None,
+    lookback: int | None = None,
 ) -> Select:
     """Rows visible at `as_of`, newest known revision per event_time.
 
@@ -74,6 +75,20 @@ def _visible_bars_query(
     *inside* the window, which matters: ranking first and filtering afterwards
     would let an unknown-yet revision hide the revision that was actually
     current at `as_of`.
+
+    **`lookback` is pushed into the window rather than left to the caller's
+    LIMIT**, and the difference is three seconds a page. A window function is
+    computed over every row the WHERE admits before any outer LIMIT can
+    discard one, so asking for the last two bars ranked an instrument's entire
+    history - twelve thousand rows at H1 - to return two. The world-state
+    endpoint spent 3.4 of its 7.5 seconds here, and the price block it was
+    waiting on had asked for `lookback=2`.
+
+    Narrowing by the newest `lookback` *event times* rather than rows is what
+    makes it exactly equivalent. Several providers can cover one timestamp, so
+    a row limit and a timestamp limit are different numbers - but the newest N
+    rows by event_time can never span more than N distinct event times, so the
+    rows the outer LIMIT would have kept are all still here.
     """
     cutoff = as_of - timeframe.delta  # last bar whose close is <= as_of
 
@@ -87,6 +102,29 @@ def _visible_bars_query(
         conditions.append(Bar.provider_id == provider_id)
     if start is not None:
         conditions.append(Bar.event_time >= start)
+
+    if lookback is not None:
+        # Built from `conditions` as it stands, before this clause joins them:
+        # the horizon has to see the same visibility rules, and must not see
+        # itself.
+        horizon = (
+            select(Bar.event_time)
+            .where(and_(*conditions))
+            .distinct()
+            .order_by(Bar.event_time.desc())
+            .limit(lookback)
+            # Never correlated with the enclosing query. SQLAlchemy leaves
+            # this uncorrelated anyway - auto-correlation is skipped when it
+            # would empty the subquery's FROM - but that protection is a
+            # documented edge of the ORM, not a property of this code, and a
+            # correlated rendering would silently turn the whole bound into
+            # `event_time IN (event_time)`: always true, nothing narrowed,
+            # and every test still green because the outer LIMIT keeps the
+            # answer identical while the three seconds quietly come back.
+            .correlate(None)
+            .scalar_subquery()
+        )
+        conditions.append(Bar.event_time.in_(horizon))
 
     ranked = (
         select(
@@ -151,16 +189,20 @@ def get_bars(
             timeframe=timeframe.value,
         )
 
+    if lookback is not None and lookback <= 0:
+        raise ValidationFailedError("lookback must be positive", lookback=lookback)
+
     query = _visible_bars_query(
         instrument_id,
         timeframe,
         as_of,
         provider_id,
         start=_require_utc(start, "start") if start is not None else None,
+        lookback=lookback,
     )
     if lookback is not None:
-        if lookback <= 0:
-            raise ValidationFailedError("lookback must be positive", lookback=lookback)
+        # Still applied. The horizon bounds the scan to the right timestamps;
+        # this bounds the rows, which differ when two providers cover one.
         query = query.limit(lookback)
 
     rows = list(session.scalars(query))

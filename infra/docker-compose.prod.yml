@@ -208,6 +208,21 @@ services:
         # Server-side rendering calls the API over the compose network; the
         # browser never talks to it directly, so this stays internal.
         NEXT_PUBLIC_API_URL: http://api:8000
+        # The footer stamp, and it belongs here rather than in the IP overlay.
+        #
+        # It lived in `docker-compose.ip.yml`, which is the overlay that also
+        # takes Caddy off port 443 and swaps in the IP Caddyfile. So a domain
+        # deployment - the only kind this project actually runs - had two
+        # choices: no build stamp, or no HTTPS. It had been taking the first,
+        # which is why every footer read "build dev / vdev / local" and why
+        # "did the deploy land?" could only be answered by diffing page text.
+        #
+        # The defaults are the Dockerfile's own, so a build with none of these
+        # set still succeeds and says so in the footer instead of claiming a
+        # stamp it does not have.
+        BUILD_STAMP: ${BUILD_STAMP:-dev}
+        APP_VERSION: ${APP_VERSION:-dev}
+        GIT_COMMIT: ${GIT_COMMIT:-local}
     environment:
       # Read at runtime, not baked into the build, and without the
       # NEXT_PUBLIC_ prefix - anything carrying that prefix is inlined into the
