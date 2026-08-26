@@ -128,6 +128,17 @@ services:
       # this feed and must never be able to write into MetaTrader's own folder,
       # where a stray file would be picked up as terminal data.
       - ${MOLIDO_MT5_BRIDGE_HOST:-/home/ubuntu/.mt5/drive_c/users/ubuntu/AppData/Roaming/MetaQuotes/Terminal/Common/Files}:/home/ubuntu/.mt5/drive_c/users/ubuntu/AppData/Roaming/MetaQuotes/Terminal/Common/Files:ro
+      # Every further terminal's bridge, read-only, one directory per
+      # account. The site lists whatever `MOLIDO_MT5_BRIDGE_DIRS` names,
+      # so a terminal missing from that env simply does not appear -
+      # these mounts only make the directories reachable.
+      - ${MOLIDO_MT5_BRIDGE_B:-/root/.mt5b/drive_c/users/root/AppData/Roaming/MetaQuotes/Terminal/Common/Files}:/bridges/b:ro
+      - ${MOLIDO_MT5_BRIDGE_C:-/root/.mt5c/drive_c/users/root/AppData/Roaming/MetaQuotes/Terminal/Common/Files}:/bridges/c:ro
+      - ${MOLIDO_MT5_BRIDGE_D:-/root/.mt5d/drive_c/users/root/AppData/Roaming/MetaQuotes/Terminal/Common/Files}:/bridges/d:ro
+      - ${MOLIDO_MT5_BRIDGE_E:-/root/.mt5e/drive_c/users/root/AppData/Roaming/MetaQuotes/Terminal/Common/Files}:/bridges/e:ro
+      - ${MOLIDO_MT5_BRIDGE_F:-/root/.mt5f/drive_c/users/root/AppData/Roaming/MetaQuotes/Terminal/Common/Files}:/bridges/f:ro
+      - ${MOLIDO_MT5_BRIDGE_G:-/root/.mt5g/drive_c/users/root/AppData/Roaming/MetaQuotes/Terminal/Common/Files}:/bridges/g:ro
+      - ${MOLIDO_MT5_BRIDGE_H:-/root/.mt5h/drive_c/users/root/AppData/Roaming/MetaQuotes/Terminal/Common/Files}:/bridges/h:ro
       # The kill switch, on the host so it survives a redeploy. A halt that a
       # rebuild clears is not a halt, and a rebuild is exactly when somebody is
       # changing things and not thinking about the stop they set yesterday.
