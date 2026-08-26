@@ -293,7 +293,7 @@ class TestABarFromOutsideTheWindow:
     def test_a_bar_already_stored_is_not_inserted_twice(
         self, session, instrument, provider
     ):
-        from datetime import UTC, datetime, timedelta
+        from datetime import UTC, datetime
 
         from app.core.enums import Timeframe
         from app.services import ingestion
