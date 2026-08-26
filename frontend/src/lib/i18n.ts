@@ -682,6 +682,7 @@ const en: Dictionary = {
   "issue.session_mismatch": "outside trading hours",
   "issue.stale_data": "stale data",
 
+  "markets.total": "{n} instruments in {groups} categories, {open} open right now.",
   "asset.forex": "forex",
   "asset.metal": "metal",
   "asset.index": "index",
@@ -1749,6 +1750,7 @@ const fa: Dictionary = {
   "issue.session_mismatch": "خارج از ساعات معاملاتی",
   "issue.stale_data": "داده کهنه",
 
+  "markets.total": "{n} نماد در {groups} دسته، {open} تا الان باز.",
   "asset.forex": "فارکس",
   "asset.metal": "فلز",
   "asset.index": "شاخص",

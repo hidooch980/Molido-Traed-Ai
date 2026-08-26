@@ -47,6 +47,36 @@ _MAJOR_CURRENCIES = {
 _METALS = {"XAU", "XAG", "XPT", "XPD"}
 _CRYPTO = {"BTC", "ETH", "XRP", "LTC", "BCH", "ADA", "SOL", "DOGE", "DOT"}
 
+#: Instruments whose class cannot be read off their shape, listed by name.
+#:
+#: These are not guesses. The classifier below refuses to invent a class from
+#: an unrecognised symbol, and it is right to - but "unrecognised" and
+#: "unnamed" are different things, and every symbol here was chosen
+#: deliberately when the watchlist was written. Leaving them to fall through
+#: put eight of this deployment's instruments into `other`: the whole of the
+#: energy complex and every index future, filed under the class that means
+#: "nobody knows what this is".
+#:
+#: Quote currency is carried because these all price in dollars and a screen
+#: that cannot say so has to print a dash.
+_NAMED: dict[str, tuple[AssetClass, str | None, str]] = {
+    # Energy. The base is the grade rather than a currency, which is exactly
+    # why the six-character rule cannot reach them.
+    "USOIL": (AssetClass.COMMODITY, "WTI", "USD"),
+    "UKOIL": (AssetClass.COMMODITY, "BRENT", "USD"),
+    "NGAS": (AssetClass.COMMODITY, "NATGAS", "USD"),
+    # An industrial metal rather than a precious one, and `metal` says more
+    # about it than `commodity` does.
+    "COPPER": (AssetClass.METAL, "COPPER", "USD"),
+    # Equity index futures. No base instrument exists to name - an index is
+    # not a thing you can hold - so the base stays empty rather than being
+    # filled with the ticker again.
+    "US500": (AssetClass.INDEX, None, "USD"),
+    "US100": (AssetClass.INDEX, None, "USD"),
+    "US30": (AssetClass.INDEX, None, "USD"),
+    "US2000": (AssetClass.INDEX, None, "USD"),
+}
+
 
 def normalize_symbol(raw_symbol: str) -> str:
     """Reduce a broker symbol to its canonical form.
@@ -93,6 +123,14 @@ def classify_symbol(symbol: str) -> tuple[AssetClass, str | None, str | None]:
     than guessing — an unknown instrument is a prompt for operator input, not
     a place for invention.
     """
+    # Checked first. `US500` is five characters and would fall through every
+    # rule below it, but more to the point a named instrument should never be
+    # subject to a pattern that might coincidentally match it.
+    named = _NAMED.get(symbol)
+    if named is not None:
+        asset_class, base, quote = named
+        return asset_class, base, quote
+
     if len(symbol) == 6:
         base, quote = symbol[:3], symbol[3:]
         if base in _METALS and quote in _MAJOR_CURRENCIES:
@@ -165,6 +203,27 @@ def upsert_instrument(
         instrument.base_currency = base_currency
     if quote_currency and not instrument.quote_currency:
         instrument.quote_currency = quote_currency
+
+    # `other` is the absence of a classification, not one anybody chose, so
+    # replacing it is filling a gap - the same rule as every line around it.
+    #
+    # Without this the fix is only ever applied to instruments nobody has seen
+    # yet. Eight of this deployment's symbols arrived before the classifier
+    # knew their names and would have stayed filed under "nobody knows what
+    # this is" permanently, while the code that could have said so ran past
+    # them on every cycle. A curated class is still never touched: the guard
+    # is on the stored value being `other`, not on the inferred one being
+    # confident.
+    if instrument.asset_class == AssetClass.OTHER and inferred_class != AssetClass.OTHER:
+        instrument.asset_class = inferred_class
+        # Follows from the class, and would otherwise keep pointing at the
+        # calendar `other` resolves to - so a metal would go on trading
+        # through a metals holiday.
+        instrument.market_code = default_market_code(inferred_class)
+        if inferred_base and not instrument.base_currency:
+            instrument.base_currency = inferred_base
+        if inferred_quote and not instrument.quote_currency:
+            instrument.quote_currency = inferred_quote
     if exchange and not instrument.exchange:
         instrument.exchange = exchange
     if trading_hours and not instrument.trading_hours:
