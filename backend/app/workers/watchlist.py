@@ -20,10 +20,77 @@ from dataclasses import dataclass
 from app.core.enums import Timeframe
 from app.core.errors import ConfigurationError
 
-# Sensible starting universe for the Yahoo adapter. Deliberately small: a
-# collector that quietly hammers a free endpoint for 500 symbols gets blocked,
-# and a blocked feed looks exactly like a quiet market.
-DEFAULT_WATCHLIST = "EURUSD:EURUSD=X:H1,GBPUSD:GBPUSD=X:H1,XAUUSD:GC=F:H1,BTCUSD:BTC-USD:H1"
+# The starting universe for the Yahoo adapter.
+#
+# **Its length is a correctness constraint rather than a preference.** The
+# cross-section ranks instruments against each other and refuses to rank fewer
+# than `crosssection.MIN_CROSS_SECTION` of them at one timestamp. A watchlist
+# shorter than that floor therefore produces a deployment that collects bars
+# faithfully forever and never learns one thing from them - and it does so
+# quietly, because collection is genuinely healthy. This default listed four.
+#
+# The currency pairs carry the floor by themselves, which is why the list leans
+# that way: they share a single 24/5 session, so they print on the same hours
+# and are rankable at the same instant. Instruments on other calendars cannot
+# be relied on for the floor - index futures settle, and if the majority of a
+# universe is closed then the cross-section is not short of data, it is short
+# of a market. Metals, energy and index futures add depth during their own
+# hours; crypto is the only part of this list awake at the weekend.
+#
+# It is still small beside what a paid feed would allow, and deliberately: a
+# collector that quietly hammers a free endpoint for five hundred symbols gets
+# blocked, and a blocked feed looks exactly like a quiet market.
+_DEFAULT_SYMBOLS = (
+    # Currency majors
+    ("EURUSD", "EURUSD=X"),
+    ("GBPUSD", "GBPUSD=X"),
+    ("USDJPY", "USDJPY=X"),
+    ("USDCHF", "USDCHF=X"),
+    ("AUDUSD", "AUDUSD=X"),
+    ("USDCAD", "USDCAD=X"),
+    ("NZDUSD", "NZDUSD=X"),
+    # Currency crosses
+    ("EURGBP", "EURGBP=X"),
+    ("EURJPY", "EURJPY=X"),
+    ("GBPJPY", "GBPJPY=X"),
+    ("AUDJPY", "AUDJPY=X"),
+    ("CHFJPY", "CHFJPY=X"),
+    ("CADJPY", "CADJPY=X"),
+    ("NZDJPY", "NZDJPY=X"),
+    ("EURAUD", "EURAUD=X"),
+    ("EURCHF", "EURCHF=X"),
+    ("EURCAD", "EURCAD=X"),
+    ("EURNZD", "EURNZD=X"),
+    ("GBPAUD", "GBPAUD=X"),
+    ("GBPCAD", "GBPCAD=X"),
+    ("GBPCHF", "GBPCHF=X"),
+    ("AUDCAD", "AUDCAD=X"),
+    ("AUDCHF", "AUDCHF=X"),
+    ("AUDNZD", "AUDNZD=X"),
+    ("NZDCAD", "NZDCAD=X"),
+    ("NZDCHF", "NZDCHF=X"),
+    ("CADCHF", "CADCHF=X"),
+    # Metals and energy, as continuous futures
+    ("XAUUSD", "GC=F"),
+    ("XAGUSD", "SI=F"),
+    ("XPTUSD", "PL=F"),
+    ("USOIL", "CL=F"),
+    ("UKOIL", "BZ=F"),
+    ("NGAS", "NG=F"),
+    ("COPPER", "HG=F"),
+    # Index futures
+    ("US500", "ES=F"),
+    ("US100", "NQ=F"),
+    ("US30", "YM=F"),
+    ("US2000", "RTY=F"),
+    # Crypto
+    ("BTCUSD", "BTC-USD"),
+    ("ETHUSD", "ETH-USD"),
+    ("SOLUSD", "SOL-USD"),
+    ("XRPUSD", "XRP-USD"),
+)
+
+DEFAULT_WATCHLIST = ",".join(f"{sym}:{raw}:H1" for sym, raw in _DEFAULT_SYMBOLS)
 
 
 @dataclass(frozen=True)
@@ -59,4 +126,20 @@ def parse_watchlist(raw: str) -> list[WatchEntry]:
         entries.append(
             WatchEntry(symbol=symbol.upper(), raw_symbol=raw_symbol, timeframe=tf)
         )
+
+    # An empty universe is a misconfiguration, never a choice. The compose file
+    # passes `MOLIDO_WATCHLIST: ${MOLIDO_WATCHLIST}`, and an unset variable
+    # arrives here as an empty string rather than as an absent setting - so the
+    # application default never gets a chance to apply, and returning `[]` here
+    # would start a collector that sweeps nothing, reports `entries: 0` with no
+    # failures, and looks entirely healthy while gathering no market data at
+    # all. Refusing is the only outcome that is visible.
+    if not entries:
+        raise ConfigurationError(
+            "The watchlist is empty, so the collector would gather nothing. "
+            "Set MOLIDO_WATCHLIST, or leave it out entirely to take the "
+            "built-in universe - an empty value is not the same as no value.",
+            entry=raw,
+        )
+
     return entries

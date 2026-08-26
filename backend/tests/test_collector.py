@@ -84,6 +84,60 @@ class TestWatchlist:
         with pytest.raises(ConfigurationError):
             parse_watchlist("EURUSD:EURUSD=X:H7")
 
+    def test_empty_watchlist_is_refused(self):
+        """An empty universe is a misconfiguration, not a valid choice.
+
+        The compose file passes `${MOLIDO_WATCHLIST}`, so an unset variable
+        arrives as an empty string rather than as an absent setting - which
+        means the built-in default never applies. Returning no entries would
+        start a collector that sweeps nothing and reports no failures.
+        """
+        with pytest.raises(ConfigurationError):
+            parse_watchlist("")
+        with pytest.raises(ConfigurationError):
+            parse_watchlist("  , ,, ")
+
+    def test_default_universe_can_form_a_cross_section(self):
+        """The default must be able to learn, not merely to collect.
+
+        The cross-section refuses to rank fewer than `MIN_CROSS_SECTION`
+        instruments sharing one timestamp. A default below that floor produces
+        a deployment that gathers bars perfectly and writes nothing to the
+        journal, forever, with every visible signal reporting health - which is
+        exactly what this deployment did with a four-symbol default.
+        """
+        from app.brain.crosssection import MIN_CROSS_SECTION
+        from app.workers.watchlist import DEFAULT_WATCHLIST
+
+        entries = parse_watchlist(DEFAULT_WATCHLIST)
+        assert len(entries) >= MIN_CROSS_SECTION
+
+        # Per timeframe, because the ranking happens within one. A universe of
+        # forty split twenty-one ways clears the floor in aggregate and fails
+        # it everywhere that matters.
+        counts: dict[str, int] = {}
+        for entry in entries:
+            counts[entry.timeframe.value] = counts.get(entry.timeframe.value, 0) + 1
+        assert max(counts.values()) >= MIN_CROSS_SECTION
+
+        # And the floor must be carried by instruments that share a session.
+        # Twenty names that are never open together cannot be ranked together,
+        # so a universe padded to the floor with mismatched calendars passes a
+        # count and still never produces a cross-section.
+        currencies = [e for e in entries if e.raw_symbol.endswith("=X")]
+        assert len(currencies) >= MIN_CROSS_SECTION
+
+    def test_symbols_are_unique(self):
+        """One canonical name, one provider symbol.
+
+        The same instrument listed twice would be ranked against itself.
+        """
+        from app.workers.watchlist import DEFAULT_WATCHLIST
+
+        entries = parse_watchlist(DEFAULT_WATCHLIST)
+        keys = [e.key for e in entries]
+        assert len(keys) == len(set(keys))
+
 
 # ------------------------------------------------------------------- cycles
 class TestCycle:
