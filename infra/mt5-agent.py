@@ -29,7 +29,13 @@ import pathlib
 import subprocess
 import sys
 import time
-from datetime import UTC, datetime
+# timezone.utc rather than datetime.UTC: the host this runs on carries
+# Python 3.10, and UTC-the-name arrived in 3.11. The agent crashed on
+# import and systemd restarted it forever - 108 times before anybody
+# read the journal.
+from datetime import datetime, timezone
+
+UTC = timezone.utc
 
 #: Written by the API container, read here. A directory rather than a socket so
 #: the permission model is the filesystem's, which both sides already agree on.
