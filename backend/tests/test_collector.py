@@ -564,11 +564,23 @@ class TestWhichTimeframesTheRuleDecidesOn:
     not happen is a typo in one environment variable quietly stopping the
     hourly decisions the account is actually trading on."""
 
-    def test_the_default_is_hourly_only(self):
+    def test_the_default_measures_the_fast_ones_too(self):
+        """The default used to be hourly alone, which made the forward test
+        take a year for no reason except that nothing faster was collected.
+
+        What this asserts is not the exact list - that is a policy figure and
+        may change again - but that the hourly one the account actually trades
+        on is in it, and that something faster is too.
+        """
         from app.core.enums import Timeframe
         from app.workers.collector import _forward_timeframes
 
-        assert _forward_timeframes() == (Timeframe.H1,)
+        chosen = _forward_timeframes()
+        assert Timeframe.H1 in chosen
+        assert len(chosen) > 1, (
+            "hourly alone is a year of waiting; the arithmetic for that is in "
+            "the setting's own docstring"
+        )
 
     def test_a_faster_timeframe_can_be_added(self, monkeypatch):
         from app.core.config import get_settings

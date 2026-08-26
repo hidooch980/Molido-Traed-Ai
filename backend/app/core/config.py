@@ -190,7 +190,16 @@ class Settings(BaseSettings):
     #: so the same 1.4 pip spread is 16% of an average hourly bar and near 58%
     #: of a five-minute one. Faster answers, dearer trades. The measurement is
     #: net of costs, which is exactly why it is allowed to settle this.
-    forward_timeframes: str = "H1"
+    #: Measured on all four now, not just the hourly one. The arithmetic above
+    #: was already written and was already the answer: 6,573 instants is a year
+    #: of hourly bars and a week of one-minute ones, and collecting only H1
+    #: made the wait a year for no reason but that nothing else was fetched.
+    #:
+    #: Each timeframe is measured separately, so if the spread does eat the
+    #: edge at one minute the journal says so about one minute rather than
+    #: contaminating the hourly answer. That separation is the whole reason
+    #: this is safe to widen.
+    forward_timeframes: str = "H1,M15,M5,M1"
 
     # Collector (the long-running data-gathering worker)
     collector_provider: str = "yfinance"

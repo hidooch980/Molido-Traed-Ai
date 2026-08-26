@@ -90,7 +90,40 @@ _DEFAULT_SYMBOLS = (
     ("XRPUSD", "XRP-USD"),
 )
 
-DEFAULT_WATCHLIST = ",".join(f"{sym}:{raw}:H1" for sym, raw in _DEFAULT_SYMBOLS)
+#: The timeframes the fast subset is collected on, and why there is a fast
+#: subset at all.
+#:
+#: The forward measurement needs about 6,573 independent instants to separate
+#: this edge from noise. On hourly bars that is roughly a year; on five-minute
+#: bars about a month; on one-minute bars about a week. Collecting only H1 made
+#: the wait a year for no reason other than that nothing else was fetched.
+#:
+#: **Only the currency pairs, and deliberately.** The cross-section needs
+#: twenty instruments sharing one timestamp, the pairs carry that floor on
+#: their own, and a free endpoint asked for forty-two symbols across four
+#: timeframes every cycle is a blocked endpoint - which looks exactly like a
+#: quiet market.
+#:
+#: The faster answer is not a free one, and the docstring on
+#: `forward_timeframes` states the other half: spread is constant while bar
+#: range falls with the square root of time, so the same 1.4 pips is 16% of an
+#: hourly bar and near 58% of a five-minute one. Faster answers, dearer
+#: trades. The measurement is net of costs, which is exactly why it is allowed
+#: to settle that rather than either of us arguing it.
+_FAST_TIMEFRAMES = ("M15", "M5", "M1")
+
+_CURRENCY_PAIRS = tuple(
+    (sym, raw) for sym, raw in _DEFAULT_SYMBOLS if raw.endswith("=X")
+)
+
+DEFAULT_WATCHLIST = ",".join(
+    [f"{sym}:{raw}:H1" for sym, raw in _DEFAULT_SYMBOLS]
+    + [
+        f"{sym}:{raw}:{tf}"
+        for tf in _FAST_TIMEFRAMES
+        for sym, raw in _CURRENCY_PAIRS
+    ]
+)
 
 
 @dataclass(frozen=True)
