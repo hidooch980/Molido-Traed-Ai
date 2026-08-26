@@ -25,6 +25,7 @@ bars it claims to summarise.
 
 from __future__ import annotations
 
+import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -78,6 +79,10 @@ class WorldState:
     timeframe: Timeframe
     as_of: datetime
     blocks: dict[str, Block]
+    #: Milliseconds each block took to build. Published rather than logged
+    #: only, because the person asking why a page is slow is usually looking at
+    #: the page rather than at a log stream.
+    timings_ms: dict[str, float] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -87,6 +92,7 @@ class WorldState:
             "as_of": self.as_of.isoformat(),
             **{name: block.as_dict() for name, block in self.blocks.items()},
             "unavailable": UNAVAILABLE_BLOCKS,
+            "timings_ms": self.timings_ms,
         }
 
     @property
@@ -314,7 +320,14 @@ def build(
     }
 
     blocks: dict[str, Block] = {}
+    # Timed per block, and the reason is that this call takes seconds while
+    # every one of its parts looks cheap in isolation. Without a number beside
+    # each name, "the world state is slow" is a sentence somebody has to answer
+    # by guessing which of seven things to optimise - and the expensive one
+    # here reads thousands of bars while the ones next to it read a row.
+    spent: dict[str, float] = {}
     for name, builder in builders.items():
+        started = time.perf_counter()
         try:
             blocks[name] = builder()
         except MolidoError as exc:
@@ -322,6 +335,20 @@ def build(
         except Exception as exc:  # noqa: BLE001 - one block must not sink the rest
             log.error("world_state.block_failed", block=name, error=str(exc))
             blocks[name] = _unavailable(f"{type(exc).__name__}: {exc}")
+        # Recorded whether it succeeded or refused. A block that takes two
+        # seconds to decide it has no data is exactly as expensive as one that
+        # takes two seconds to produce some, and only one of those is obvious.
+        spent[name] = round((time.perf_counter() - started) * 1000, 1)
+
+    slowest = max(spent, key=lambda k: spent[k]) if spent else None
+    log.info(
+        "world_state.built",
+        symbol=instrument.symbol,
+        total_ms=round(sum(spent.values()), 1),
+        slowest=slowest,
+        slowest_ms=spent.get(slowest or "", 0.0),
+        per_block=spent,
+    )
 
     return WorldState(
         instrument_id=instrument.id,
@@ -329,4 +356,5 @@ def build(
         timeframe=timeframe,
         as_of=cutoff,
         blocks=blocks,
+        timings_ms=spent,
     )
