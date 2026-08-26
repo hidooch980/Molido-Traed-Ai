@@ -22,6 +22,7 @@ from __future__ import annotations
 import hashlib
 import time
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
@@ -151,18 +152,29 @@ def _existing_bars(
     instrument_id: uuid.UUID,
     provider_id: uuid.UUID,
     timeframe: Timeframe,
-    start: datetime,
-    end: datetime,
+    moments: Sequence[datetime],
 ) -> dict[datetime, Bar]:
-    """Newest stored revision per event_time in the window."""
+    """Newest stored revision for each of these instants.
+
+    Looked up by the timestamps actually returned rather than by the window
+    they were requested for, because a provider does not promise to stay
+    inside it. Yahoo answers a fifteen-minute request with whatever its
+    session boundaries produce, and a bar arriving from outside the window was
+    invisible to a window-shaped lookup - so the insert that followed collided
+    with a row already stored and took the whole symbol down with it. Seven of
+    a hundred and twenty-five entries failed that way on every sweep, and each
+    failure is one instrument that stops collecting.
+    """
+    if not moments:
+        return {}
+
     rows = session.scalars(
         select(Bar)
         .where(
             Bar.instrument_id == instrument_id,
             Bar.provider_id == provider_id,
             Bar.timeframe == timeframe,
-            Bar.event_time >= start,
-            Bar.event_time < end,
+            Bar.event_time.in_(list(moments)),
         )
         .order_by(Bar.event_time, Bar.revision)
     )
@@ -324,7 +336,12 @@ def ingest_ohlcv(
                 continue
 
             stored = _existing_bars(
-                session, instrument.id, provider_row.id, timeframe, chunk_start, chunk_end
+                session,
+                instrument.id,
+                provider_row.id,
+                timeframe,
+                # The instants in hand, not the window they were asked for.
+                [bar.event_time for bar in normalized],
             )
             seen_in_batch: set[datetime] = set()
 
