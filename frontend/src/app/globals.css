@@ -1370,3 +1370,201 @@ body {
 .rail-search-clear:hover {
   color: var(--ink);
 }
+
+/* ---------------------------------------------------------- account kind
+ *
+ * Three cards rather than a dropdown. The choice changes which of the fields
+ * below it exist, so it is worth the vertical space: a select that silently
+ * removes two questions when it changes reads as a form losing its place.
+ *
+ * Each option carries its own sentence because the words alone do not separate
+ * them for somebody who has not sat a prop evaluation - "funded" and "live"
+ * both sound like real money, and only one of them can be ended by a rule
+ * somebody else wrote.
+ */
+.kind-choice {
+  border: 0;
+  padding: 0;
+  margin-bottom: 1rem;
+}
+
+.kind-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+  gap: 0.5rem;
+  margin: 0.4rem 0 0.5rem;
+}
+
+.kind-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.55rem;
+  padding: 0.6rem 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: 0.5rem;
+  cursor: pointer;
+  background: var(--surface-2, transparent);
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+
+.kind-option:hover {
+  border-color: var(--accent, var(--ink-3));
+}
+
+.kind-option.is-chosen {
+  border-color: var(--accent, var(--ink));
+  background: var(--surface-3, var(--surface-2, transparent));
+}
+
+.kind-option input {
+  margin-top: 0.2rem;
+  flex: none;
+}
+
+.kind-option-name {
+  display: block;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+/* The hint inside a card is the sentence that separates the three, so it gets
+   room to be read rather than the tight leading a field hint uses. */
+.kind-option .auth-hint {
+  margin-top: 0.15rem;
+  line-height: 1.45;
+}
+
+/* ------------------------------------------------------- account on/off
+ *
+ * A switch rather than a delete button. The accounts it sits beside carry
+ * history worth keeping - a failed challenge is a fact about how somebody
+ * trades - and a row of delete buttons would offer throwing that away as the
+ * obvious way to stop tracking one.
+ */
+.account-switch {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.switch-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  color: var(--ink-3);
+  font-size: 0.75rem;
+}
+
+.switch-button:disabled {
+  opacity: 0.5;
+  cursor: progress;
+}
+
+.switch-track {
+  position: relative;
+  width: 1.9rem;
+  height: 1.05rem;
+  border-radius: 999px;
+  background: var(--line);
+  transition: background 0.15s ease;
+  flex: none;
+}
+
+.switch-knob {
+  position: absolute;
+  top: 0.15rem;
+  inset-inline-start: 0.15rem;
+  width: 0.75rem;
+  height: 0.75rem;
+  border-radius: 999px;
+  background: var(--surface, #fff);
+  transition: inset-inline-start 0.15s ease;
+}
+
+.switch-button.is-on .switch-track {
+  background: var(--good);
+}
+
+/* Logical inset so the knob travels the correct way in Persian, where the
+   whole interface is laid out right to left. */
+.switch-button.is-on .switch-knob {
+  inset-inline-start: 1rem;
+}
+
+.switch-button.is-on .switch-text {
+  color: var(--ink);
+}
+
+.switch-error {
+  font-size: 0.6875rem;
+  color: var(--critical);
+  max-width: 12rem;
+}
+
+/* ------------------------------------------------------ moving a phase
+ *
+ * Collapsed to a single word until asked for. The row is read far more often
+ * than a phase is passed, and an open select in every row would cost more
+ * width on a phone than the rest of the table put together.
+ */
+.phase-move-open {
+  background: none;
+  border: 0;
+  padding: 0;
+  margin-top: 0.15rem;
+  cursor: pointer;
+  font-size: 0.6875rem;
+  color: var(--accent, var(--ink-3));
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.phase-move {
+  margin-top: 0.35rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  max-width: 20rem;
+}
+
+.phase-move-select {
+  font-size: 0.75rem;
+  padding: 0.3rem 0.4rem;
+}
+
+/* The consequence, before the button rather than after it. Somebody who finds
+   out afterwards has already lost a confirmation they will have to redo. */
+.phase-move-warning {
+  line-height: 1.45;
+}
+
+.phase-move-actions {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.phase-move-go,
+.phase-move-cancel {
+  font-size: 0.6875rem;
+  padding: 0.25rem 0.6rem;
+  border-radius: 0.35rem;
+  cursor: pointer;
+  border: 1px solid var(--line);
+  background: none;
+  color: var(--ink-2);
+}
+
+.phase-move-go {
+  border-color: var(--accent, var(--ink));
+  color: var(--ink);
+}
+
+.phase-move-go:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}

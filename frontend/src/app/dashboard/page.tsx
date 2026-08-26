@@ -182,6 +182,8 @@ export default async function HomePage() {
                         .join(" · ") || t("home.propAccount")}
                     </td>
                     <td className="ink-3" dir="ltr">
+                      {/* Null on a live account by design: nobody outside
+                          sets its limits, so there is no rulebook to name. */}
                       {account.rulebook_key ?? "—"}
                     </td>
                     <td className="num" dir="ltr">
@@ -193,12 +195,19 @@ export default async function HomePage() {
                       {/* Confirmed is not decoration. Until the holder has
                           checked the transcribed rules against their own
                           contract, tracking stays shut - a confident verdict
-                          about the wrong document is worse than no verdict. */}
-                      <Pill tone={account.confirmed ? "good" : "warning"}>
-                        {account.confirmed
-                          ? t("home.tracked")
-                          : t("home.unconfirmed")}
-                      </Pill>
+                          about the wrong document is worse than no verdict.
+                          A live account is exempt rather than pending: it is
+                          measured against no rulebook, so a warning here would
+                          point at a step that does not exist. */}
+                      {account.kind === "live" ? (
+                        <Pill tone="neutral">{t("home.ownAccount")}</Pill>
+                      ) : (
+                        <Pill tone={account.rules_confirmed ? "good" : "warning"}>
+                          {account.rules_confirmed
+                            ? t("home.tracked")
+                            : t("home.unconfirmed")}
+                        </Pill>
+                      )}
                     </td>
                   </tr>
                 ))}

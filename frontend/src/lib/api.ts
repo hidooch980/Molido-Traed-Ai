@@ -324,10 +324,17 @@ export interface UsersView {
   assignable_roles: string[];
 }
 
-/** One prop-firm challenge account, from `/risk/challenge-accounts`. */
+/** One recorded account, from `/risk/challenge-accounts`.
+ *
+ *  Three kinds share the shape. A challenge and a funded account are measured
+ *  against a rulebook somebody else wrote; a live account is the holder's own
+ *  money and carries no rulebook at all, which is why every rulebook field
+ *  here is nullable.
+ */
 export interface ChallengeAccountView {
   id: string;
   label: string;
+  kind: "challenge" | "funded" | "live";
   provider: string | null;
   program: string | null;
   phase: string | null;
@@ -338,13 +345,31 @@ export interface ChallengeAccountView {
   rulebook_available: boolean;
   /** Whether the holder has checked the transcribed rules against their own
    *  contract. Until they have, tracking stays shut - a confident verdict
-   *  about the wrong document is worse than no verdict. */
-  confirmed: boolean;
+   *  about the wrong document is worse than no verdict.
+   *
+   *  **Named for the field the API actually sends.** It was declared as
+   *  `confirmed` here while the server sent `rules_confirmed`, so the value
+   *  read `undefined` on every account and the status pill said "unconfirmed"
+   *  for all of them - including the ones somebody had confirmed. TypeScript
+   *  could not catch it: the type was a claim about a payload it never saw. */
+  rules_confirmed: boolean;
+  /** False on a live account for a reason that is not a missing step, so
+   *  `why_not` carries the sentence rather than the page guessing. */
+  tracking_available: boolean;
+  why_not: string | null;
+  /** Switched off rather than deleted. An account out of measurement keeps
+   *  every fact it holds; deleting the row would take the history with it. */
+  is_active: boolean;
 }
 
 export interface ChallengeAccountsView {
   accounts: ChallengeAccountView[];
   total: number;
+  /** Counts per kind. Live accounts are in the total and out of the
+   *  confirmation figures below - there is nothing about them to confirm. */
+  by_kind: Record<string, number>;
+  /** How many are switched on. */
+  active: number;
   confirmed: number;
   unconfirmed: number;
   trackable: number;

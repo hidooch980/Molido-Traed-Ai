@@ -1,3 +1,5 @@
+import { AccountPhaseMove } from "@/components/AccountPhaseMove";
+import { AccountSwitch } from "@/components/AccountSwitch";
 import { ChallengeAccountForm } from "@/components/ChallengeAccountForm";
 import { Empty, Offline, Panel, Pill, Stat, StatusBadge } from "@/components/ui";
 import { api } from "@/lib/api";
@@ -215,9 +217,11 @@ export default async function ChallengePage() {
               <thead>
                 <tr>
                   <th>{t("challenge.accountLabel")}</th>
+                  <th>{t("challenge.formKind")}</th>
                   <th>{t("challenge.accountProgram")}</th>
                   <th className="num">{t("challenge.accountBalance")}</th>
                   <th>{t("challenge.accountState")}</th>
+                  <th>{t("challenge.accountSwitch")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -225,9 +229,49 @@ export default async function ChallengePage() {
                   <tr key={account.id}>
                     <td className="font-semibold">{account.label}</td>
                     <td className="ink-2">
-                      {[account.provider, account.program, account.phase]
-                        .filter(Boolean)
-                        .join(" · ") || account.rulebook_key}
+                      {t(`challenge.kind${
+                        account.kind === "live"
+                          ? "Live"
+                          : account.kind === "funded"
+                            ? "Funded"
+                            : "Challenge"
+                      }`)}
+                    </td>
+                    <td className="ink-2">
+                      {/* An em dash rather than an empty cell on a live
+                          account. There is no programme to name, and a blank
+                          reads as a value that failed to load. */}
+                      {account.kind === "live" ? (
+                        "—"
+                      ) : (
+                        <>
+                          <span className="block">
+                            {[account.provider, account.program, account.phase]
+                              .filter(Boolean)
+                              .join(" · ") || account.rulebook_key}
+                          </span>
+                          {/* Beside the phase it would change, rather than in
+                              a column of its own: a seventh column costs more
+                              width on a phone than the whole control does
+                              here, and this is where somebody looks when they
+                              have just passed one. */}
+                          {books.ok && (
+                            <AccountPhaseMove
+                              id={account.id}
+                              rulebooks={books.data.rulebooks}
+                              labels={{
+                                move: t("challenge.phaseMove"),
+                                choose: t("challenge.formChoose"),
+                                confirm: t("challenge.phaseMoveConfirm"),
+                                warning: t("challenge.phaseMoveWarning"),
+                                cancel: t("challenge.phaseMoveCancel"),
+                                failed: t("challenge.switchFailed"),
+                                working: t("challenge.phaseMoveWorking"),
+                              }}
+                            />
+                          )}
+                        </>
+                      )}
                     </td>
                     <td className="num" dir="ltr">
                       {account.starting_balance
@@ -235,11 +279,32 @@ export default async function ChallengePage() {
                         : "—"}
                     </td>
                     <td>
-                      <Pill tone={account.confirmed ? "good" : "warning"}>
-                        {account.confirmed
-                          ? t("challenge.tracked")
-                          : t("challenge.unconfirmed")}
-                      </Pill>
+                      {/* A live account is neither tracked nor unconfirmed.
+                          Warning-toned "unconfirmed" would send its holder
+                          looking for a confirmation step that does not
+                          exist. */}
+                      {account.kind === "live" ? (
+                        <Pill tone="neutral">{t("challenge.ownAccount")}</Pill>
+                      ) : (
+                        <Pill tone={account.rules_confirmed ? "good" : "warning"}>
+                          {account.rules_confirmed
+                            ? t("challenge.tracked")
+                            : t("challenge.unconfirmed")}
+                        </Pill>
+                      )}
+                    </td>
+                    <td>
+                      <AccountSwitch
+                        id={account.id}
+                        active={account.is_active}
+                        labels={{
+                          on: t("challenge.accountOn"),
+                          off: t("challenge.accountOff"),
+                          switchOn: t("challenge.switchOn"),
+                          switchOff: t("challenge.switchOff"),
+                          failed: t("challenge.switchFailed"),
+                        }}
+                      />
                     </td>
                   </tr>
                 ))}
@@ -272,6 +337,15 @@ export default async function ChallengePage() {
               created: t("challenge.formCreated"),
               failed: t("challenge.formFailed"),
               choose: t("challenge.formChoose"),
+              kind: t("challenge.formKind"),
+              kindHint: t("challenge.formKindHint"),
+              kindChallenge: t("challenge.kindChallenge"),
+              kindChallengeHint: t("challenge.kindChallengeHint"),
+              kindFunded: t("challenge.kindFunded"),
+              kindFundedHint: t("challenge.kindFundedHint"),
+              kindLive: t("challenge.kindLive"),
+              kindLiveHint: t("challenge.kindLiveHint"),
+              liveNote: t("challenge.formLiveNote"),
             }}
             rulebooks={books.data.rulebooks}
           />

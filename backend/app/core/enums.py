@@ -142,6 +142,30 @@ class IngestionStatus(StrEnum):
     CANCELLED = "cancelled"
 
 
+class AccountKind(StrEnum):
+    """What kind of account the holder is describing.
+
+    The three differ in who imposes the limits, which is the only distinction
+    the risk layer cares about. A challenge and a funded account are both
+    measured against a rulebook somebody else wrote and can fail against it. A
+    live account is the holder's own money at a broker: nothing external ends
+    it, so there is no rulebook to point at and none is required.
+
+    Kept apart from `phase` on the rulebook, which says where inside a
+    programme an account sits. An account can be on the funded phase of a
+    programme; only a live account is outside programmes altogether.
+    """
+
+    #: A prop evaluation still being sat. A rulebook is required.
+    CHALLENGE = "challenge"
+    #: A prop account already funded. Still a rulebook - the drawdown floor
+    #: survives the evaluation even though the profit target does not.
+    FUNDED = "funded"
+    #: The holder's own account at a broker. No rulebook, because nobody but
+    #: the holder sets its limits.
+    LIVE = "live"
+
+
 class UserRole(StrEnum):
     OWNER = "owner"
     ADMIN = "admin"
