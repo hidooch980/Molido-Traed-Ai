@@ -395,3 +395,43 @@ class TestTheApiIsNotOpenToStrangers:
         source = (FRONTEND / "lib" / "api.ts").read_text(encoding="utf-8")
         request_body = source.split("async function request<T>")[1][:600]
         assert "sessionHeader()" in request_body
+
+
+class TestTheMenuCanBeFiltered:
+    """Thirty-seven destinations in five groups, two of them holding
+    twenty-one between them.
+
+    That is a list somebody reads rather than a menu somebody uses, and the
+    reading was paid for on every navigation rather than once.
+    """
+
+    def _shell(self) -> str:
+        return (FRONTEND / "components" / "Shell.tsx").read_text(encoding="utf-8")
+
+    def test_the_rail_has_a_filter(self):
+        assert "rail-search-input" in self._shell()
+
+    def test_filtering_keeps_the_groups(self):
+        """A flat result list would discard the one thing the grouping
+        teaches - where a page lives - so the second visit learns nothing."""
+        shell = self._shell()
+        assert "rail-group-label" in shell
+        assert "GROUPS.map" in shell
+
+    def test_it_matches_the_key_as_well_as_the_label(self):
+        """Somebody who knows the application types `dna` long before they
+        type the translated label for it."""
+        shell = self._shell()
+        block = shell.split("const matches = NAV.filter")[1][:600]
+        assert "item.key" in block
+
+    def test_an_empty_group_disappears_rather_than_heading_nothing(self):
+        shell = self._shell()
+        assert "matches.length === 0" in shell
+
+    def test_the_empty_message_only_appears_while_filtering(self):
+        """A permanent "nothing found" under a full menu would be a lie."""
+        shell = self._shell()
+        assert "nav.filterEmpty" in shell
+        block = shell.split("nav.filterEmpty")[0][-400:]
+        assert "query.trim()" in block

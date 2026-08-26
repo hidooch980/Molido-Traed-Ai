@@ -770,6 +770,9 @@ const en: Dictionary = {
   "detail.barsVisible": "bars visible",
   "detail.nothingMaterialized": "Nothing materialized yet.",
 
+  "nav.filter": "Filter menu",
+  "nav.filterClear": "Clear the filter",
+  "nav.filterEmpty": "Nothing here matches that.",
   "nav.planned": "Planned — not built yet",
   "nav.note":
     "Every item on this menu now has a screen. That is not the same as every screen having something to say: the journal has recorded decisions but nothing has resolved yet, and the research page exists mainly to state that no edge has been proven. A page that reports honestly on an empty measurement is finished; the measurement is not.",
@@ -1914,6 +1917,9 @@ const fa: Dictionary = {
   "detail.barsVisible": "کندل قابل مشاهده",
   "detail.nothingMaterialized": "هنوز چیزی ساخته نشده است.",
 
+  "nav.filter": "جست‌وجو در منو",
+  "nav.filterClear": "پاک کردن",
+  "nav.filterEmpty": "چیزی با این نمی‌خواند.",
   "nav.planned": "برنامه‌ریزی‌شده — هنوز ساخته نشده",
   "nav.note":
     "همهٔ موارد این منو حالا صفحه دارند. این با «همهٔ صفحه‌ها حرفی برای گفتن دارند» یکی نیست: دفترچه تصمیم‌ها را ثبت کرده ولی هنوز چیزی بسته نشده، و صفحهٔ پژوهش عمدتاً برای گفتن این است که هیچ لبه‌ای اثبات نشده. صفحه‌ای که دربارهٔ یک اندازه‌گیری خالی صادقانه گزارش می‌دهد تمام است؛ اندازه‌گیری نه.",

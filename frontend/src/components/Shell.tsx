@@ -93,6 +93,15 @@ export default function Shell({
   // is remembered. A drawer that reopens on every navigation is a drawer
   // nobody closes twice.
   const [railCollapsed, setRailCollapsed] = useState(initialCollapsed);
+  // Thirty-seven destinations in five groups, and two of those groups hold
+  // twenty-one between them. That is a list somebody reads rather than a menu
+  // somebody uses, and reading it is the cost paid on every single navigation.
+  //
+  // Filtering turns it into three keystrokes. Deliberately a filter over the
+  // existing groups rather than a flat result list: the grouping is what tells
+  // somebody *where* a page lives, and a search that discards it teaches
+  // nothing about the second visit.
+  const [query, setQuery] = useState("");
   const t = translator(locale);
   // Counted from the nav table on every render rather than typed into the
   // translation file, so the badge cannot claim a page that was never wired.
@@ -265,10 +274,50 @@ export default function Shell({
             </div>
           </div>
 
-          {GROUPS.map((group) => (
+          <div className="rail-search">
+            <input
+              className="rail-search-input"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder={t("nav.filter")}
+              aria-label={t("nav.filter")}
+              // Not `type="search"`: its clear button is styled by the browser
+              // and lands on the palette like a chip somebody else designed.
+              type="text"
+            />
+            {query && (
+              <button
+                type="button"
+                className="rail-search-clear"
+                onClick={() => setQuery("")}
+                aria-label={t("nav.filterClear")}
+              >
+                ×
+              </button>
+            )}
+          </div>
+
+          {GROUPS.map((group) => {
+            const matches = NAV.filter((item) => {
+              if (item.group !== group) return false;
+              if (!query.trim()) return true;
+              const label = item.labelKey.includes(".")
+                ? t(item.labelKey)
+                : item.labelKey;
+              // The key as well as the label, because somebody who knows the
+              // application types "dna" long before they type "نقشهٔ نماد".
+              const hay = `${label} ${item.key} ${item.href ?? ""}`.toLowerCase();
+              return hay.includes(query.trim().toLowerCase());
+            });
+
+            // An empty group disappears while filtering rather than sitting
+            // there as a heading over nothing.
+            if (matches.length === 0) return null;
+
+            return (
             <div key={group} className="rail-group">
               <div className="rail-group-label">{t(`nav.${group}`)}</div>
-              {NAV.filter((item) => item.group === group).map((item) => {
+              {matches.map((item) => {
                 const label = item.labelKey.includes(".")
                   ? t(item.labelKey)
                   : item.labelKey;
@@ -300,7 +349,20 @@ export default function Shell({
                 );
               })}
             </div>
-          ))}
+            );
+          })}
+
+          {/* Said only when the filter is what emptied the list. A permanent
+              "nothing found" under a full menu would be a lie. */}
+          {query.trim() &&
+            !NAV.some((item) => {
+              const label = item.labelKey.includes(".")
+                ? t(item.labelKey)
+                : item.labelKey;
+              return `${label} ${item.key} ${item.href ?? ""}`
+                .toLowerCase()
+                .includes(query.trim().toLowerCase());
+            }) && <p className="rail-note">{t("nav.filterEmpty")}</p>}
 
           <p className="rail-note">{t("nav.note")}</p>
         </nav>
