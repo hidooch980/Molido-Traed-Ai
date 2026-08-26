@@ -298,3 +298,39 @@ class TestWhereSigningInLands:
             "somebody who is signed in and types the domain should arrive in "
             "the application, not on the page explaining it to strangers"
         )
+
+
+class TestTheProofBetweenTheTwoSignInCalls:
+    """Signing in with two factors is two requests, and the proof is spent once.
+
+    The password call presents a proof of work and the server retires it. The
+    code call is a second request to the same endpoint, so it needs a proof of
+    its own - and without one it fails with "that human check has been used
+    already", which is a sentence about robots delivered to somebody holding a
+    phone displaying the correct six digits.
+    """
+
+    def _panel(self) -> str:
+        return (FRONTEND / "components" / "LoginPanel.tsx").read_text(encoding="utf-8")
+
+    def test_a_new_proof_is_requested_when_the_code_step_opens(self):
+        source = self._panel()
+        # Bounded by the statement that opens the step rather than by a
+        # character count, so explaining the reason at length here cannot
+        # push the line being checked out of the window.
+        branch = source.split("two_factor_required")[1].split('setStage("code")')[0]
+        assert "human.refresh()" in branch, (
+            "the request that reached this branch spent the proof; the code "
+            "submission that follows presents a retired one without this"
+        )
+
+    def test_the_code_step_shows_that_a_proof_is_being_solved(self):
+        """It was the only step in the flow that did not.
+
+        The hook starts solving as soon as it is asked, so the work overlaps
+        with opening an authenticator app - but a person cannot wait for
+        something they cannot see, and submitting early fails.
+        """
+        source = self._panel()
+        code_step = source.split("function CodeStep")[1]
+        assert "HumanCheckBox" in code_step

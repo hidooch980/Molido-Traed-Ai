@@ -251,6 +251,21 @@ export function LoginPanel({
         if (payload?.error === "human_check_failed") human.refresh();
         if (payload?.error === "two_factor_required") {
           // Not a failure. The password was right and the account wants more.
+          //
+          // The proof still has to be replaced, and this is the one branch
+          // where that is easy to miss: the request that got here *spent* it,
+          // and the code submission is a second call to the same endpoint. Not
+          // refreshing left the second attempt presenting a proof the server
+          // had already retired, so every correct code came back "that human
+          // check has been used already" - a sentence about the wrong thing
+          // entirely, aimed at somebody holding a phone with the right number
+          // on it.
+          //
+          // Refreshed rather than skipped, because a six digit code is a
+          // million possibilities and per-attempt cost is exactly what makes
+          // guessing them expensive. The hook starts solving immediately, so
+          // the work happens while the authenticator app is being opened.
+          human.refresh();
           setStage("code");
           setCode("");
           setError(null);
@@ -396,6 +411,8 @@ export function LoginPanel({
             <CodeStep
               labels={labels}
               code={code}
+              checkState={human.state}
+              attempts={human.attempts}
               busy={busy}
               buttonLabel={buttonLabel}
               inputRef={codeInput}
@@ -581,9 +598,12 @@ function RegisterStep({
 }
 
 function CodeStep({
-  labels, code, busy, buttonLabel, inputRef, onCode, onSubmit,
+  labels, code, checkState, attempts, busy, buttonLabel, inputRef, onCode,
+  onSubmit,
 }: {
-  labels: LoginLabels; code: string; busy: boolean; buttonLabel: string | null;
+  labels: LoginLabels; code: string;
+  checkState: CheckState; attempts: number;
+  busy: boolean; buttonLabel: string | null;
   inputRef: React.RefObject<HTMLInputElement | null>;
   onCode: (v: string) => void; onSubmit: () => void;
 }) {
@@ -614,7 +634,22 @@ function CodeStep({
       </label>
       <p className="auth-hint">{labels.codeHint}</p>
 
-      <button type="submit" className="auth-button" disabled={busy}>
+      {/* This step needs a proof of its own - the one that came with the
+          password was spent getting here - and it was the only step that did
+          not say so. Somebody typing six digits into a box has no way to know
+          a fresh one is being solved behind it, and submitting before it lands
+          fails with a sentence about robots rather than about the code. */}
+      <HumanCheckBox labels={labels.humanCheck} state={checkState} attempts={attempts} />
+
+      <button
+        type="submit"
+        className="auth-button"
+        // Held only while the proof is actually being found. Every other
+        // state - including a failed one - lets the attempt through, because
+        // a button that stays dead after something went wrong is worse than
+        // an error message.
+        disabled={busy || checkState === "solving"}
+      >
         {buttonLabel ?? labels.codeSubmit}
       </button>
     </form>
