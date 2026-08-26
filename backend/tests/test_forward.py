@@ -419,3 +419,92 @@ class TestTheTwoSeriesDoNotMix:
 
         assert by_source[SOURCE_PUBLIC] > 0
         assert by_source[SOURCE_PUBLIC] == by_source[SOURCE_BROKER]
+
+
+class TestTimeframesDoNotCollide:
+    """Every hour, four bars close on the same timestamp.
+
+    The journal's identity was `(symbol, opened_at, arm, price_source)`, and
+    the forward measurement ran on hourly bars alone so nothing needed to say
+    which timeframe an entry came from. Widening it to four made that omission
+    a bug at exactly the instants the timeframes align: three of four entries
+    collide on one key and are discarded as duplicates, and the measurement
+    looks like it is recording four timeframes while recording roughly one.
+    """
+
+    def test_two_timeframes_at_one_timestamp_are_both_recorded(self, session):
+        from datetime import UTC, datetime
+
+        from app.services import journal_log
+
+        moment = datetime(2026, 8, 26, 12, 0, tzinfo=UTC)
+        common = dict(
+            symbol="EURUSD", decision="long", at=moment, price=1.1,
+            stop_distance=0.001,
+        )
+
+        hourly = journal_log.record_with_control(session, timeframe="H1", **common)
+        minute = journal_log.record_with_control(session, timeframe="M1", **common)
+
+        assert hourly["rule"]["new"] is True
+        assert minute["rule"]["new"] is True, (
+            "the one-minute entry was discarded as a duplicate of the hourly "
+            "one, which is the whole defect"
+        )
+        assert hourly["rule"]["entry_id"] != minute["rule"]["entry_id"]
+
+    def test_the_same_timeframe_twice_is_still_one_entry(self, session):
+        """Idempotency survives. A cycle overlapping the previous one must not
+        inflate the sample the measurement rests on."""
+        from datetime import UTC, datetime
+
+        from app.services import journal_log
+
+        moment = datetime(2026, 8, 26, 12, 0, tzinfo=UTC)
+        common = dict(
+            symbol="EURUSD", decision="long", at=moment, price=1.1,
+            stop_distance=0.001, timeframe="M5",
+        )
+
+        first = journal_log.record_with_control(session, **common)
+        again = journal_log.record_with_control(session, **common)
+
+        assert first["rule"]["new"] is True
+        assert again["rule"]["new"] is False
+        assert first["rule"]["entry_id"] == again["rule"]["entry_id"]
+
+    def test_the_control_arm_carries_the_timeframe_too(self, session):
+        """Otherwise the control lands in the hourly bucket while the rule is
+        labelled correctly, and the comparison compares two different things."""
+        from datetime import UTC, datetime
+
+        from app.models.journal import ARM_CONTROL, JournalEntry
+        from app.services import journal_log
+
+        moment = datetime(2026, 8, 26, 12, 0, tzinfo=UTC)
+        journal_log.record_with_control(
+            session, symbol="EURUSD", decision="long", at=moment, price=1.1,
+            stop_distance=0.001, timeframe="M15",
+        )
+
+        control = session.query(JournalEntry).filter(
+            JournalEntry.arm == ARM_CONTROL
+        ).one()
+        assert control.timeframe == "M15"
+
+    def test_an_entry_written_without_one_is_hourly(self, session):
+        """Every caller that predates the fast timeframes keeps writing what it
+        wrote before, rather than landing in an unlabelled bucket."""
+        from datetime import UTC, datetime
+
+        from app.models.journal import JournalEntry
+        from app.services import journal_log
+
+        moment = datetime(2026, 8, 26, 13, 0, tzinfo=UTC)
+        result = journal_log.record_with_control(
+            session, symbol="GBPUSD", decision="short", at=moment, price=1.3,
+            stop_distance=0.001,
+        )
+
+        entry = session.get(JournalEntry, result["rule"]["entry_id"])
+        assert entry.timeframe == "H1"

@@ -80,6 +80,10 @@ def record_decision(
     at: datetime,
     arm: str = ARM_RULE,
     price_source: str = SOURCE_PUBLIC,
+    #: Defaulted so every caller that predates the fast timeframes keeps
+    #: writing exactly what it wrote before, rather than silently landing in
+    #: an unlabelled bucket.
+    timeframe: str = "H1",
     account_key: str | None = None,
     probability: float | None = None,
     before: dict[str, Any] | None = None,
@@ -98,6 +102,10 @@ def record_decision(
             JournalEntry.opened_at == moment,
             JournalEntry.arm == arm,
             JournalEntry.price_source == price_source,
+            # Part of the identity, matching the unique key. Without it the
+            # lookup finds the hourly entry at a shared timestamp and reports
+            # the one-minute decision as an already-recorded duplicate.
+            JournalEntry.timeframe == timeframe,
         )
     )
     if existing is not None:
@@ -111,6 +119,7 @@ def record_decision(
         probability=probability,
         arm=arm,
         price_source=price_source,
+        timeframe=timeframe,
         before=before or {},
         during=during or {},
     )
@@ -128,6 +137,7 @@ def record_with_control(
     price: float,
     stop_distance: float,
     price_source: str = SOURCE_PUBLIC,
+    timeframe: str = "H1",
     account_key: str | None = None,
     probability: float | None = None,
     before: dict[str, Any] | None = None,
@@ -146,6 +156,7 @@ def record_with_control(
         at=at,
         arm=ARM_RULE,
         price_source=price_source,
+        timeframe=timeframe,
         account_key=account_key,
         probability=probability,
         before=before,
@@ -175,6 +186,7 @@ def record_with_control(
         at=at,
         arm=ARM_CONTROL,
         price_source=price_source,
+        timeframe=timeframe,
         account_key=account_key,
         # The series is stamped on the control's reasoning as well as the
         # rule's. The control is a decision on a price series too, and one

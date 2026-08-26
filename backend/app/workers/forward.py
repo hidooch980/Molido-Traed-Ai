@@ -220,6 +220,11 @@ def record_cycle(
                 price=pick.price,
                 stop_distance=pick.atr * STOP_MULTIPLE,
                 price_source=price_source,
+                # The whole point of widening the measurement: an entry that
+                # cannot say which timeframe it came from cannot be separated
+                # from one that came from another, and the hourly and minute
+                # bars share a timestamp every hour.
+                timeframe=timeframe.value,
                 account_key=account_key,
                 before={
                     "rule": "cross-sectional-stretch",
