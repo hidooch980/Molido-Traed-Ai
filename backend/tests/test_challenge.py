@@ -901,13 +901,22 @@ class TestAutomatedTrading:
         assert any("automated" in u.lower() for u in verdict.unverified)
         assert verdict.allowed is True
 
-    def test_the_catalogue_marks_the_provider_that_forbids_it(self):
-        """End to end: the rulebook says it, and the brain acts on it."""
-        from app.brain.rulebooks import get
+    def test_no_catalogued_provider_is_silently_forbidden(self):
+        """Every rulebook in the catalogue states this field or leaves it
+        unread, and either is fine - what must not happen is a `False` nobody
+        noticed, which would refuse an account with no explanation on screen.
 
-        book = get("sgb-plan-a-phase1")
-        assert book is not None
-        verdict = ch.check(book.rules, state(), proposed_risk_r=0.5)
+        The provider this gate was written for has since been withdrawn from
+        the catalogue. The gate stays, because the rule it enforces belongs to
+        whichever firm publishes it next.
+        """
+        from app.brain.rulebooks import RULEBOOKS
 
-        assert verdict.allowed is False
-        assert any("automated" in b.lower() for b in verdict.breaches)
+        for book in RULEBOOKS:
+            forbidden = book.rules.automated_trading_allowed is False
+            if forbidden:
+                notes = " ".join(book.notes).lower()
+                assert "automated" in notes, (
+                    f"{book.key} forbids automation in its rules but says "
+                    "nothing about it in its notes"
+                )

@@ -199,7 +199,7 @@ class Settings(BaseSettings):
     #: edge at one minute the journal says so about one minute rather than
     #: contaminating the hourly answer. That separation is the whole reason
     #: this is safe to widen.
-    forward_timeframes: str = "H1,M15,M5,M1"
+    forward_timeframes: str = "D1,H1,M15,M5,M1"
 
     # Collector (the long-running data-gathering worker)
     collector_provider: str = "yfinance"

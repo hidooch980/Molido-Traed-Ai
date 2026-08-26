@@ -110,7 +110,13 @@ _DEFAULT_SYMBOLS = (
 #: hourly bar and near 58% of a five-minute one. Faster answers, dearer
 #: trades. The measurement is net of costs, which is exactly why it is allowed
 #: to settle that rather than either of us arguing it.
-_FAST_TIMEFRAMES = ("M15", "M5", "M1")
+#: Daily sits here with the fast ones despite being the opposite of fast,
+#: because it shares their reason for existing: it is a timeframe the rule can
+#: be *measured* on separately. It answers slowest of all - one instant a day -
+#: and it is the one where the spread is smallest against the bar range, so it
+#: is the cheapest place for an edge to survive its own costs. The point of
+#: measuring four is that they can disagree.
+_EXTRA_TIMEFRAMES = ("D1", "M15", "M5", "M1")
 
 _CURRENCY_PAIRS = tuple(
     (sym, raw) for sym, raw in _DEFAULT_SYMBOLS if raw.endswith("=X")
@@ -120,7 +126,7 @@ DEFAULT_WATCHLIST = ",".join(
     [f"{sym}:{raw}:H1" for sym, raw in _DEFAULT_SYMBOLS]
     + [
         f"{sym}:{raw}:{tf}"
-        for tf in _FAST_TIMEFRAMES
+        for tf in _EXTRA_TIMEFRAMES
         for sym, raw in _CURRENCY_PAIRS
     ]
 )

@@ -52,8 +52,22 @@ class TestTheNumbersSurviveTheChallengeBrain:
         """Every transcribed book must produce a usable answer for an untouched
         account. One that blocks a fresh account has a rule in the wrong state,
         and the block would read as caution rather than as a transcription
-        error."""
+        error.
+
+        Unless the provider forbids the automation, which is a refusal about
+        this platform rather than about the account's health - the numbers are
+        fine and the software is not allowed to act on them. That case is
+        asserted rather than excused: it must block, and it must say why.
+        """
         verdict = ch.check(book.rules, _fresh(), 1.0)
+
+        if book.rules.automated_trading_allowed is False:
+            assert verdict.allowed is False
+            assert any("automated" in b.lower() for b in verdict.breaches), (
+                "a refusal here must name the reason; an unexplained block on "
+                "a healthy account reads as a transcription error"
+            )
+            return
 
         assert verdict.allowed is True, verdict.unverified
 
@@ -262,75 +276,3 @@ def _fresh() -> ch.ChallengeState:
         current_date=date(2026, 8, 13),
         currency_per_r=200.0,
     )
-
-
-class TestSarmayegozareBartar:
-    """Four programmes transcribed from the provider's own rules pages.
-
-    Numbers are checked against what the page publishes rather than against
-    what a reasonable prop firm would publish, because the point of this
-    catalogue is that it can be compared to a source.
-    """
-
-    def _book(self, key):
-        from app.brain.rulebooks import get
-
-        book = get(key)
-        assert book is not None, f"{key} is missing from the catalogue"
-        return book
-
-    def test_plan_a_carries_a_deadline_and_plan_b_does_not(self):
-        """That is the whole difference between them, and what B charges for
-        it is a higher target."""
-        from app.brain.rulebooks import NOT_IMPOSED
-
-        assert self._book("sgb-plan-a-phase1").rules.max_trading_days == 30
-        assert self._book("sgb-plan-a-phase2").rules.max_trading_days == 60
-        assert self._book("sgb-plan-b-phase1").rules.max_trading_days is NOT_IMPOSED
-        assert self._book("sgb-plan-b-phase2").rules.max_trading_days is NOT_IMPOSED
-
-        assert self._book("sgb-plan-b-phase1").rules.profit_target_pct > (
-            self._book("sgb-plan-a-phase1").rules.profit_target_pct
-        )
-
-    def test_the_total_floor_is_static_and_from_the_starting_balance(self):
-        """"درادون اکانت بر روی 12% بالانس اولیه ثابت است" - a floor that
-        trailed would be a different and much harder rulebook."""
-        from app.brain.rulebooks import AllowanceBasis
-
-        for key in ("sgb-plan-a-phase1", "sgb-plan-b-phase2"):
-            rules = self._book(key).rules
-            assert rules.max_total_drawdown_pct == 0.12
-            assert rules.total_drawdown_trailing is False
-            assert rules.allowance_basis is AllowanceBasis.STARTING_BALANCE
-
-    def test_both_limits_watch_equity(self):
-        """"نباید بالانس یا اکوئیتی حساب از آن عبور کند" - a floating loss
-        breaches them before it is realised, which is the difference between
-        surviving a drawdown and being closed inside one."""
-        from app.brain.rulebooks import DrawdownBasis
-
-        assert self._book("sgb-plan-a-phase1").rules.drawdown_basis is (
-            DrawdownBasis.EQUITY
-        )
-
-    def test_nothing_claims_the_holder_confirmed_it(self):
-        """Same rule as every other entry: only the account holder can close
-        the gap between a published page and their own contract."""
-        for key in (
-            "sgb-plan-a-phase1", "sgb-plan-a-phase2",
-            "sgb-plan-b-phase1", "sgb-plan-b-phase2",
-        ):
-            assert self._book(key).confirmed_by_holder is False
-
-    def test_the_ban_on_automated_experts_is_recorded(self):
-        """The rule that matters most here, and it is not a number.
-
-        Money-management experts and copy trading are permitted; software
-        that chooses the trade is not - and that is exactly what this platform
-        is. An operator reading this catalogue has to be able to see that
-        before pointing the automation at one of these accounts.
-        """
-        notes = " ".join(self._book("sgb-plan-a-phase1").notes).lower()
-        assert "automated" in notes
-        assert "not permitted" in notes or "forbidden" in notes
