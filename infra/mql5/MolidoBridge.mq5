@@ -122,12 +122,11 @@ string Escape(string text)
 //| the open book, and a challenge is failed on equity. Publishing     |
 //| only balance would hide the drawdown that ends the account.        |
 //+------------------------------------------------------------------+
-void WriteAccount()
+//--- Built rather than written, so the file and the HTTP publish carry
+//--- byte-identical content. Two builders for one payload is two payloads
+//--- that agree today and disagree after the next field is added to one.
+string AccountJson()
   {
-   int handle = FileOpen("molido_account.json", FLAGS);
-   if(handle == INVALID_HANDLE)
-      return;
-
    string json = "{";
    json += "\"published_at\":\"" + TimeToString(TimeGMT(), TIME_DATE | TIME_SECONDS) + "\",";
    json += "\"login\":" + IntegerToString(AccountInfoInteger(ACCOUNT_LOGIN)) + ",";
@@ -145,8 +144,15 @@ void WriteAccount()
    json += "\"trade_mode\":" + IntegerToString(AccountInfoInteger(ACCOUNT_TRADE_MODE)) + ",";
    json += "\"connected\":" + (TerminalInfoInteger(TERMINAL_CONNECTED) ? "true" : "false");
    json += "}";
+   return json;
+  }
 
-   FileWriteString(handle, json);
+void WriteAccount()
+  {
+   int handle = FileOpen("molido_account.json", FLAGS);
+   if(handle == INVALID_HANDLE)
+      return;
+   FileWriteString(handle, AccountJson());
    FileClose(handle);
   }
 
@@ -236,14 +242,12 @@ void WriteBars(string symbol, ENUM_TIMEFRAMES period)
 //| that the system did not open is the louder finding: every risk     |
 //| figure is understated until it is explained.                       |
 //+------------------------------------------------------------------+
-void WritePositions()
+//--- The array alone, without the envelope. The file wants a wrapper with a
+//--- timestamp; the HTTP publish carries its own, and nesting one inside the
+//--- other would make the backend unwrap a field it did not ask for.
+string PositionsArray()
   {
-   int handle = FileOpen("molido_positions.json", FLAGS);
-   if(handle == INVALID_HANDLE)
-      return;
-
-   string json = "{\"published_at\":\"" + TimeToString(TimeGMT(), TIME_DATE | TIME_SECONDS) + "\",";
-   json += "\"positions\":[";
+   string json = "[";
    int total = PositionsTotal();
    for(int i = 0; i < total; i++)
      {
@@ -263,8 +267,17 @@ void WritePositions()
       json += "\"profit\":" + DoubleToString(PositionGetDouble(POSITION_PROFIT), 2);
       json += "}";
      }
-   json += "]}";
+   json += "]";
+   return json;
+  }
 
+void WritePositions()
+  {
+   int handle = FileOpen("molido_positions.json", FLAGS);
+   if(handle == INVALID_HANDLE)
+      return;
+   string json = "{\"published_at\":\"" + TimeToString(TimeGMT(), TIME_DATE | TIME_SECONDS) + "\",";
+   json += "\"positions\":" + PositionsArray() + "}";
    FileWriteString(handle, json);
    FileClose(handle);
   }
@@ -670,6 +683,110 @@ void OnTick()
   {
   }
 
+
+//+------------------------------------------------------------------+
+//| Publishing to the platform over HTTPS.                             |
+//|                                                                    |
+//| The file bridge assumes the reader shares a filesystem with this   |
+//| terminal. That holds for one terminal on one box and stops holding |
+//| at eleven accounts, which is the ordinary shape for anyone running |
+//| funded accounts beside a challenge - eleven terminals do not fit   |
+//| on the machine the platform runs on, and nothing about the bridge  |
+//| requires them to.                                                  |
+//|                                                                    |
+//| So the same payload goes out over HTTPS as well. Outbound only, so |
+//| it crosses any firewall a trading VPS sits behind, with no shared  |
+//| drive and no sync agent to fail separately.                        |
+//|                                                                    |
+//| **As well as the files, never instead of them.** A terminal that   |
+//| already publishes locally keeps working exactly as it did, and a   |
+//| network that goes down costs the remote copy rather than the whole |
+//| bridge. Turning this on cannot break a setup that works.           |
+//|                                                                    |
+//| Leave PublishUrl empty and none of this runs.                      |
+//+------------------------------------------------------------------+
+
+//--- Where to publish. Empty disables HTTP publishing entirely.
+input string PublishUrl        = "";
+//--- The API key. Held in memory and never written to a file or the log:
+//--- the Experts tab is shoulder-surfable and gets pasted into forums.
+input string PublishApiKey     = "";
+//--- Which account this terminal is. Must match a key the platform has been
+//--- configured for - the backend refuses an unknown one rather than filing
+//--- it somewhere plausible, because the directory it lands in *is* the
+//--- account and the wrong one is somebody else's money.
+input string PublishAccountKey = "main";
+//--- How long to wait. Long enough to cross a continent, short enough that a
+//--- dead endpoint cannot stall the publish timer behind it.
+input int    PublishTimeoutMs  = 15000;
+
+//--- Said once rather than every cycle. A whitelist that has not been set is
+//--- a permanent condition until somebody changes a setting, and repeating it
+//--- every twenty seconds buries the rest of the log.
+bool warned_not_whitelisted = false;
+
+void PostToPlatform()
+  {
+   if(StringLen(PublishUrl) == 0)
+      return;
+
+   string body = "{";
+   body += "\"account_key\":\"" + Escape(PublishAccountKey) + "\",";
+   body += "\"account\":" + AccountJson() + ",";
+   body += "\"positions\":" + PositionsArray() + ",";
+   //--- Both are also inside the account block. Sent again at the top level
+   //--- because the backend reads them from there when a terminal publishes a
+   //--- bare account, and duplicating two booleans is cheaper than a contract
+   //--- that only works when the account block is complete.
+   body += "\"connected\":" + (TerminalInfoInteger(TERMINAL_CONNECTED) ? "true" : "false") + ",";
+   body += "\"login\":" + IntegerToString(AccountInfoInteger(ACCOUNT_LOGIN));
+   body += "}";
+
+   char post[];
+   char result[];
+   string headers = "Content-Type: application/json
+";
+   if(StringLen(PublishApiKey) > 0)
+      headers += "X-API-Key: " + PublishApiKey + "
+";
+
+   //--- Without the trailing zero the request carries a stray byte and the
+   //--- backend rejects the JSON for a reason nothing here would explain.
+   StringToCharArray(body, post, 0, StringLen(body), CP_UTF8);
+
+   string response_headers;
+   ResetLastError();
+   int status = WebRequest("POST", PublishUrl, headers, PublishTimeoutMs,
+                           post, result, response_headers);
+
+   if(status == -1)
+     {
+      int err = GetLastError();
+      if(err == 4060 && !warned_not_whitelisted)
+        {
+         //--- The first error everybody hits, and the message MetaTrader gives
+         //--- for it does not say what to do. This one does.
+         Print("MolidoBridge: MetaTrader is blocking the request. Add ",
+               PublishUrl, " under Tools > Options > Expert Advisors > ",
+               "Allow WebRequest for listed URL, then restart the terminal.");
+         warned_not_whitelisted = true;
+        }
+      else if(err != 4060)
+         Print("MolidoBridge: publish failed, error ", err);
+      return;
+     }
+
+   if(status >= 400)
+     {
+      //--- The backend writes a sentence explaining which field it refused, and
+      //--- it is far more useful than the status code on its own - the usual
+      //--- cause is an account key that does not match the configuration, and
+      //--- the response names the keys that do.
+      Print("MolidoBridge: platform answered ", status, ": ",
+            CharArrayToString(result, 0, WHOLE_ARRAY, CP_UTF8));
+     }
+  }
+
 void Publish()
   {
    static int cycle = 0;
@@ -698,5 +815,10 @@ void Publish()
      }
 
    WriteHeartbeat(cycle);
+
+   //--- Last, and after the heartbeat. The local files are the bridge this
+   //--- terminal has always had; a slow or unreachable endpoint must cost the
+   //--- remote copy and nothing else.
+   PostToPlatform();
   }
 //+------------------------------------------------------------------+
