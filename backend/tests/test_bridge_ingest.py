@@ -13,7 +13,6 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
-from app.core.enums import Timeframe
 from app.providers.metatrader import MetaTraderBridge
 
 

@@ -1273,3 +1273,52 @@ body {
   margin-top: 0;
   margin-bottom: 1rem;
 }
+
+/* ---------------------------------------------------------------- loading
+   The placeholder a page wears while the server builds it.
+
+   A block that pulses rather than a spinner: a spinner says something is
+   happening somewhere, and a shape in the position the content will occupy
+   says what is arriving and stops the layout jumping when it does. */
+.skeleton-bar {
+  display: block;
+  border-radius: 3px;
+  /* Two stops of the panel's own surface rather than grey: a skeleton that
+     does not belong to the palette reads as a rendering fault. */
+  background: linear-gradient(
+    90deg,
+    var(--panel-raised) 0%,
+    var(--border-strong) 50%,
+    var(--panel-raised) 100%
+  );
+  background-size: 200% 100%;
+  animation: skeleton-sweep 1.4s ease-in-out infinite;
+}
+
+@keyframes skeleton-sweep {
+  from { background-position: 200% 0; }
+  to { background-position: -200% 0; }
+}
+
+/* Motion is a preference, and for some people it is a medical one. The shape
+   still communicates without the sweep, so the sweep is what goes. */
+@media (prefers-reduced-motion: reduce) {
+  .skeleton-bar {
+    animation: none;
+    background: var(--panel-raised);
+  }
+}
+
+/* Available to a screen reader, absent from the page. Used so "loading" is
+   announced without the whole skeleton being read out as content. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border-width: 0;
+}

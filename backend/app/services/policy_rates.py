@@ -193,9 +193,33 @@ def parse(body: str) -> dict[str, PolicyRate]:
     return rates
 
 
+#: The parsed reading, keyed to the raw body it came from.
+#:
+#: `fetch` has always cached the download; `parse` ran on every call, which was
+#: free while this was read once to draw a page. It stopped being free when the
+#: decision chain began asking for a differential per instrument: forty-three
+#: instruments meant parsing forty-nine central banks forty-three times to
+#: answer a question whose input had not changed.
+_parsed: tuple[str, dict[str, PolicyRate]] | None = None
+
+
 def current(*, timeout: float = 30.0, opener: Any = None) -> dict[str, PolicyRate]:
     """Every policy rate this platform can attribute to a currency, right now."""
-    return parse(fetch(timeout=timeout, opener=opener))
+    global _parsed
+
+    body = fetch(timeout=timeout, opener=opener)
+
+    # Keyed on the body rather than on a clock, so this cache cannot outlive
+    # the fetch cache that feeds it. A separate expiry would eventually serve a
+    # parse of a document that had already been replaced.
+    if _parsed is not None and _parsed[0] == body:
+        # Copied, because callers pass this dict into `differential` and a
+        # shared mutable reading is one a caller can edit for everybody else.
+        return dict(_parsed[1])
+
+    rates = parse(body)
+    _parsed = (body, rates)
+    return dict(rates)
 
 
 def as_of(moment: date, *, timeout: float = 30.0, opener: Any = None) -> dict[str, PolicyRate]:

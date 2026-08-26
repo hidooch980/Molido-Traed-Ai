@@ -190,3 +190,62 @@ class TestAsOf:
         opener = FakeOpener(LIVE)
         rates = policy_rates.as_of(date(2030, 1, 1), opener=opener)
         assert rates["USD"].rate == 3.625
+
+
+class TestTheParsedReadingIsCached:
+    """Parsing was free when this was read once to draw a page.
+
+    It stopped being free when the decision chain began asking for a
+    differential per instrument: forty-three instruments meant parsing
+    forty-nine central banks forty-three times to answer a question whose
+    input had not changed.
+    """
+
+    def test_the_same_body_is_only_parsed_once(self, monkeypatch):
+        from app.services import policy_rates
+
+        policy_rates._parsed = None
+        parses = {"count": 0}
+        real_parse = policy_rates.parse
+
+        def counting_parse(body):
+            parses["count"] += 1
+            return real_parse(body)
+
+        monkeypatch.setattr(policy_rates, "parse", counting_parse)
+        monkeypatch.setattr(policy_rates, "fetch", lambda **_: LIVE)
+
+        policy_rates.current()
+        policy_rates.current()
+        policy_rates.current()
+
+        assert parses["count"] == 1
+
+    def test_a_replaced_body_is_parsed_again(self, monkeypatch):
+        """The cache is keyed on the document, not on a clock.
+
+        A separate expiry would eventually serve a parse of a body that had
+        already been replaced - reporting a rate the feed no longer carries.
+        """
+        from app.services import policy_rates
+
+        policy_rates._parsed = None
+        bodies = [LIVE, LIVE.replace("3.625", "4.125")]
+        monkeypatch.setattr(policy_rates, "fetch", lambda **_: bodies[0])
+        first = policy_rates.current()
+
+        bodies.pop(0)
+        second = policy_rates.current()
+
+        assert first["USD"].rate != second["USD"].rate
+
+    def test_a_caller_cannot_edit_the_reading_for_everybody_else(self, monkeypatch):
+        from app.services import policy_rates
+
+        policy_rates._parsed = None
+        monkeypatch.setattr(policy_rates, "fetch", lambda **_: LIVE)
+
+        mine = policy_rates.current()
+        mine.pop("USD", None)
+
+        assert "USD" in policy_rates.current()
