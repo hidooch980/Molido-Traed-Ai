@@ -38,13 +38,14 @@ from app.brain import risk as risk_brain
 from app.brain import stress as stress_brain
 from app.core.config import get_settings
 from app.core.enums import AuditEventType, Permission, Timeframe
+from app.core.errors import MolidoError
 from app.db.session import get_db
 from app.execution.safety import ExecutionPolicy, KillSwitch
 from app.ops import bottlenecks, disk, health_score, self_healing
 from app.ops import incidents as incident_memory
 from app.ops import readiness as rd
 from app.pipeline import decide as pipeline
-from app.services import retention, security_log
+from app.services import policy_rates, retention, security_log
 from app.services.instruments import get_instrument
 
 router = APIRouter(prefix="/decisions", tags=["decisions"])
@@ -357,6 +358,26 @@ def read_decision(
         reason="no resolved forecasts have been scored for this deployment yet",
     )
 
+    # The carry input, fetched here because fetching is the caller's job - the
+    # chain must be runnable over historical bars, and a pipeline that reads
+    # "now" from inside itself can never be replayed. This endpoint answers for
+    # the present, so the present differential is the right one to hand it.
+    #
+    # None when either leg has no policy rate (gold and the index futures are
+    # not currencies), and None when the feed cannot be read. Both leave the
+    # swap where it has always been on this deployment - in the unmeasured
+    # list. This is not one of the chain's gates, where "could not check" must
+    # equal "failed"; it is one term of a sum, and the cost model already
+    # reports a missing term by name.
+    rate_differential: float | None = None
+    if instrument.base_currency and instrument.quote_currency:
+        try:
+            rate_differential = policy_rates.differential(
+                instrument.base_currency, instrument.quote_currency
+            )
+        except MolidoError:
+            rate_differential = None
+
     trace = pipeline.decide(
         session,
         instrument.id,
@@ -368,6 +389,7 @@ def read_decision(
         account_id="preview",
         base_currency=instrument.base_currency,
         quote_currency=instrument.quote_currency,
+        rate_differential=rate_differential,
         r_value_pct=0.002,
         as_of=cutoff,
     )

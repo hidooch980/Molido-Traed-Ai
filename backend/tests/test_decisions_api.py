@@ -282,3 +282,74 @@ class TestTheSecondBrainReadsTheSameTrace:
         assert len(rows) == 1
         assert rows[0].payload["available"] is False
         assert rows[0].payload["stopped_at"], "the gate that ended it is the scoring question"
+
+
+class TestTheDifferentialReachesTheChain:
+    """The route fetches the carry input; the chain must not.
+
+    The pipeline takes `rate_differential` as an argument because a chain that
+    reads "now" from inside itself can never be replayed over history. That
+    puts the fetching on this route - and fetching is exactly the step that can
+    quietly fail to happen, because the chain runs perfectly well without it
+    and simply leaves the swap in the unmeasured list, which is where it had
+    silently sat for every decision this deployment has ever made.
+    """
+
+    def test_the_route_asks_for_the_differential(
+        self, client, session, instrument, provider, monkeypatch
+    ):
+        seed(session, instrument, provider)
+
+        from app.services import policy_rates
+
+        asked: list[tuple[str, str]] = []
+
+        def fake_differential(base, quote, rates=None):
+            asked.append((base, quote))
+            return -1.375
+
+        monkeypatch.setattr(policy_rates, "differential", fake_differential)
+
+        client.get(
+            f"/api/v1/decisions/{instrument.id}",
+            params={
+                "timeframe": Timeframe.H1.value,
+                "as_of": (BASE_TIME + timedelta(hours=399)).isoformat(),
+            },
+        )
+
+        # The fixture instrument is EUR/USD, and both of its legs have a
+        # policy rate. Asserting the pair rather than a bare call count,
+        # because handing the legs over in the wrong order silently inverts
+        # the carry.
+        assert asked == [("EUR", "USD")]
+
+    def test_an_unreadable_feed_does_not_break_the_decision(
+        self, client, session, instrument, provider, monkeypatch
+    ):
+        """The differential is a term of a sum, not a gate.
+
+        The chain's rule that "could not check" equals "failed" governs its
+        gates. A rate feed on another continent being unreachable has to
+        degrade the answer - swap returns to unmeasured, and the cost model
+        says so by name - rather than turn a decision into a 500.
+        """
+        seed(session, instrument, provider)
+
+        from app.core.errors import ProviderError
+        from app.services import policy_rates
+
+        def down(base, quote, rates=None):
+            raise ProviderError("the policy rate feed answered 503")
+
+        monkeypatch.setattr(policy_rates, "differential", down)
+
+        response = client.get(
+            f"/api/v1/decisions/{instrument.id}",
+            params={
+                "timeframe": Timeframe.H1.value,
+                "as_of": (BASE_TIME + timedelta(hours=399)).isoformat(),
+            },
+        )
+
+        assert response.status_code == 200
