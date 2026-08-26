@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import Select, and_, func, select
 from sqlalchemy.orm import Session, aliased
@@ -192,20 +192,40 @@ def get_bars(
     if lookback is not None and lookback <= 0:
         raise ValidationFailedError("lookback must be positive", lookback=lookback)
 
-    query = _visible_bars_query(
-        instrument_id,
-        timeframe,
-        as_of,
-        provider_id,
-        start=_require_utc(start, "start") if start is not None else None,
-        lookback=lookback,
-    )
-    if lookback is not None:
-        # Still applied. The horizon bounds the scan to the right timestamps;
-        # this bounds the rows, which differ when two providers cover one.
-        query = query.limit(lookback)
+    start = _require_utc(start, "start") if start is not None else None
 
-    rows = list(session.scalars(query))
+    def _run(lower: datetime | None) -> list:
+        query = _visible_bars_query(
+            instrument_id,
+            timeframe,
+            as_of,
+            provider_id,
+            start=lower,
+            lookback=lookback,
+        )
+        if lookback is not None:
+            # Still applied. The horizon bounds the scan to the right
+            # timestamps; this bounds the rows, which differ when two
+            # providers cover one.
+            query = query.limit(lookback)
+        return list(session.scalars(query))
+
+    if lookback is not None and start is None:
+        # A recency probe before the unbounded read, because the bars table is
+        # a hypertable in production. Without a lower time bound the planner
+        # must consider every chunk - 264 of them - and "the last two bars"
+        # costs seconds of planning to return two rows. A window generous
+        # enough for weekends and holidays satisfies almost every call from
+        # one or two recent chunks; the unbounded query runs only when the
+        # probe comes back short, which keeps the answer exactly what it was -
+        # an instrument quiet for months still reports its old bars rather
+        # than none.
+        window = max(lookback * timeframe.delta * 4, timedelta(days=14))
+        rows = _run(as_of - window)
+        if len(rows) < lookback:
+            rows = _run(None)
+    else:
+        rows = _run(start)
     rows.reverse()  # query is newest-first for LIMIT; callers want chronological
 
     bars = [
