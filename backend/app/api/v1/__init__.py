@@ -4,6 +4,7 @@ from app.api.v1 import (
     access,
     auth,
     brain,
+    bridge_ingest,
     brokers,
     data_quality,
     decisions,
@@ -51,6 +52,7 @@ api_router.include_router(fundamentals.router)
 api_router.include_router(learning.router)
 api_router.include_router(execution.router)
 api_router.include_router(integrations.router)
+api_router.include_router(bridge_ingest.router)
 api_router.include_router(users.router)
 api_router.include_router(system.router)
 api_router.include_router(market_map.router)
