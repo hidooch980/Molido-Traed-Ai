@@ -14,6 +14,11 @@
 name: molidotrade
 
 x-backend-env: &backend-env
+  # Which account key reads which mounted bridge directory. Without this the
+  # containers fall back to the single built-in terminal, and seven mounted
+  # bridges sit unread - which is exactly what happened on the first deploy
+  # of the mounts.
+  MOLIDO_MT5_BRIDGE_DIRS: ${MOLIDO_MT5_BRIDGE_DIRS:-}
   MOLIDO_ENV: production
   MOLIDO_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
   MOLIDO_REDIS_URL: redis://redis:6379/0
