@@ -1017,6 +1017,18 @@ export interface TimezoneView {
   places: { name: string; offset: number; local: string }[];
   broker_offset_known: boolean;
   note: string;
+  /** The four liquidity sessions, hours shown on Iran's fixed clock -
+   *  computed server-side against each session's real timezone so DST in
+   *  Sydney or London cannot quietly shift the numbers half the year. */
+  sessions?: {
+    session: string;
+    timezone: string;
+    is_open: boolean;
+    opens_local: string;
+    closes_local: string;
+    opens_iran: string;
+    closes_iran: string;
+  }[];
 }
 
 export interface EquityPoint {

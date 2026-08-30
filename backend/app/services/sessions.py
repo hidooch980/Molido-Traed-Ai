@@ -26,8 +26,9 @@ from __future__ import annotations
 import uuid
 from bisect import bisect_left
 from dataclasses import dataclass, field
-from datetime import UTC, date, datetime, time, timedelta
+from datetime import UTC, date, datetime, time, timedelta, timezone
 from functools import lru_cache
+from typing import Any
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
@@ -55,6 +56,53 @@ def _zone(name: str) -> ZoneInfo:
         return ZoneInfo(name)
     except Exception as exc:  # noqa: BLE001 - bad config, not a data problem
         raise ValidationFailedError(f"Unknown timezone {name!r}", timezone=name) from exc
+
+
+#: Iran runs a fixed UTC+3:30 - daylight saving was abolished there in 2022,
+#: which is what makes a constant honest where London's offset would not be.
+IRAN_OFFSET = timedelta(hours=3, minutes=30)
+
+
+def session_table(moment: datetime) -> list[dict[str, Any]]:
+    """The four liquidity sessions, with their hours shown on Iran's clock.
+
+    Each session's window is defined in its own real timezone, so the numbers
+    move when Sydney or London changes its clocks - computed here, at request
+    time, rather than hardcoded in a page that would be wrong for half the
+    year. Iran's side is a fixed offset because Iran abolished DST in 2022.
+
+    The conversion anchors on the session's *next* boundary from `moment`, so
+    the strings answer "when does this open/close on my clock today", not an
+    abstract schedule.
+    """
+    if moment.tzinfo is None:
+        raise ValidationFailedError("moment must be timezone-aware (UTC)")
+    moment = moment.astimezone(UTC)
+    iran = timezone(IRAN_OFFSET)
+    open_now = set(active_sessions(moment))
+
+    rows: list[dict[str, Any]] = []
+    for session, (tz_name, opens, closes) in _SESSION_WINDOWS.items():
+        zone = _zone(tz_name)
+        local = moment.astimezone(zone)
+        open_local = local.replace(
+            hour=opens.hour, minute=opens.minute, second=0, microsecond=0
+        )
+        close_local = local.replace(
+            hour=closes.hour, minute=closes.minute, second=0, microsecond=0
+        )
+        rows.append(
+            {
+                "session": session.value,
+                "timezone": tz_name,
+                "is_open": session in open_now,
+                "opens_local": opens.strftime("%H:%M"),
+                "closes_local": closes.strftime("%H:%M"),
+                "opens_iran": open_local.astimezone(iran).strftime("%H:%M"),
+                "closes_iran": close_local.astimezone(iran).strftime("%H:%M"),
+            }
+        )
+    return rows
 
 
 def active_sessions(moment: datetime) -> list[TradingSession]:

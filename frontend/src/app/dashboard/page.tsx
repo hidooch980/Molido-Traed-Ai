@@ -47,9 +47,18 @@ export default async function HomePage() {
   // different time next to session states computed on the server, and nothing
   // would say which of the two was wrong.
   const nowUtc = clocks.ok ? clocks.data.utc : null;
+  // All four liquidity sessions, and Tehran first for the Persian reader
+  // because that is the clock they live on.
   const faceNames = locale === "fa"
-    ? ["Tehran", "London", "New York"]
-    : ["London", "New York", "Tokyo"];
+    ? ["Tehran", "Sydney", "Tokyo", "London", "New York"]
+    : ["Sydney", "Tokyo", "London", "New York"];
+  const sessionByFace: Record<string, string> = {
+    Sydney: "sydney",
+    Tokyo: "tokyo",
+    London: "london",
+    "New York": "new_york",
+  };
+  const sessionRows = clocks.ok ? (clocks.data.sessions ?? []) : [];
   const faces = clocks.ok
     ? faceNames
         .map((name) => clocks.data.places.find((place) => place.name === name))
@@ -304,14 +313,33 @@ export default async function HomePage() {
       {nowUtc && faces.length > 0 && (
         <Panel title={t("home.clocks")} subtitle={t("home.clocksHint")}>
           <div className="flex flex-wrap items-start justify-center gap-6 p-4">
-            {faces.map((place) => (
-              <AnalogClock
-                key={place.name}
-                utcIso={nowUtc}
-                offsetHours={place.offset}
-                label={t(`clock.${place.name.replace(" ", "")}`)}
-              />
-            ))}
+            {faces.map((place) => {
+              const row = sessionRows.find(
+                (s) => s.session === sessionByFace[place.name],
+              );
+              return (
+                <div key={place.name} className="clock-face-block">
+                  <AnalogClock
+                    utcIso={nowUtc}
+                    offsetHours={place.offset}
+                    label={t(`clock.${place.name.replace(" ", "")}`)}
+                  />
+                  {/* The session's window on Iran's clock, under its face.
+                      Server-computed against the session's real timezone, so
+                      the London line moves with British Summer Time while the
+                      Iran side stays fixed - Iran abolished DST in 2022. */}
+                  {row && (
+                    <div className="clock-session-line">
+                      <span className={row.is_open ? "session-dot on" : "session-dot"} />
+                      <span dir="ltr" className="num">
+                        {row.opens_iran}–{row.closes_iran}
+                      </span>
+                      <span>{t("home.iranTime")}</span>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </Panel>
       )}

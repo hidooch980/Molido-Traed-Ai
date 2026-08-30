@@ -94,16 +94,21 @@ class TestTheBrokersPageSeesEveryTerminal:
 
     def test_every_bridge_dir_appears_as_a_terminal(self, tmp_path, monkeypatch):
         import json
+        from datetime import UTC, datetime
 
         from app.api.v1.brokers import _metatrader_summary
 
+        # Stamped now, not at authoring time. A fixed timestamp was fresh the
+        # morning this test was written and stale by the same afternoon, which
+        # failed the suite about nothing.
+        stamp = datetime.now(UTC).strftime("%Y.%m.%d %H:%M:%S")
         for name, login in (("one", 111), ("two", 222)):
             d = tmp_path / name
             d.mkdir()
             (d / "molido_account.json").write_text(
                 json.dumps(
                     {
-                        "published_at": "2026.08.30 10:00:00",
+                        "published_at": stamp,
                         "login": login,
                         "server": "X-Demo",
                         "balance": 5.0,
@@ -113,7 +118,7 @@ class TestTheBrokersPageSeesEveryTerminal:
                 )
             )
             (d / "molido_heartbeat.json").write_text(
-                json.dumps({"published_at": "2026.08.30 10:00:00"})
+                json.dumps({"published_at": stamp})
             )
         monkeypatch.setenv(
             "MOLIDO_MT5_BRIDGE_DIRS",

@@ -1568,3 +1568,37 @@ body {
   opacity: 0.45;
   cursor: not-allowed;
 }
+
+/* ------------------------------------------------- session line under a clock
+ *
+ * The window on Iran's clock, directly under the face it belongs to. The
+ * reader plans in Tehran time; the face answers "what time is it there" and
+ * this line answers the question that actually matters: "when does it open
+ * on my clock".
+ */
+.clock-face-block {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.clock-session-line {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.6875rem;
+  color: var(--ink-3);
+}
+
+.session-dot {
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 999px;
+  background: var(--line);
+  flex: none;
+}
+
+.session-dot.on {
+  background: var(--good);
+}

@@ -96,9 +96,18 @@ def read_timezones(_: Principal = READ) -> dict[str, Any]:
     published = MetaTraderBridge().account()
     offset = published.get("server_offset_hours") if published.get("available") else None
 
-    return calendar_service.convert(
+    payload = calendar_service.convert(
         broker_offset=float(offset) if isinstance(offset, int | float) else None
     )
+    # The four liquidity sessions with their hours on Iran's clock, computed
+    # against each session's real timezone so DST in Sydney or London cannot
+    # quietly shift the page's numbers half the year.
+    from datetime import UTC, datetime
+
+    from app.services import sessions as sessions_service
+
+    payload["sessions"] = sessions_service.session_table(datetime.now(UTC))
+    return payload
 
 
 @router.get("/tools/calculate")
