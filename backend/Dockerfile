@@ -25,7 +25,12 @@ WORKDIR /app
 # nothing like the missing file it actually is.
 COPY pyproject.toml alembic.ini ./
 COPY app ./app
-RUN pip install --no-cache-dir -e ".[providers]"
+# The analyst extra is included even though a deployment with no key never
+# calls it. Building it out would mean that pasting a key into .env.prod
+# produces "the anthropic package is not installed" - a correct message
+# about the wrong thing, arriving at the moment somebody thinks they have
+# just finished configuring it. The package is small and imported lazily.
+RUN pip install --no-cache-dir -e ".[providers,analyst]"
 
 # Run as an unprivileged user. A data-collection process has no business
 # running as root on an internet-facing host.

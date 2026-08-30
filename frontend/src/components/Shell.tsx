@@ -9,6 +9,35 @@ import type { Theme } from "@/lib/locale";
 import { SignIn } from "@/components/SignIn";
 import { NAV, reachable, type NavItem } from "@/lib/nav";
 
+/**
+ * Routes that get no chrome at all.
+ *
+ * A sign-in page framed by the thing you have not signed into is a page that
+ * spends its first impression listing what you cannot have - a rail of
+ * thirty-five links, a language switcher, a status strip about a system the
+ * visitor has no access to. Worse, the header carries a "sign in" button on
+ * the sign-in page.
+ *
+ * `/` is here for a related but separate reason: it is the landing page, it
+ * carries its own header, and drawing the dashboard rail behind it published
+ * the entire navigation of a system the visitor cannot reach - thirty-five
+ * link labels describing features, beside a status strip about an account they
+ * do not have.
+ *
+ * Next's intended mechanism for this is a route group: move every dashboard
+ * page under `(dashboard)/` with its own layout and leave `/login` outside it.
+ * That is the better structure and it is not what this does, because it means
+ * moving thirty-four directories, and the backend test that checks every page
+ * either reads the API or is a declared exception indexes them by directory
+ * name. The trade is recorded here rather than in a commit message nobody
+ * reads twice: this is a list, and a list has to be maintained.
+ *
+ * `usePathname` resolves during the server render as well as in the browser,
+ * so the bare page is bare in the first byte of HTML - no frame of a rail
+ * appearing and then vanishing.
+ */
+const BARE_ROUTES = ["/", "/login", "/register"];
+
 const GROUPS: NavItem["group"][] = [
   "overview",
   "market",
@@ -64,6 +93,15 @@ export default function Shell({
   // is remembered. A drawer that reopens on every navigation is a drawer
   // nobody closes twice.
   const [railCollapsed, setRailCollapsed] = useState(initialCollapsed);
+  // Thirty-seven destinations in five groups, and two of those groups hold
+  // twenty-one between them. That is a list somebody reads rather than a menu
+  // somebody uses, and reading it is the cost paid on every single navigation.
+  //
+  // Filtering turns it into three keystrokes. Deliberately a filter over the
+  // existing groups rather than a flat result list: the grouping is what tells
+  // somebody *where* a page lives, and a search that discards it teaches
+  // nothing about the second visit.
+  const [query, setQuery] = useState("");
   const t = translator(locale);
   // Counted from the nav table on every render rather than typed into the
   // translation file, so the badge cannot claim a page that was never wired.
@@ -71,6 +109,13 @@ export default function Shell({
   const coverage = t("app.coverage")
     .replace("{linked}", String(linked))
     .replace("{total}", String(total));
+
+  // After every hook, never inside a condition above them: React counts hooks
+  // per render and a component that runs a different number of them on one
+  // path than another is one that crashes on the navigation between the two.
+  if (BARE_ROUTES.includes(pathname)) {
+    return <>{children}</>;
+  }
 
   /**
    * The language lives in a cookie, not in React state.
@@ -137,15 +182,20 @@ export default function Shell({
           ☰
         </button>
 
-        <Logo />
-        <div className="min-w-0">
-          <div className="font-bold leading-tight text-[0.9375rem]">
+        {/* The brand lives at the top of the rail, where it stays put. Repeating
+            it in the header cost the widest strip of the screen to say the
+            same word twice, and left no room for the thing a header is for:
+            what is happening right now. */}
+        <div className="md:hidden flex items-center gap-2 min-w-0">
+          <Logo size={24} />
+          <span className="font-bold text-[0.9375rem]">
             Molido<span style={{ color: "var(--accent)" }}>Trade</span>
-            <span className="eyebrow ms-1.5 align-middle">AI</span>
-          </div>
-          <div className="text-[0.6875rem] ink-3 truncate hidden sm:block">
-            {t("app.tagline")}
-          </div>
+          </span>
+        </div>
+
+        <div className="posture-strip" title={t("app.noExecution")}>
+          <span className="posture-dot" />
+          <span className="posture-text">{t("app.noExecution")}</span>
         </div>
 
         <div className="flex-1" />
@@ -157,6 +207,7 @@ export default function Shell({
         <SignIn
           labels={{
             signIn: t("signin.signIn"),
+            register: t("signin.register"),
             signOut: t("signin.signOut"),
             email: t("signin.email"),
             password: t("signin.password"),
@@ -164,6 +215,8 @@ export default function Shell({
             cancel: t("signin.cancel"),
             working: t("signin.working"),
             failed: t("signin.failed"),
+            verifying: t("signin.verifying"),
+            tooMany: t("signin.tooMany"),
             signedInAs: t("signin.signedInAs"),
             anonymous: t("signin.anonymous"),
             anonymousHint: t("signin.anonymousHint"),
@@ -203,15 +256,68 @@ export default function Shell({
         )}
 
         <nav
-          className={`panel-flat shrink-0 overflow-y-auto p-2.5 transition-all duration-200 ${
-            menuOpen ? "block fixed inset-y-0 z-10 mt-12 w-56" : "hidden"
-          } md:block ${railCollapsed ? "md:w-0 md:p-0 md:overflow-hidden" : "md:w-56"}`}
-          style={{ borderBlock: "none", borderInlineStart: "none" }}
+          className={`rail shrink-0 overflow-y-auto transition-all duration-200 ${
+            menuOpen ? "block fixed inset-y-0 z-10 mt-12 w-64" : "hidden"
+          } md:block ${railCollapsed ? "md:w-0 md:p-0 md:overflow-hidden" : "md:w-64"}`}
         >
-          {GROUPS.map((group) => (
-            <div key={group} className="mb-3">
-              <div className="eyebrow px-2 mb-1">{t(`nav.${group}`)}</div>
-              {NAV.filter((item) => item.group === group).map((item) => {
+          {/* Anchored, not scrolled past. On a rail of thirty-five links the
+              brand is the one fixed point, and a wordmark that slides away
+              takes the sense of place with it. */}
+          <div className="rail-brand hidden md:flex">
+            <Logo size={26} />
+            <div className="min-w-0">
+              <div className="rail-wordmark">
+                Molido<span style={{ color: "var(--accent)" }}>Trade</span>
+                <span className="rail-ai">AI</span>
+              </div>
+              <div className="rail-tagline">{t("app.tagline")}</div>
+            </div>
+          </div>
+
+          <div className="rail-search">
+            <input
+              className="rail-search-input"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder={t("nav.filter")}
+              aria-label={t("nav.filter")}
+              // Not `type="search"`: its clear button is styled by the browser
+              // and lands on the palette like a chip somebody else designed.
+              type="text"
+            />
+            {query && (
+              <button
+                type="button"
+                className="rail-search-clear"
+                onClick={() => setQuery("")}
+                aria-label={t("nav.filterClear")}
+              >
+                ×
+              </button>
+            )}
+          </div>
+
+          {GROUPS.map((group) => {
+            const matches = NAV.filter((item) => {
+              if (item.group !== group) return false;
+              if (!query.trim()) return true;
+              const label = item.labelKey.includes(".")
+                ? t(item.labelKey)
+                : item.labelKey;
+              // The key as well as the label, because somebody who knows the
+              // application types "dna" long before they type "نقشهٔ نماد".
+              const hay = `${label} ${item.key} ${item.href ?? ""}`.toLowerCase();
+              return hay.includes(query.trim().toLowerCase());
+            });
+
+            // An empty group disappears while filtering rather than sitting
+            // there as a heading over nothing.
+            if (matches.length === 0) return null;
+
+            return (
+            <div key={group} className="rail-group">
+              <div className="rail-group-label">{t(`nav.${group}`)}</div>
+              {matches.map((item) => {
                 const label = item.labelKey.includes(".")
                   ? t(item.labelKey)
                   : item.labelKey;
@@ -243,15 +349,31 @@ export default function Shell({
                 );
               })}
             </div>
-          ))}
+            );
+          })}
 
-          <p className="text-[0.6875rem] ink-3 px-2 pt-2 leading-relaxed">
-            {t("nav.note")}
-          </p>
+          {/* Said only when the filter is what emptied the list. A permanent
+              "nothing found" under a full menu would be a lie. */}
+          {query.trim() &&
+            !NAV.some((item) => {
+              const label = item.labelKey.includes(".")
+                ? t(item.labelKey)
+                : item.labelKey;
+              return `${label} ${item.key} ${item.href ?? ""}`
+                .toLowerCase()
+                .includes(query.trim().toLowerCase());
+            }) && <p className="rail-note">{t("nav.filterEmpty")}</p>}
+
+          <p className="rail-note">{t("nav.note")}</p>
         </nav>
 
         <div className="flex-1 min-w-0 flex flex-col overflow-y-auto">
-          <main className="flex-1 p-3 md:p-5">{children}</main>
+          {/* A measure. Full-bleed content on a 27-inch monitor produces table
+              rows a metre wide, and the eye loses the row between the label at
+              one edge and the number at the other. */}
+          <main className="page-main">
+            <div className="page-measure">{children}</div>
+          </main>
 
           {/* Build stamp. Deliberately always visible and never breakpoint-hidden:
               its only job is to answer "did my deploy land?", and it cannot do

@@ -39,10 +39,12 @@ export default async function LabPage() {
     verdict === "edge" ? "good" : verdict === "negative" ? "critical" : "warning";
 
   return (
-    <div className="space-y-4">
-      <header>
-        <h1 className="text-xl font-bold">{t("lab.title")}</h1>
+    <div className="space-y-6">
+      <header className="page-header">
+        <div className="min-w-0">
+          <h1 className="display">{t("lab.title")}</h1>
         <p className="text-xs ink-3 mt-0.5 max-w-3xl">{t("lab.subtitle")}</p>
+      </div>
       </header>
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">

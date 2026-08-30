@@ -36,10 +36,12 @@ export default async function AccountsPage() {
     plan === "free" ? "good" : plan === "conditional" ? "warning" : "neutral";
 
   return (
-    <div className="space-y-4">
-      <header>
-        <h1 className="text-xl font-bold">{t("access.title")}</h1>
+    <div className="space-y-6">
+      <header className="page-header">
+        <div className="min-w-0">
+          <h1 className="display">{t("access.title")}</h1>
         <p className="text-xs ink-3 mt-0.5 max-w-3xl">{t("access.subtitle")}</p>
+      </div>
       </header>
 
       {autopilot.ok && (

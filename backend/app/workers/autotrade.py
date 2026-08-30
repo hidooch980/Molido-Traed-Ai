@@ -51,6 +51,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.core.errors import ValidationFailedError
+from app.execution.broker import BrokerAdapter
 from app.execution.contracts import (
     Approval,
     OrderIntent,
@@ -113,6 +114,25 @@ MAX_SPREAD_COST_R = 0.25
 DECISION_BAR_MINUTES = 60
 
 
+def _number(value: Any) -> float:
+    """A published field as a float, raising on anything that is not one.
+
+    Every caller wraps its conversions in `except (TypeError, ValueError)` and
+    treats a failure as "the terminal has not published enough to price this".
+    `dict.get` on those payloads is typed `Any | None`, so `float(None)` was
+    the path a missing field took to that handler - correct at runtime and
+    invisible to the type checker, which read six calls that could be passed
+    None and said so.
+
+    This raises the same `TypeError` on the same input, so the handlers above
+    are unchanged. What it adds is that the contract is now written down: a
+    missing field is not a zero, and nothing here substitutes one.
+    """
+    if value is None:
+        raise TypeError("the terminal published no value for this field")
+    return float(value)
+
+
 def _feed_age_bars(published: dict[str, Any], moment: datetime) -> float | None:
     """How stale the terminal's own publication is, in decision bars.
 
@@ -132,7 +152,7 @@ def _feed_age_bars(published: dict[str, Any], moment: datetime) -> float | None:
     if seconds is None:
         seconds = published.get("age_seconds")
     try:
-        minutes = abs(float(seconds)) / 60.0
+        minutes = abs(_number(seconds)) / 60.0
     except (TypeError, ValueError):
         return None
     return minutes / max(DECISION_BAR_MINUTES, 1)
@@ -306,11 +326,11 @@ def _open_risk_r(
     treats an unpriceable position as unknown exposure rather than none.
     """
     try:
-        opened = float(position.get("price_open"))
-        stop = float(position.get("stop"))
-        volume = float(position.get("volume"))
-        tick_value = float(specification.get("tick_value"))
-        tick_size = float(specification.get("tick_size"))
+        opened = _number(position.get("price_open"))
+        stop = _number(position.get("stop"))
+        volume = _number(position.get("volume"))
+        tick_value = _number(specification.get("tick_value"))
+        tick_size = _number(specification.get("tick_size"))
     except (TypeError, ValueError):
         return None
     if tick_size <= 0 or one_r_money <= 0 or volume <= 0:
@@ -406,16 +426,19 @@ def _challenge_gate(
     from app.services import challenge_accounts
 
     try:
-        # `listing` returns a view that wraps the row and carries the resolved
-        # rulebook beside it. Reading the row's fields off the view returns
-        # nothing - which produced "the registered rulebook '?' is not one
-        # this build knows" the first time an account was ever registered.
+        # `listing` hands back AccountView wrappers, not accounts. Keeping the
+        # wrapper - rather than unwrapping to the row - is what lets the
+        # rulebook below come from the one resolution the service already did.
+        # Reading a row's field off the wrapper answers nothing, which is how
+        # "the registered rulebook '?' is not one this build knows" appeared
+        # for an account whose rulebook was perfectly well known: the read was
+        # aimed at the wrong object.
         registered = [
             view
             for view in challenge_accounts.listing(
                 session, tenant_id=challenge_accounts.default_tenant(session)
             )
-            if getattr(view.account, "is_active", True)
+            if view.account.is_active
         ]
     except Exception as problem:  # noqa: BLE001 - reported, never fatal
         return False, f"the challenge registry could not be read: {type(problem).__name__}", None
@@ -444,6 +467,24 @@ def _challenge_gate(
         )
 
     equity = float(published.get("equity") or 0.0)
+
+    # Leverage in use, which is not the account's leverage setting.
+    #
+    # The bridge publishes `leverage`, and it is MetaTrader's ACCOUNT_LEVERAGE:
+    # the ratio the broker permits. Handing that to the rule would compare a
+    # permission against a cap and report an untouched account as sitting
+    # exactly on its limit - a breach invented out of a healthy account.
+    #
+    # With no margin committed there is no exposure, so the leverage in use is
+    # zero. That is a measurement and worth making, because it is the state an
+    # account is in whenever a new position is being considered from flat.
+    # With margin committed it cannot be derived from this payload: notional
+    # is margin times the *symbol's* margin rate, and those differ per
+    # instrument - so it stays unknown and the rule reports itself unmeasured
+    # rather than guessing in either direction.
+    margin = published.get("margin")
+    leverage_in_use = 0.0 if margin is not None and float(margin) == 0.0 else None
+
     state = challenge_brain.ChallengeState(
         starting_balance=float(account.starting_balance or 0.0),
         current_equity=equity,
@@ -458,16 +499,45 @@ def _challenge_gate(
         # than being gated by it.
         in_news_window=in_news_window,
         weekend_ahead=_weekend_ahead(moment),
+        current_leverage=leverage_in_use,
+        # Registered by the holder for exactly this, and never read until now.
+        # The column's own comment says an absent one blocks every verdict -
+        # "correct, and useless" - and it was absent here because the gate
+        # built the state without it, not because nobody had entered one.
+        currency_per_r=(
+            float(account.currency_per_r)
+            if account.currency_per_r is not None
+            else None
+        ),
     )
     verdict = challenge_brain.check(book.rules, state, proposed_risk_r)
     if not verdict.allowed:
         if verdict.breaches:
             return False, "challenge rules: " + "; ".join(verdict.breaches), None
-        # Blocked without a breach means the rulebook was never fully entered.
-        # The engine refuses to approve against a limit nobody told it, which
-        # is the right answer and a useless message unless it says so - the
-        # fix is confirming the rulebook, not finding a trade that passes.
+        # Blocked without a breach has two causes and they call for opposite
+        # responses, so they are no longer reported in one sentence.
+        #
+        # A gate is a rule that IS entered and could not be cleared right now
+        # - leverage that cannot be measured, a permission nobody confirmed.
+        # An unverified entry is a rule nobody wrote down. This used to
+        # announce "the registered rulebook is incomplete" for both, which
+        # sent a reader to their provider's page to fix a number that was
+        # already there, or to re-transcribe a rulebook that was fine.
+        # Both are reported when both exist. Naming only the gate would hide
+        # every unentered rule behind whichever gate happened to fire, and
+        # since the automation permission gates on all ten catalogued
+        # rulebooks that would be all of them, always.
+        gates = "; ".join(getattr(verdict, "gates", []) or [])
         unverified = "; ".join(getattr(verdict, "unverified", []) or [])
+        if gates and unverified:
+            return (
+                False,
+                f"the challenge gate is shut: {gates}. The rulebook is also "
+                f"incomplete: {unverified}",
+                None,
+            )
+        if gates:
+            return False, f"the challenge gate is shut: {gates}", None
         return (
             False,
             "the registered rulebook is incomplete, so no trade can be checked "
@@ -853,7 +923,7 @@ def run_cycle(
     session: Session,
     *,
     now: datetime | None = None,
-    broker: MetaTraderBroker | None = None,
+    broker: BrokerAdapter | None = None,
     bridge: Any = None,
     kill_switch: Any = None,
 ) -> dict[str, Any]:
@@ -873,7 +943,7 @@ def run_cycle(
 
     moment = (now or datetime.now(UTC)).astimezone(UTC)
     feed = bridge or MetaTraderBridge()
-    sender = broker or MetaTraderBroker()
+    sender: BrokerAdapter = broker or MetaTraderBroker()
 
     # First gate, before the mode, the account and the decisions. A halt that
     # can be reached only after four other things succeed is not a halt.
@@ -891,9 +961,9 @@ def run_cycle(
     # is. The first run of the sizing, the gates and the lot arithmetic should
     # not be on real money.
     if mode == autopilot.PAPER:
-        from app.execution.paper_broker import PaperBroker
+        from app.execution.paper_broker import LivePaperBroker
 
-        sender = broker if broker is not None else PaperBroker()
+        sender = broker if broker is not None else LivePaperBroker()
 
     published = feed.account()
     allowed, account_reason = autopilot.account_gate(published)

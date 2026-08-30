@@ -164,6 +164,23 @@ class Comparison:
             return None
         return (p1 - p2) / variance**0.5
 
+    def verdict(self, *, required: float = 1.96) -> str:
+        """The reading with its sign, which `significant` throws away.
+
+        Same four outcomes as the paired comparison, for the same reason: a
+        result significantly worse than the control is a finding, and calling
+        it "distinguishable" without saying which way lets a loss be read as
+        a win by anybody skimming.
+        """
+        z = self.z_score
+        if z is None:
+            return "not measured"
+        if z >= required:
+            return "distinguishable from the control"
+        if z <= -required:
+            return "distinguishably worse than the control"
+        return "not distinguishable from the control"
+
     def trials_needed(self, *, for_edge: float = 0.02) -> int:
         """Roughly how many trials it would take to detect an edge this size.
 
@@ -194,7 +211,13 @@ class Comparison:
             },
             "edge_over_control": round(self.edge, 4) if self.edge is not None else None,
             "z_score": round(self.z_score, 2) if self.z_score is not None else None,
+            # Kept, because callers read it - but it is `abs(z)`, so it is
+            # true for a rule losing to its own coin flip as loudly as for one
+            # beating it. On its own it made a page paint a z of -2.57 green
+            # and label it "distinguishable from a coin flip", which reads as
+            # success. `verdict` below carries the sign; prefer it.
             "significant": bool(self.z_score is not None and abs(self.z_score) >= 1.96),
+            "verdict": self.verdict(),
             "trials_needed_for_2pp": self.trials_needed(for_edge=0.02),
             "note": (
                 "the edge is measured against the control, never against 50%. "
@@ -202,3 +225,115 @@ class Comparison:
                 "the same bars has beaten nothing"
             ),
         }
+
+
+@dataclass(frozen=True)
+class PairedComparison:
+    """The rule against the control on the *same bar*, averaged per instant.
+
+    `Comparison` above asks whether two hit rates differ, counting each arm
+    on its own. That throws away the one thing this journal is built to
+    provide: both arms are written in a single call on the same symbol and
+    the same bar, so they saw the same market. The market's own move is
+    therefore common to both, and subtracting it removes variance that the
+    unpaired test has to carry as noise.
+
+    It is not a refinement. It is the statistic the registered claim was
+    measured with - "a paired t across instants: each instant contributes the
+    mean R of everything entered then, rule minus control" - and comparing a
+    forward result computed one way against a backtest computed another way
+    compares the methods as much as the periods.
+
+    Clustered by instant for the reason recorded there too: many symbols are
+    entered on one bar, and counting each as independent evidence counts a
+    single market move once per symbol. `pairs` is kept beside `instants` so
+    the gap between them is visible rather than implied.
+
+    Pairing also fixes a quieter bias. The unpaired counts include a resolved
+    rule entry whose control has not closed, and vice versa; whenever the two
+    arms resolve at different rates the comparison drifts. Only complete
+    pairs enter here.
+    """
+
+    #: One mean difference per instant, already averaged within the instant.
+    differences: tuple[float, ...]
+    #: How many (symbol, bar) pairs those instants were built from.
+    pairs: int
+
+    @property
+    def instants(self) -> int:
+        return len(self.differences)
+
+    @property
+    def mean_difference(self) -> float | None:
+        """Mean R of the rule minus the control, in R per trade."""
+        if not self.differences:
+            return None
+        return sum(self.differences) / len(self.differences)
+
+    @property
+    def standard_error(self) -> float | None:
+        """Of the mean difference, across instants.
+
+        `None` below two instants: one number has no spread, and reporting a
+        zero standard error would turn a single observation into certainty.
+        """
+        n = len(self.differences)
+        if n < 2:
+            return None
+        mean = sum(self.differences) / n
+        variance = sum((d - mean) ** 2 for d in self.differences) / (n - 1)
+        if variance <= 0:
+            return None
+        return (variance / n) ** 0.5
+
+    @property
+    def observed_spread(self) -> float | None:
+        """Sample standard deviation of the per-instant differences, in R.
+
+        The quantity the readiness projection needs and has been assuming.
+        Its date is sized against a spread recovered from the historical
+        measurement, because until the arms were paired there was nothing
+        forward to recover one from - and a wait sized on the wrong spread is
+        wrong quadratically.
+        """
+        n = len(self.differences)
+        if n < 2:
+            return None
+        mean = sum(self.differences) / n
+        variance = sum((d - mean) ** 2 for d in self.differences) / (n - 1)
+        if variance <= 0:
+            return None
+        return variance**0.5
+
+    @property
+    def t_statistic(self) -> float | None:
+        mean, error = self.mean_difference, self.standard_error
+        if mean is None or error is None or error <= 0:
+            return None
+        return mean / error
+
+    def verdict(self, *, required: float = 1.96) -> str:
+        """What the number is allowed to claim.
+
+        Four outcomes, and the sign is one of them. The first version tested
+        `t >= required` alone, so a t of -2.7 - a rule losing to its own coin
+        flip by more than the threshold demands - was reported as "not
+        distinguishable", which reads as "no signal found". That is the
+        flattering direction, and it is the one this package is built to
+        never take: a result significantly worse than the control is a
+        finding, not an absence of one.
+
+        "Not distinguishable" is still not "no edge" either. An interval
+        holding both zero and the effect being looked for says the
+        measurement was too coarse, and calling that a refutation is the same
+        error as calling an overfit backtest a confirmation.
+        """
+        t = self.t_statistic
+        if t is None:
+            return "not measured"
+        if t >= required:
+            return "distinguishable from the control"
+        if t <= -required:
+            return "distinguishably worse than the control"
+        return "not distinguishable from the control"

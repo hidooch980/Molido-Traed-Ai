@@ -49,6 +49,28 @@ class Settings(BaseSettings):
     # false, so the first execution endpoint cannot ship without it.
     require_auth: bool = False
 
+    #: How many reverse proxies sit in front of this application.
+    #:
+    #: The rate limiter counts failures per caller address, and an address a
+    #: caller can choose is not a limit. `X-Forwarded-For` is a header, so
+    #: anybody can send one; the only entries in it that mean anything are the
+    #: ones a proxy this deployment controls appended itself, counted from the
+    #: right.
+    #:
+    #: 0 - nothing in front. The socket address is used and the header is
+    #:     ignored entirely, which is the safe default: a deployment that
+    #:     trusted the header while directly exposed would let every attacker
+    #:     pick a fresh address per request.
+    #: 1 - one proxy, which is this project's Caddy. The last entry is what
+    #:     Caddy saw, and everything to its left was supplied by the caller.
+    #: 2+ - a CDN in front of Caddy. Set it to the real number: setting it too
+    #:     high reads an address the caller wrote.
+    #:
+    #: Getting this wrong in the other direction is not silent either - with 0
+    #: behind a proxy, every request appears to come from the proxy and the
+    #: address ladder becomes one bucket holding everybody.
+    trusted_proxy_hops: int = 0
+
     #: Where the API drops broker-login requests for the host agent to apply.
     #: The API runs in a container and MetaTrader runs on the host under Wine,
     #: so a shared directory is the seam - the alternative is handing a
@@ -60,6 +82,31 @@ class Settings(BaseSettings):
     #: channel rather than a person, which is why the channel is read-only.
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
+
+    # ------------------------------------------------------------------ analyst
+    #
+    #: The key for the second brain's language half. Empty means the analyst is
+    #: not configured, and `brain.analyst` says exactly that rather than
+    #: returning a plausible paragraph it made up - which is the one failure
+    #: mode a commentary layer must not have.
+    #:
+    #: Never logged. `safe_summary` reports whether it is set, never its value.
+    anthropic_api_key: str = ""
+
+    #: Which model reads the trace. The analyst reasons about a chain of
+    #: eighteen gates and is asked to disagree with it; that is not a task for
+    #: the cheap tier, and it runs at most a few times per decision rather than
+    #: per bar.
+    analyst_model: str = "claude-opus-5"
+
+    #: How hard it is allowed to think. `high` is the default across the API;
+    #: named here so lowering it is a visible decision rather than a silent one.
+    analyst_effort: Literal["low", "medium", "high", "xhigh", "max"] = "high"
+
+    #: Ceiling per call. Non-streaming, so this stays well under the SDK's HTTP
+    #: timeout - the analyst answers one question about one trace and has no
+    #: reason to produce a long document.
+    analyst_max_tokens: int = 8000
 
     #: An SMTP relay, not a mail server on this host. A fresh VPS address has no
     #: sending reputation, and mail from one lands in spam whatever SPF, DKIM
@@ -143,7 +190,16 @@ class Settings(BaseSettings):
     #: so the same 1.4 pip spread is 16% of an average hourly bar and near 58%
     #: of a five-minute one. Faster answers, dearer trades. The measurement is
     #: net of costs, which is exactly why it is allowed to settle this.
-    forward_timeframes: str = "H1"
+    #: Measured on all four now, not just the hourly one. The arithmetic above
+    #: was already written and was already the answer: 6,573 instants is a year
+    #: of hourly bars and a week of one-minute ones, and collecting only H1
+    #: made the wait a year for no reason but that nothing else was fetched.
+    #:
+    #: Each timeframe is measured separately, so if the spread does eat the
+    #: edge at one minute the journal says so about one minute rather than
+    #: contaminating the hourly answer. That separation is the whole reason
+    #: this is safe to widen.
+    forward_timeframes: str = "D1,H1,M15,M5,M1"
 
     # Collector (the long-running data-gathering worker)
     collector_provider: str = "yfinance"
@@ -163,6 +219,10 @@ class Settings(BaseSettings):
             "env": self.env,
             "database": _redact_dsn(self.database_url),
             "redis": _redact_dsn(self.redis_url),
+            # Whether, not what. An operator needs to know the analyst can run;
+            # nobody needs the key in a log line.
+            "analyst_configured": bool(self.anthropic_api_key),
+            "analyst_model": self.analyst_model,
             "log_level": self.log_level,
             "min_quality_score": self.min_quality_score,
         }

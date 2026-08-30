@@ -34,6 +34,8 @@ export APP_VERSION
 #
 # --ff-only rather than a merge: an unexpected divergence must stop the deploy
 # rather than resolve itself into something nobody wrote.
+# Hashed before the pull so the comparison after it is meaningful.
+BEFORE_HASH="$(sha256sum "$0" | cut -d" " -f1)"
 echo "-> at ${BEFORE:=$(git rev-parse --short HEAD)}, pulling"
 git pull --ff-only --quiet origin main
 AFTER="$(git rev-parse --short HEAD)"
@@ -46,18 +48,100 @@ else
 fi
 git --no-pager log --oneline -1
 
+# The pull can replace this script, and bash is already running the old one.
+#
+# That is not hypothetical: the deploy that first carried the IP-overlay fix
+# pulled it and then went on composing with the overlay, because the running
+# process was the previous version of this file. The fix landed on disk and
+# had no effect on the run that delivered it - and the failure it was written
+# to prevent happened anyway, one last time.
+#
+# So: if the pull changed this file, start again from the new one. `exec`
+# replaces the process rather than nesting, and the guard variable means the
+# restart happens once and cannot loop even if the hashes somehow keep
+# differing.
+AFTER_HASH="$(sha256sum "$0" | cut -d" " -f1)"
+if [ "${BEFORE_HASH}" != "${AFTER_HASH}" ] && [ -z "${MOLIDO_DEPLOY_REEXECED:-}" ]; then
+  echo "-> the deploy script changed in that pull; restarting it from the new one"
+  export MOLIDO_DEPLOY_REEXECED=1
+  exec "$0" "$@"
+fi
+
+
 # A function, not a string variable. The stamp contains a space, so an unquoted
 # "$COMPOSE" expansion would split it into two arguments; and `sudo -E` is
 # silently ignored under a sudoers policy that does not keep the environment,
 # which bakes an empty stamp into the image without failing. Passing the one
 # variable through `sudo env` is explicit and cannot be dropped.
+# The IP overlay is opt-in, and the default is the domain.
+#
+# `docker-compose.ip.yml` rebinds Caddy to port 80 alone and swaps in
+# `Caddyfile.ip`, which is right for a host reached by bare IP and wrong for
+# one reached by name: on the domain host it takes 443 down and every https
+# request returns 502. This script composed it in unconditionally, so running
+# it on trade.molido.shop broke HTTPS - which it did, on 26 Aug, for several
+# minutes until Caddy was recreated from prod.yml alone. Production has been
+# deployed by hand ever since, and that is the real cost: the one command
+# meant to make deploying safe became the one nobody could run.
+#
+# The default is the domain because the two mistakes are not equal. Wrong
+# here, HTTPS goes down on the live host; wrong the other way, an IP-only
+# host asks for a certificate it cannot get and serves plain HTTP - visible
+# at once, and it breaks nothing that was already working.
+#
+#   ./infra/deploy.sh                    # domain host (trade.molido.shop)
+#   MOLIDO_IP_ONLY=1 ./infra/deploy.sh   # host reached by bare IP
+# Where to ask "is it up", which is not the same address in the two modes.
+#
+# `http://localhost/health/ready` is an IP-host address. On the domain host
+# Caddy serves a site keyed to the name, so a request arriving as `localhost`
+# matches no block and returns nothing - which is what the readiness loop has
+# been waiting eighty seconds for on every deploy, and why the health section
+# printed an empty line rather than an error. It is the same assumption the
+# overlay made, in the one place that reports whether the deploy worked.
+#
+# `--resolve` pins the name to this machine, so the check exercises the real
+# TLS path the site is served over without depending on where DNS points or
+# on this host being able to reach the internet.
+env_value() {
+  grep -E "^$1=" infra/.env.prod 2>/dev/null | tail -1 | cut -d= -f2- | tr -d "\"'"
+}
+DOMAIN="$(env_value DOMAIN | tr -d "[:space:]")"
+CADDY_TLS_SETTING="$(env_value CADDY_TLS)"
+
+IP_OVERLAY=()
+if [ "${MOLIDO_IP_ONLY:-0}" = "1" ]; then
+  echo "-> IP-only host: adding docker-compose.ip.yml, so no HTTPS"
+  IP_OVERLAY=(-f infra/docker-compose.ip.yml)
+  HEALTH_URL=(http://localhost/health/ready)
+else
+  echo "-> domain host: prod.yml alone, HTTPS left to Caddy"
+  if [ -n "${DOMAIN}" ]; then
+    HEALTH_URL=(--resolve "${DOMAIN}:443:127.0.0.1" "https://${DOMAIN}/health/ready")
+    # `CADDY_TLS=tls internal` means the origin serves a deliberately
+    # self-signed certificate because something in front terminates the
+    # public TLS. Verifying it would be checking an identity the deployment
+    # never claimed, and the check would fail on a perfectly healthy origin -
+    # so skip verification exactly when the config says the cert is internal,
+    # and never otherwise. A real certificate stays checked.
+    case "${CADDY_TLS_SETTING}" in
+      *internal*)
+        HEALTH_URL=(-k "${HEALTH_URL[@]}")
+        ;;
+    esac
+  else
+    echo "-> no DOMAIN in infra/.env.prod; asking health on localhost"
+    HEALTH_URL=(http://localhost/health/ready)
+  fi
+fi
+
 compose() {
   sudo env "BUILD_STAMP=${BUILD_STAMP}" \
     "APP_VERSION=${APP_VERSION}" \
     "GIT_COMMIT=${GIT_COMMIT}" \
     docker compose \
     -f infra/docker-compose.prod.yml \
-    -f infra/docker-compose.ip.yml \
+    "${IP_OVERLAY[@]}" \
     --env-file infra/.env.prod \
     "$@"
 }
@@ -78,7 +162,7 @@ fi
 
 echo "-> waiting for readiness"
 for _ in $(seq 1 40); do
-  if curl -fsS -m 5 http://localhost/health/ready >/dev/null 2>&1; then
+  if curl -fsS -m 5 "${HEALTH_URL[@]}" >/dev/null 2>&1; then
     break
   fi
   sleep 2
@@ -100,7 +184,7 @@ compose ps --format '{{.Name}}  {{.State}}'
 
 echo
 echo "=== health ==="
-curl -s -m 10 http://localhost/health/ready || echo "API not answering"
+curl -sS -m 10 "${HEALTH_URL[@]}" || echo "API not answering"
 echo
 
 # Only the web image carries the stamp. Verifying it after a backend-only

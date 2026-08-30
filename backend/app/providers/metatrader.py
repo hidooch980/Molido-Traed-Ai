@@ -61,19 +61,41 @@ BRIDGE_DIRS_VAR = "MOLIDO_MT5_BRIDGE_DIRS"
 DEFAULT_ACCOUNT_KEY = "main"
 
 
-def bridge_dirs(raw: str | None = None) -> dict[str, pathlib.Path]:
+def bridge_dirs(
+    raw: str | None = None, session: Any | None = None
+) -> dict[str, pathlib.Path]:
     """Parse the account-to-directory map, or return the single default.
 
     Malformed entries raise rather than being skipped. A silently dropped
     account reads downstream as "that terminal is not publishing", which is a
     real and different condition this codebase already reports honestly - and
     it would be reported about an account that is running fine.
+
+    **Registered terminals are merged in when a session is given.** The
+    environment variable is the right shape for the one terminal this platform
+    was built around and the wrong shape for eleven: every account meant an
+    edit, a rebuild, and somebody with a shell. Terminals registered through
+    the interface resolve to a directory derived from their key.
+
+    The environment wins on a collision, and deliberately: it is the one an
+    operator set by hand on the machine, and a row in a table quietly
+    overriding it would move a terminal's directory without anyone touching
+    the configuration they believe is in force.
     """
+    registered: dict[str, pathlib.Path] = {}
+    if session is not None:
+        from app.services import terminals as terminal_service
+
+        registered = terminal_service.registered_dirs(session)
+
     if raw is None:
         raw = os.environ.get(BRIDGE_DIRS_VAR) or ""
     raw = raw.strip()
     if not raw:
-        return {DEFAULT_ACCOUNT_KEY: DEFAULT_BRIDGE_DIR}
+        # The built-in default only when nothing else is known. A deployment
+        # with registered terminals and no environment variable should not
+        # also carry a phantom `main` pointing at a directory nobody writes.
+        return registered or {DEFAULT_ACCOUNT_KEY: DEFAULT_BRIDGE_DIR}
 
     found: dict[str, pathlib.Path] = {}
     for chunk in raw.split(","):
@@ -95,8 +117,8 @@ def bridge_dirs(raw: str | None = None) -> dict[str, pathlib.Path]:
         found[key] = pathlib.Path(where)
 
     if not found:
-        return {DEFAULT_ACCOUNT_KEY: DEFAULT_BRIDGE_DIR}
-    return found
+        return registered or {DEFAULT_ACCOUNT_KEY: DEFAULT_BRIDGE_DIR}
+    return {**registered, **found}
 
 
 def bridge_dir_for(account_key: str | None = None, raw: str | None = None) -> pathlib.Path:

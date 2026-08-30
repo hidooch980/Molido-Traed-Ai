@@ -10,13 +10,17 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app import __version__
+from app.api.deps import AuthenticationError, AuthorizationError
 from app.api.guard import assert_execution_gate
+from app.api.net import client_address, user_agent
 from app.api.v1 import api_router
 from app.api.v1.health import router as health_router
 from app.core.config import get_settings
+from app.core.enums import AuditEventType
 from app.core.errors import MolidoError
 from app.core.logging import bind_trace, configure_logging, get_logger
 from app.providers import registry
+from app.services import security_log
 
 log = get_logger(__name__)
 
@@ -61,12 +65,39 @@ async def trace_middleware(request: Request, call_next):
 
 
 @app.exception_handler(MolidoError)
-async def domain_error_handler(_: Request, exc: MolidoError) -> JSONResponse:
+async def domain_error_handler(request: Request, exc: MolidoError) -> JSONResponse:
     """Domain errors carry their own status and a machine-readable code.
 
     Notably `insufficient_data` surfaces as 409 rather than an empty 200, so a
     caller cannot mistake "we don't know" for "there is nothing".
+
+    A refused permission is recorded on its way past. This is the only place it
+    can be: `require()` refuses by raising, and the exception is what discards
+    the request's transaction - so the record has to be written on a session of
+    its own, after the rollback, or it is written and then destroyed by the
+    thing it was written about. The sign-in limiter learned that the expensive
+    way.
+
+    Recording cannot fail the response. `record_isolated` swallows everything,
+    including there being no database at all, because an exception handler that
+    raises replaces a 403 the caller can act on with a 500 nobody can.
     """
+    if isinstance(exc, AuthorizationError | AuthenticationError):
+        security_log.record_isolated(
+            AuditEventType.PERMISSION_DENIED,
+            summary=f"{request.method} {request.url.path} refused: {exc.message}",
+            address=client_address(request),
+            user_agent=user_agent(request),
+            detail={
+                "path": request.url.path,
+                "method": request.method,
+                "code": exc.code,
+                # `require()` puts the caller's role on the error. It is absent
+                # for an unauthenticated caller, which is itself the answer.
+                "role": exc.context.get("role"),
+                "authenticated": exc.context.get("authenticated"),
+            },
+        )
     return JSONResponse(status_code=exc.http_status, content=exc.to_payload())
 
 

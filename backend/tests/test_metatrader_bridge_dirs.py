@@ -85,3 +85,61 @@ class TestTheLookupNeverFallsBack:
 
     def test_each_configured_account_gets_its_own_directory(self):
         assert bridge_dir_for("main", TWO) != bridge_dir_for("challenge", TWO)
+
+
+class TestTheBrokersPageSeesEveryTerminal:
+    """The /brokers listing once said "bridge not built yet" about eight
+    running terminals, because its MetaTrader block was hardcoded prose from
+    the day before the bridge existed. These pin the block to live reads."""
+
+    def test_every_bridge_dir_appears_as_a_terminal(self, tmp_path, monkeypatch):
+        import json
+        from datetime import UTC, datetime
+
+        from app.api.v1.brokers import _metatrader_summary
+
+        # Stamped now, not at authoring time. A fixed timestamp was fresh the
+        # morning this test was written and stale by the same afternoon, which
+        # failed the suite about nothing.
+        stamp = datetime.now(UTC).strftime("%Y.%m.%d %H:%M:%S")
+        for name, login in (("one", 111), ("two", 222)):
+            d = tmp_path / name
+            d.mkdir()
+            (d / "molido_account.json").write_text(
+                json.dumps(
+                    {
+                        "published_at": stamp,
+                        "login": login,
+                        "server": "X-Demo",
+                        "balance": 5.0,
+                        "equity": 5.0,
+                        "connected": True,
+                    }
+                )
+            )
+            (d / "molido_heartbeat.json").write_text(
+                json.dumps({"published_at": stamp})
+            )
+        monkeypatch.setenv(
+            "MOLIDO_MT5_BRIDGE_DIRS",
+            f"one={tmp_path / 'one'},two={tmp_path / 'two'}",
+        )
+
+        summary = _metatrader_summary()
+
+        assert set(summary["terminals"]) == {"one", "two"}
+        assert summary["terminals"]["one"]["login"] == 111
+
+    def test_a_silent_terminal_is_reported_not_hidden(self, tmp_path, monkeypatch):
+        (tmp_path / "quiet").mkdir()
+        monkeypatch.setenv("MOLIDO_MT5_BRIDGE_DIRS", f"quiet={tmp_path / 'quiet'}")
+
+        from app.api.v1.brokers import _metatrader_summary
+
+        summary = _metatrader_summary()
+
+        assert summary["terminals"]["quiet"]["available"] is False
+        assert summary["connected_terminals"] == 0
+        # The one blocked_by line must point at the fix, not at a bridge that
+        # does not exist.
+        assert "not built" not in " ".join(summary["blocked_by"])

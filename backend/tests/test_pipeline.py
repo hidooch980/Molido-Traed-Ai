@@ -386,3 +386,88 @@ class TestReachingAnIntent:
         )
 
         assert expensive.stopped_at == "expected_value"
+
+
+# ===================================================================== carry
+class TestTheInterestOnHoldingIt:
+    """The rate differential reaching an actual decision.
+
+    Every trace this system has produced carried "EV is optimistic by the
+    unmeasured costs: spread, commission, swap, slippage", because `costs` was
+    never supplied by any caller. Swap is the one of those four the platform
+    can now measure without a broker: two central banks publish their rates,
+    and the difference is what a position is charged or paid every night it
+    stays open.
+
+    The caller passes the difference rather than the pipeline fetching it -
+    a chain that reads "now" cannot be replayed, which is the rule the whole
+    signature is built around.
+    """
+
+    def test_a_supplied_differential_measures_the_swap(
+        self, session, instrument, provider, monkeypatch
+    ):
+        seed(session, instrument, provider)
+        stub_brain(monkeypatch)
+
+        trace = run(session, instrument, rate_differential=-1.375)
+        stage = trace.stage("expected_value")
+
+        assert stage is not None
+        assert stage.payload["costs"] is not None
+        assert "swap" not in stage.payload["unmeasured_costs"]
+
+    def test_without_one_the_swap_stays_unmeasured(
+        self, session, instrument, provider, monkeypatch
+    ):
+        """Unknown rather than zero. Holding a position is not free."""
+        seed(session, instrument, provider)
+        stub_brain(monkeypatch)
+
+        trace = run(session, instrument)
+        stage = trace.stage("expected_value")
+
+        assert stage is not None
+        assert "swap" in stage.payload["unmeasured_costs"]
+
+    def test_a_brokers_own_swap_is_not_replaced_by_the_estimate(
+        self, session, instrument, provider, monkeypatch
+    ):
+        """What a broker charges is the differential plus their markup.
+
+        Their number is what will actually appear on the statement, so an
+        estimate must never overwrite it - it can only fill its absence.
+        """
+        seed(session, instrument, provider)
+        stub_brain(monkeypatch)
+
+        supplied = ev.CostModel(spread=0.0002, swap=0.0009)
+        trace = run(
+            session, instrument, costs=supplied, rate_differential=-1.375
+        )
+        stage = trace.stage("expected_value")
+
+        assert stage is not None
+        # 0.0002 spread plus the broker's own 0.0009 swap, kept as given.
+        assert stage.payload["costs"] == pytest.approx(0.0011)
+
+    def test_the_direction_decides_the_sign(
+        self, session, instrument, provider, monkeypatch
+    ):
+        """The same pair, the same differential, opposite sides.
+
+        One is paid to exist and the other is charged for it, so the cost of
+        the long must come out below the cost of the short. A model that took
+        the magnitude would report them identical.
+        """
+        seed(session, instrument, provider)
+
+        stub_brain(monkeypatch, decision=Decision.BUY)
+        long_side = run(session, instrument, rate_differential=4.0)
+
+        stub_brain(monkeypatch, decision=Decision.SELL)
+        short_side = run(session, instrument, rate_differential=4.0)
+
+        long_cost = long_side.stage("expected_value").payload["costs"]
+        short_cost = short_side.stage("expected_value").payload["costs"]
+        assert long_cost < short_cost

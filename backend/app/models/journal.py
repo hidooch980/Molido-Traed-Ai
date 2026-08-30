@@ -47,10 +47,17 @@ class JournalEntry(Base, UUIDPrimaryKeyMixin, TimestampMixin):
             "opened_at",
             "arm",
             "price_source",
-            name="uq_journal_symbol_bar_arm_source",
+            # Part of the key, and it has to be. Every hour the hourly,
+            # fifteen, five and one minute bars close on the same timestamp;
+            # without this, three of the four collide on one key at those
+            # instants and are discarded as duplicates - a measurement that
+            # looks like it is recording four timeframes while recording one.
+            "timeframe",
+            name="uq_journal_symbol_bar_arm_source_tf",
         ),
         Index("ix_journal_arm_time", "arm", "opened_at"),
         Index("ix_journal_source_arm_time", "price_source", "arm", "opened_at"),
+        Index("ix_journal_timeframe_time", "timeframe", "opened_at"),
     )
 
     symbol: Mapped[str] = mapped_column(String(32), index=True, nullable=False)
@@ -66,6 +73,17 @@ class JournalEntry(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     r_multiple: Mapped[float | None] = mapped_column(Float, nullable=True)
     outcome: Mapped[str | None] = mapped_column(String(24), index=True, nullable=True)
     arm: Mapped[str] = mapped_column(String(16), default=ARM_RULE, nullable=False)
+
+    #: Which timeframe the decision was taken on.
+    #:
+    #: Separating them is what makes measuring the fast ones safe. Spread is
+    #: constant while bar range falls with the square root of time, so the same
+    #: cost is a small share of an hourly bar and a large share of a one-minute
+    #: one - and "no edge at one minute" is only a usable answer if it cannot
+    #: leak into the hourly result.
+    timeframe: Mapped[str] = mapped_column(
+        String(8), default="H1", server_default="H1", nullable=False, index=True
+    )
     price_source: Mapped[str] = mapped_column(
         String(24), default=SOURCE_PUBLIC, nullable=False
     )

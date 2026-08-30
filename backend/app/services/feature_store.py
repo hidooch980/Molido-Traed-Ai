@@ -25,7 +25,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, delete, func, select
 from sqlalchemy.orm import Session, aliased
 
 from app.core.enums import Timeframe
@@ -188,8 +188,20 @@ def materialize(
     )
 
     written = skipped = processed = 0
+    pending: list[FeatureValue] = []
     first_time = last_time = None
     now = datetime.now(UTC)
+
+    if recompute:
+        session.execute(
+            delete(FeatureValue).where(
+                FeatureValue.instrument_id == instrument_id,
+                FeatureValue.timeframe == timeframe,
+                FeatureValue.name.in_([spec.name for spec in specs]),
+                FeatureValue.event_time >= start,
+                FeatureValue.event_time < end,
+            )
+        )
 
     for index, bar in enumerate(series):
         if bar.event_time < start or bar.event_time >= end:
@@ -210,7 +222,7 @@ def materialize(
                 skipped += 1
                 continue
 
-            session.merge(
+            pending.append(
                 FeatureValue(
                     instrument_id=instrument_id,
                     timeframe=timeframe,
@@ -224,6 +236,9 @@ def materialize(
                 )
             )
             written += 1
+
+    if pending:
+        session.add_all(pending)
 
     session.flush()
     log.info(

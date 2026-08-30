@@ -14,6 +14,11 @@
 name: molidotrade
 
 x-backend-env: &backend-env
+  # Which account key reads which mounted bridge directory. Without this the
+  # containers fall back to the single built-in terminal, and seven mounted
+  # bridges sit unread - which is exactly what happened on the first deploy
+  # of the mounts.
+  MOLIDO_MT5_BRIDGE_DIRS: ${MOLIDO_MT5_BRIDGE_DIRS:-}
   MOLIDO_ENV: production
   MOLIDO_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
   MOLIDO_REDIS_URL: redis://redis:6379/0
@@ -47,7 +52,7 @@ x-backend-env: &backend-env
   # Separate from the three above on purpose: those are decisions about this
   # deployment, this is a decision about the account being traded.
   MOLIDO_ALLOW_REAL_MONEY_ORDERS: ${MOLIDO_ALLOW_REAL_MONEY_ORDERS:-false}
-  MOLIDO_REQUIRE_AUTH: ${MOLIDO_REQUIRE_AUTH:-false}
+  MOLIDO_REQUIRE_AUTH: ${MOLIDO_REQUIRE_AUTH:-true}
 
   # Outbound mail, for account verification. Unset means this deployment does
   # not send, stated rather than silent.
@@ -128,6 +133,17 @@ services:
       # this feed and must never be able to write into MetaTrader's own folder,
       # where a stray file would be picked up as terminal data.
       - ${MOLIDO_MT5_BRIDGE_HOST:-/home/ubuntu/.mt5/drive_c/users/ubuntu/AppData/Roaming/MetaQuotes/Terminal/Common/Files}:/home/ubuntu/.mt5/drive_c/users/ubuntu/AppData/Roaming/MetaQuotes/Terminal/Common/Files:ro
+      # Every further terminal's bridge, read-only, one directory per
+      # account. The site lists whatever `MOLIDO_MT5_BRIDGE_DIRS` names,
+      # so a terminal missing from that env simply does not appear -
+      # these mounts only make the directories reachable.
+      - ${MOLIDO_MT5_BRIDGE_B:-/root/.mt5b/drive_c/users/root/AppData/Roaming/MetaQuotes/Terminal/Common/Files}:/bridges/b:ro
+      - ${MOLIDO_MT5_BRIDGE_C:-/root/.mt5c/drive_c/users/root/AppData/Roaming/MetaQuotes/Terminal/Common/Files}:/bridges/c:ro
+      - ${MOLIDO_MT5_BRIDGE_D:-/root/.mt5d/drive_c/users/root/AppData/Roaming/MetaQuotes/Terminal/Common/Files}:/bridges/d:ro
+      - ${MOLIDO_MT5_BRIDGE_E:-/root/.mt5e/drive_c/users/root/AppData/Roaming/MetaQuotes/Terminal/Common/Files}:/bridges/e:ro
+      - ${MOLIDO_MT5_BRIDGE_F:-/root/.mt5f/drive_c/users/root/AppData/Roaming/MetaQuotes/Terminal/Common/Files}:/bridges/f:ro
+      - ${MOLIDO_MT5_BRIDGE_G:-/root/.mt5g/drive_c/users/root/AppData/Roaming/MetaQuotes/Terminal/Common/Files}:/bridges/g:ro
+      - ${MOLIDO_MT5_BRIDGE_H:-/root/.mt5h/drive_c/users/root/AppData/Roaming/MetaQuotes/Terminal/Common/Files}:/bridges/h:ro
       # The kill switch, on the host so it survives a redeploy. A halt that a
       # rebuild clears is not a halt, and a rebuild is exactly when somebody is
       # changing things and not thinking about the stop they set yesterday.
@@ -208,6 +224,21 @@ services:
         # Server-side rendering calls the API over the compose network; the
         # browser never talks to it directly, so this stays internal.
         NEXT_PUBLIC_API_URL: http://api:8000
+        # The footer stamp, and it belongs here rather than in the IP overlay.
+        #
+        # It lived in `docker-compose.ip.yml`, which is the overlay that also
+        # takes Caddy off port 443 and swaps in the IP Caddyfile. So a domain
+        # deployment - the only kind this project actually runs - had two
+        # choices: no build stamp, or no HTTPS. It had been taking the first,
+        # which is why every footer read "build dev / vdev / local" and why
+        # "did the deploy land?" could only be answered by diffing page text.
+        #
+        # The defaults are the Dockerfile's own, so a build with none of these
+        # set still succeeds and says so in the footer instead of claiming a
+        # stamp it does not have.
+        BUILD_STAMP: ${BUILD_STAMP:-dev}
+        APP_VERSION: ${APP_VERSION:-dev}
+        GIT_COMMIT: ${GIT_COMMIT:-local}
     environment:
       # Read at runtime, not baked into the build, and without the
       # NEXT_PUBLIC_ prefix - anything carrying that prefix is inlined into the
@@ -231,6 +262,10 @@ services:
     environment:
       DOMAIN: ${DOMAIN}
       ACME_EMAIL: ${ACME_EMAIL}
+      # Both default to the previous behaviour, so a deployment whose
+      # .env.prod predates them keeps serving exactly as it did.
+      SITE_ADDRESS: ${SITE_ADDRESS:-${DOMAIN}}
+      CADDY_TLS: ${CADDY_TLS:-}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data

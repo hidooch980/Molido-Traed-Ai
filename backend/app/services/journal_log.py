@@ -55,6 +55,18 @@ from app.models.journal import (
 #: that a reader can check, not an argument somebody chose at reporting time.
 MEASUREMENT_STARTS_AT = datetime(2026, 8, 17, 0, 0, tzinfo=UTC)
 
+#: The timeframe the live rule decides on, and so the one the headline
+#: measurement is taken over.
+#:
+#: The forward worker records on every timeframe in `forward_timeframes`, which
+#: on this deployment is five of them. Reading them together was wrong twice
+#: over: their R distributions are different regimes, and - because an M15 bar
+#: and an H1 bar share a timestamp every hour - grouping instants by moment
+#: alone merged decisions from different timeframes into one observation and
+#: averaged across the join. `journal_entries` grew a `timeframe` column for
+#: exactly this and neither reader had used it.
+TRADED_TIMEFRAME = "H1"
+
 
 @dataclass(frozen=True)
 class Recorded:
@@ -80,6 +92,10 @@ def record_decision(
     at: datetime,
     arm: str = ARM_RULE,
     price_source: str = SOURCE_PUBLIC,
+    #: Defaulted so every caller that predates the fast timeframes keeps
+    #: writing exactly what it wrote before, rather than silently landing in
+    #: an unlabelled bucket.
+    timeframe: str = "H1",
     account_key: str | None = None,
     probability: float | None = None,
     before: dict[str, Any] | None = None,
@@ -98,6 +114,10 @@ def record_decision(
             JournalEntry.opened_at == moment,
             JournalEntry.arm == arm,
             JournalEntry.price_source == price_source,
+            # Part of the identity, matching the unique key. Without it the
+            # lookup finds the hourly entry at a shared timestamp and reports
+            # the one-minute decision as an already-recorded duplicate.
+            JournalEntry.timeframe == timeframe,
         )
     )
     if existing is not None:
@@ -111,6 +131,7 @@ def record_decision(
         probability=probability,
         arm=arm,
         price_source=price_source,
+        timeframe=timeframe,
         before=before or {},
         during=during or {},
     )
@@ -128,6 +149,7 @@ def record_with_control(
     price: float,
     stop_distance: float,
     price_source: str = SOURCE_PUBLIC,
+    timeframe: str = "H1",
     account_key: str | None = None,
     probability: float | None = None,
     before: dict[str, Any] | None = None,
@@ -146,6 +168,7 @@ def record_with_control(
         at=at,
         arm=ARM_RULE,
         price_source=price_source,
+        timeframe=timeframe,
         account_key=account_key,
         probability=probability,
         before=before,
@@ -175,6 +198,7 @@ def record_with_control(
         at=at,
         arm=ARM_CONTROL,
         price_source=price_source,
+        timeframe=timeframe,
         account_key=account_key,
         # The series is stamped on the control's reasoning as well as the
         # rule's. The control is a decision on a price series too, and one
@@ -231,6 +255,7 @@ def comparison(
     *,
     since: datetime | None = None,
     price_source: str = SOURCE_PUBLIC,
+    timeframe: str = TRADED_TIMEFRAME,
 ) -> control_module.Comparison:
     """The rule against the control, over resolved entries only.
 
@@ -253,6 +278,7 @@ def comparison(
         ).where(
             JournalEntry.arm == arm,
             JournalEntry.price_source == price_source,
+            JournalEntry.timeframe == timeframe,
             JournalEntry.closed_at.is_not(None),
             JournalEntry.r_multiple.is_not(None),
         )
@@ -270,6 +296,157 @@ def comparison(
         control_wins=control_wins,
         control_losses=control_losses,
     )
+
+
+def paired_comparison(
+    session: Session,
+    *,
+    since: datetime | None = None,
+    price_source: str = SOURCE_PUBLIC,
+    timeframe: str = TRADED_TIMEFRAME,
+) -> control_module.PairedComparison:
+    """The rule against its own control, bar by bar, then averaged per instant.
+
+    `comparison` above tallies each arm separately, which is the weaker of the
+    two readings available here and the one that disagrees with how the
+    registered claim was measured. Both arms are written in one call on the
+    same symbol and bar, so the pairing exists in the table and only the query
+    had to be taught to use it.
+
+    Only pairs where both arms closed are counted. A resolved rule entry whose
+    control is still open is not evidence about the difference between them.
+    """
+    if since is None:
+        since = MEASUREMENT_STARTS_AT
+
+    query = select(
+        JournalEntry.opened_at,
+        JournalEntry.symbol,
+        JournalEntry.arm,
+        JournalEntry.r_multiple,
+    ).where(
+        JournalEntry.price_source == price_source,
+        JournalEntry.timeframe == timeframe,
+        JournalEntry.closed_at.is_not(None),
+        JournalEntry.r_multiple.is_not(None),
+        JournalEntry.arm.in_((ARM_RULE, ARM_CONTROL)),
+    )
+    if since is not None:
+        query = query.where(JournalEntry.opened_at >= since)
+
+    # (instant, symbol) -> {arm: R}. The symbol is part of the key because two
+    # instruments ranked on the same bar are two decisions, not one.
+    legs: dict[tuple[datetime, str], dict[str, float]] = {}
+    for opened_at, symbol, arm, r_multiple in session.execute(query):
+        legs.setdefault((opened_at, symbol), {})[str(arm)] = float(r_multiple)
+
+    by_instant: dict[datetime, list[float]] = {}
+    pairs = 0
+    for (opened_at, _symbol), arms in legs.items():
+        if ARM_RULE not in arms or ARM_CONTROL not in arms:
+            continue
+        pairs += 1
+        by_instant.setdefault(opened_at, []).append(arms[ARM_RULE] - arms[ARM_CONTROL])
+
+    differences = tuple(
+        sum(values) / len(values) for _instant, values in sorted(by_instant.items())
+    )
+    return control_module.PairedComparison(differences=differences, pairs=pairs)
+
+
+def _timeframe_breakdown(session: Session) -> dict[str, Any]:
+    """Resolved instants per timeframe per series, so the headline's scope is
+    visible beside it rather than implied by a constant."""
+    rows = session.execute(
+        select(
+            JournalEntry.timeframe,
+            JournalEntry.price_source,
+            func.count(func.distinct(JournalEntry.opened_at)),
+        )
+        .where(
+            JournalEntry.arm == ARM_RULE,
+            JournalEntry.closed_at.is_not(None),
+            JournalEntry.r_multiple.is_not(None),
+            JournalEntry.opened_at >= MEASUREMENT_STARTS_AT,
+        )
+        .group_by(JournalEntry.timeframe, JournalEntry.price_source)
+    ).all()
+    out: dict[str, Any] = {}
+    for tf, src, count in rows:
+        out.setdefault(str(tf), {})[str(src)] = int(count or 0)
+    return out
+
+
+def paired_by_timeframe(
+    session: Session, *, price_source: str = SOURCE_PUBLIC
+) -> dict[str, Any]:
+    """Every timeframe read separately, each beside the bar it has to clear.
+
+    The bar is not the same for all of them and pretending otherwise is how
+    today's mistake was made. `TRADED_TIMEFRAME` is the one the live rule
+    decides on and was named before any of this data existed, so it is a
+    single pre-registered question and 1.96 is its threshold. The others are
+    looks taken because the data happened to be there, and four extra looks
+    at noise produce a t of 2 often enough to matter - so they carry a
+    Bonferroni bar widened by how many of them there are.
+
+    Published per timeframe rather than as one verdict because the pooled
+    reading hid a negative H1 behind three positive fast series, and a reader
+    given one number could not have seen it.
+    """
+    from app.learning import scorecard as scorecard_module
+
+    present = sorted(
+        tf
+        for tf in (
+            session.execute(
+                select(JournalEntry.timeframe)
+                .where(
+                    JournalEntry.arm == ARM_RULE,
+                    JournalEntry.price_source == price_source,
+                    JournalEntry.closed_at.is_not(None),
+                    JournalEntry.opened_at >= MEASUREMENT_STARTS_AT,
+                )
+                .distinct()
+            )
+            .scalars()
+            .all()
+        )
+    )
+    exploratory = [tf for tf in present if tf != TRADED_TIMEFRAME]
+    widened = scorecard_module._bonferroni_z(max(1, len(exploratory)))
+
+    out: dict[str, Any] = {}
+    for tf in present:
+        paired = paired_comparison(session, price_source=price_source, timeframe=tf)
+        pre_registered = tf == TRADED_TIMEFRAME
+        required = 1.96 if pre_registered else widened
+        entry = _paired_dict(paired)
+        entry["required_t"] = round(required, 3)
+        entry["pre_registered"] = pre_registered
+        entry["verdict"] = paired.verdict(required=required)
+        out[str(tf)] = entry
+    return out
+
+
+def _paired_dict(paired: control_module.PairedComparison) -> dict[str, Any]:
+    """Rounded for publication, with the two counts kept apart.
+
+    `instants` is the sample the t-statistic actually rests on; `pairs` is how
+    many decisions went into it. They differ whenever more than one symbol is
+    ranked on a bar, and a reader shown only the larger would think the
+    measurement is better powered than it is.
+    """
+    mean = paired.mean_difference
+    t = paired.t_statistic
+    return {
+        "instants": paired.instants,
+        "pairs": paired.pairs,
+        "mean_difference_r": round(mean, 5) if mean is not None else None,
+        "t_statistic": round(t, 3) if t is not None else None,
+        "required_t": 1.96,
+        "verdict": paired.verdict(),
+    }
 
 
 def summary(session: Session) -> dict[str, Any]:
@@ -309,6 +486,13 @@ def summary(session: Session) -> dict[str, Any]:
 
     public = comparison(session, price_source=SOURCE_PUBLIC)
     broker = comparison(session, price_source=SOURCE_BROKER)
+    # Both readings are published, never one. The unpaired figures answer
+    # "do these two hit rates differ"; the paired ones answer the question
+    # the registered claim was measured against, on the same rows. Showing
+    # only the stronger would flatter the rule, and showing only the weaker
+    # would compare this forward window to a backtest computed differently.
+    public_paired = paired_comparison(session, price_source=SOURCE_PUBLIC)
+    broker_paired = paired_comparison(session, price_source=SOURCE_BROKER)
 
     slippage = None
     if public.edge is not None and broker.edge is not None:
@@ -323,6 +507,38 @@ def summary(session: Session) -> dict[str, Any]:
             SOURCE_PUBLIC: public.as_dict(),
             SOURCE_BROKER: broker.as_dict(),
         },
+        "paired_by_source": {
+            SOURCE_PUBLIC: _paired_dict(public_paired),
+            SOURCE_BROKER: _paired_dict(broker_paired),
+        },
+        "by_timeframe": _timeframe_breakdown(session),
+        "paired_by_timeframe": paired_by_timeframe(session),
+        "why_a_wider_bar": (
+            "H1 is the timeframe the live rule decides on and was named "
+            "before this data existed, so it is one pre-registered question "
+            "and its bar is 1.96. The faster series are looks taken because "
+            "the data was there; four extra looks at noise turn up a t near "
+            "two often enough to matter, so theirs is widened for how many "
+            "were taken. Reading an exploratory t against the pre-registered "
+            "bar is how a pooled positive number came to be reported from a "
+            "series whose traded timeframe was negative"
+        ),
+        "why_one_timeframe": (
+            "the worker records on every timeframe in `forward_timeframes`, "
+            "and the headline is H1 alone because that is the one the live "
+            "rule decides on. Read together they are different regimes "
+            "averaged into one number, and an M15 bar shares a timestamp with "
+            "an H1 bar every hour - so grouping by moment alone merged two "
+            "decisions from two timeframes into one observation"
+        ),
+        "why_paired": (
+            "both arms are written in one call on the same symbol and bar, so "
+            "the market's own move is common to them and subtracting it "
+            "removes variance the unpaired test carries as noise. It is also "
+            "the statistic the registered claim was measured with, and a "
+            "forward result computed the other way compares methods as much "
+            "as periods"
+        ),
         "edge_lost_to_real_prices": slippage,
         "why_two_series": (
             "the broker's prices and the public feed's differ by 33-39% of the "
@@ -356,11 +572,22 @@ def summary(session: Session) -> dict[str, Any]:
 #: window that contains a weekend - the thing that most changes the rate.
 MIN_OBSERVATION = timedelta(days=7)
 
+#: Instants before the forward spread is used instead of the historical one.
+#:
+#: A spread from a handful of instants is itself noisy, and the sample size
+#: depends on its square - so an early low reading would shorten the projected
+#: wait on nothing, in the flattering direction. Thirty is where the sample
+#: standard deviation stops swinging wildly, and below it the projection keeps
+#: saying openly that it is using the historical figure.
+MIN_INSTANTS_FOR_SPREAD = 30
+
+
 
 def readiness_of(
     session: Session,
     *,
     price_source: str = SOURCE_PUBLIC,
+    timeframe: str = TRADED_TIMEFRAME,
     now: datetime | None = None,
 ) -> readiness_module.Readiness:
     """How far this series is from being able to answer the question.
@@ -380,22 +607,59 @@ def readiness_of(
         ).where(
             JournalEntry.arm == ARM_RULE,
             JournalEntry.price_source == price_source,
+            # One timeframe, for the reason `TRADED_TIMEFRAME` gives: without
+            # it this counted an M1 instant and an H1 instant as two draws on
+            # the same question, and counted them as one whenever they landed
+            # on the same timestamp.
+            JournalEntry.timeframe == timeframe,
             JournalEntry.closed_at.is_not(None),
             JournalEntry.r_multiple.is_not(None),
             JournalEntry.opened_at >= MEASUREMENT_STARTS_AT,
         )
     ).one()
 
-    elapsed = moment - MEASUREMENT_STARTS_AT
+    # Measured over the period this series was actually recording, which is
+    # not the same as the period since the measurement window opened.
+    #
+    # `MEASUREMENT_STARTS_AT` is the date bad entries stop being counted; it
+    # is not the date recording began. On this deployment the H1 series
+    # starts nine days after it, so dividing by the whole window divided a
+    # real numerator by an idle denominator and understated the rate several
+    # times over - which then travelled straight into the projected date, the
+    # one number this function exists to publish.
+    first_at = session.execute(
+        select(func.min(JournalEntry.opened_at)).where(
+            JournalEntry.arm == ARM_RULE,
+            JournalEntry.price_source == price_source,
+            JournalEntry.timeframe == timeframe,
+            JournalEntry.opened_at >= MEASUREMENT_STARTS_AT,
+        )
+    ).scalar()
+    recording_since = max(first_at, MEASUREMENT_STARTS_AT) if first_at else None
+
+    elapsed = moment - recording_since if recording_since else timedelta(0)
     rate: float | None = None
     if elapsed >= MIN_OBSERVATION and instants:
         rate = int(instants) / (elapsed.total_seconds() / 604800.0)
+
+    # Sized against the spread this series actually shows, once there is
+    # enough of it to measure one. The projection has always been computed
+    # from the historical spread because until the arms were paired there was
+    # no forward spread to compute - not because the historical one was
+    # thought to be the right number.
+    paired = paired_comparison(
+        session, price_source=price_source, timeframe=timeframe
+    )
+    measured_spread: float | None = None
+    if paired.instants >= MIN_INSTANTS_FOR_SPREAD:
+        measured_spread = paired.observed_spread
 
     return readiness_module.assess(
         instants_resolved=int(instants or 0),
         decisions_resolved=int(decisions or 0),
         instants_per_week=rate,
         today=moment.date(),
+        spread=measured_spread,
         open_requirements=_open_requirements(),
         met_requirements=_met_requirements(),
     )

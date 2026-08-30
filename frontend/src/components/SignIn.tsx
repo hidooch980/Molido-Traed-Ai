@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from "react";
 
+import { proofFor } from "@/lib/humanCheck";
+
 /**
  * Sign in, and show whether this browser is signed in at all.
  *
@@ -16,6 +18,7 @@ import { useEffect, useState } from "react";
  */
 export interface SignInLabels {
   signIn: string;
+  register: string;
   signOut: string;
   email: string;
   password: string;
@@ -23,6 +26,10 @@ export interface SignInLabels {
   cancel: string;
   working: string;
   failed: string;
+  /** Shown while the proof of work is being solved. */
+  verifying: string;
+  /** Shown when the server is refusing attempts for a while. */
+  tooMany: string;
   signedInAs: string;
   anonymous: string;
   anonymousHint: string;
@@ -40,6 +47,7 @@ export function SignIn({ labels }: { labels: SignInLabels }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
+  const [solving, setSolving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function refresh() {
@@ -60,13 +68,26 @@ export function SignIn({ labels }: { labels: SignInLabels }) {
     setBusy(true);
     setError(null);
     try {
+      // Asked for before the attempt, not after a refusal. The server counts a
+      // missing proof as a failed attempt, so retrying after being told one was
+      // needed would spend two attempts per sign-in and reach the cooldown
+      // twice as fast. When no proof is being asked for this is one cheap GET
+      // and an empty object.
+      setSolving(true);
+      const proof = await proofFor(email);
+      setSolving(false);
+
       const response = await fetch("/api/v1/session/sign-in", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ email, password, ...proof }),
       });
       if (!response.ok) {
-        setError(labels.failed);
+        // 429 is not a wrong password and must not be reported as one - the
+        // person retyping a password they know is right needs to be told the
+        // server is asking them to wait, or they will assume the account is
+        // broken and try harder, which is the one thing that makes it worse.
+        setError(response.status === 429 ? labels.tooMany : labels.failed);
         return;
       }
       // Dropped the moment it has been sent; nothing here keeps it.
@@ -76,12 +97,31 @@ export function SignIn({ labels }: { labels: SignInLabels }) {
     } catch {
       setError(labels.failed);
     } finally {
+      setSolving(false);
       setBusy(false);
     }
   }
 
   async function signOut() {
-    await fetch("/api/v1/session/sign-out", { method: "POST" });
+    const response = await fetch("/api/v1/session/sign-out", { method: "POST" });
+
+    // Navigated, not merely re-rendered. Re-reading the session turned this
+    // header back into a "sign in" button and left the person standing on the
+    // dashboard it belongs to - a page that was server-rendered while they
+    // still had a session, so its contents stay on screen. Nothing bounces
+    // them, because the gate runs on navigation and there was no navigation.
+    // Signing out looked exactly like not having signed out.
+    //
+    // A whole page load rather than a router push, because that is the only
+    // thing that also discards the state the signed-in session left in memory.
+    if (response.ok) {
+      window.location.href = "/";
+      return;
+    }
+
+    // The request failed, so the session may well still exist. Re-reading is
+    // right here: it makes the header agree with whatever is actually true
+    // rather than asserting a sign-out that did not happen.
     await refresh();
   }
 
@@ -113,71 +153,24 @@ export function SignIn({ labels }: { labels: SignInLabels }) {
     );
   }
 
-  if (!open) {
-    return (
-      <button
-        type="button"
-        onClick={() => setOpen(true)}
-        className="pill"
-        style={{ color: "var(--accent)", borderColor: "var(--accent)", cursor: "pointer" }}
+  // Signing out stays here: it is one button and it needs no page. Signing in
+  // does not - the real flow is four steps, and this popover could hold one.
+  //
+  // Both doors, side by side. Registration existed already and lived inside
+  // `/access`, a page somebody has to know about to find; the two things a
+  // visitor arrives wanting to do should not be one link and one rumour.
+  return (
+    <span className="flex items-center gap-1.5">
+      <a href="/register" className="pill" style={{ color: "var(--ink-2)" }}>
+        {labels.register}
+      </a>
+      <a
+        href="/login"
+        className="pill pill-accent"
         title={labels.anonymousHint}
       >
         {labels.signIn}
-      </button>
-    );
-  }
-
-  return (
-    <form
-      onSubmit={submit}
-      className="panel p-3 space-y-2"
-      style={{ position: "absolute", insetInlineEnd: "1rem", top: "3rem", zIndex: 20, width: "18rem" }}
-    >
-      <label className="space-y-1 block">
-        <span className="eyebrow">{labels.email}</span>
-        <input
-          type="email"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          required
-          autoComplete="username"
-          style={field}
-        />
-      </label>
-      <label className="space-y-1 block">
-        <span className="eyebrow">{labels.password}</span>
-        <input
-          type="password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          required
-          autoComplete="current-password"
-          style={field}
-        />
-      </label>
-      <div className="flex gap-2">
-        <button
-          type="submit"
-          disabled={busy}
-          className="pill"
-          style={{ color: "var(--accent)", borderColor: "var(--accent)", cursor: "pointer" }}
-        >
-          {busy ? labels.working : labels.submit}
-        </button>
-        <button
-          type="button"
-          onClick={() => setOpen(false)}
-          className="pill"
-          style={{ color: "var(--ink-3)", cursor: "pointer" }}
-        >
-          {labels.cancel}
-        </button>
-      </div>
-      {error && (
-        <p className="text-xs" style={{ color: "var(--critical)" }}>
-          {error}
-        </p>
-      )}
-    </form>
+      </a>
+    </span>
   );
 }

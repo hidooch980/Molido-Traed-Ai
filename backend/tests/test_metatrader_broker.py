@@ -283,7 +283,8 @@ class TestAFilledOrderReportsASize:
 
     def test_a_rejection_carries_none_of_it(self):
         """Nothing was filled, and that zero is a real one."""
-        import tempfile, pathlib as _p
+        import pathlib as _p
+        import tempfile
 
         with tempfile.TemporaryDirectory() as where:
             root = _p.Path(where)

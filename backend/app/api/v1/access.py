@@ -118,10 +118,14 @@ def read_features(
 def read_matrix(_: Principal = READ) -> dict[str, Any]:
     """Roles down, tiers across: what a given user on a given plan can do.
 
-    Published as one table because the two axes get confused constantly. An
-    admin on the free tier holds EXECUTE and cannot reach live execution; a
+    Published as one table because the two axes get confused constantly. A
+    trader on the free tier holds EXECUTE and cannot reach live execution; a
     viewer on the paid tier can open every page and cannot place an order.
     Neither is a bug, and both look like one until the axes are drawn.
+
+    An administrator is now in the second group rather than the first: the
+    role runs the deployment and holds no EXECUTE at all, so for them the
+    plan axis never comes up.
     """
     rows = []
     for role, perms in ROLE_PERMISSIONS.items():

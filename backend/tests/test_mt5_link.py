@@ -230,3 +230,62 @@ class TestTheQueueReportsItsOwnState:
 
         assert state["reachable"] is True
         assert state["pending_requests"] == 3
+
+
+class TestNamingATerminal:
+    """A request may name which terminal it is for, and a clear must.
+
+    The name rides in the same file the login does, so the validation is
+    about injection into a file a host agent reads - not about taste.
+    """
+
+    def test_a_named_terminal_rides_in_the_payload(self, queue):
+        request = mt5_link.LinkRequest(
+            login="12345678", server="Broker-Demo", password="s", terminal="term-c"
+        )
+        result = mt5_link.submit(request)
+
+        written = json.loads(
+            (queue / f"{result.request_id}.request.json").read_text()
+        )
+        assert written["terminal"] == "term-c"
+
+    def test_an_unnamed_request_carries_no_terminal_key_at_all(self, queue):
+        """Absent, not empty. The agent treats a missing key as "pick the
+        first free terminal", and an empty string would be a name lookup that
+        fails."""
+        request = mt5_link.validate("12345678", "Broker-Demo", "s")
+        result = mt5_link.submit(request)
+
+        written = json.loads(
+            (queue / f"{result.request_id}.request.json").read_text()
+        )
+        assert "terminal" not in written
+
+    def test_a_terminal_name_with_a_path_in_it_is_refused(self, queue):
+        from app.core.errors import ValidationFailedError
+
+        with pytest.raises(ValidationFailedError):
+            mt5_link.validate_terminal("../etc")
+
+    def test_blank_means_none(self, queue):
+        assert mt5_link.validate_terminal("  ") is None
+        assert mt5_link.validate_terminal(None) is None
+
+
+class TestClearingATerminal:
+    def test_a_clear_carries_the_action_and_no_credential(self, queue):
+        result = mt5_link.submit(mt5_link.validate_clear("term-d"))
+
+        written = json.loads(
+            (queue / f"{result.request_id}.request.json").read_text()
+        )
+        assert written == {"action": "clear", "terminal": "term-d"}
+
+    def test_a_clear_with_no_terminal_is_refused(self, queue):
+        """There is no safe default to log out. A blank field must not
+        disconnect an account nobody meant to touch."""
+        from app.core.errors import ValidationFailedError
+
+        with pytest.raises(ValidationFailedError):
+            mt5_link.validate_clear(None)

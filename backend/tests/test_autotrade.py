@@ -325,13 +325,13 @@ class TestTheGates:
         refusing before any of it. What must stay true is that nothing reaches
         an adapter that can place an order."""
         from app.execution import autopilot
-        from app.execution.paper_broker import PaperBroker
+        from app.execution.paper_broker import LivePaperBroker
 
         monkeypatch.setattr(
             autopilot, "mode_now", lambda: ("paper", "no proven edge", False)
         )
         decide(session)
-        paper = PaperBroker()
+        paper = LivePaperBroker()
 
         report = autotrade.run_cycle(
             session, now=NOW, broker=paper, bridge=FakeBridge()
@@ -1025,20 +1025,34 @@ class TestThePropRulebookGovernsWhenThereIsOne:
 
     @staticmethod
     def account(**over):
-        """The shape `listing` really returns: a view wrapping the row, with
-        the rulebook already resolved beside it. A flat stand-in passed every
-        test and failed the first real registration."""
+        """Wrapped, because `listing` returns AccountView and never a bare
+        account - and the real class rather than a look-alike, because a
+        stand-in of the wrong shape is how the gate came to read `rulebook_key`
+        off a wrapper that has none, answer "?", and refuse every trade against
+        a rulebook it knew perfectly well.
+
+        The rulebook is resolved here for the same reason `listing` resolves
+        it: the gate now reads the book off the view, so a view carrying None
+        would make every test below measure a missing rulebook rather than the
+        rule it was written for."""
         from types import SimpleNamespace
 
         from app.brain import rulebooks
+        from app.services.challenge_accounts import AccountView
 
         key = over.pop("rulebook_key", "ftmo-challenge-2step-phase1")
-        base = dict(is_active=True, rulebook_key=key, starting_balance=10_000.0,
-                    label="test")
-        base.update(over)
-        return SimpleNamespace(
-            account=SimpleNamespace(**base), rulebook=rulebooks.get(key)
+        base = dict(
+            is_active=True,
+            rulebook_key=key,
+            starting_balance=10_000.0,
+            label="test",
+            # Carried because the real row carries it. A stand-in missing a
+            # column the gate reads is the same defect as a stand-in of the
+            # wrong class, one field smaller.
+            currency_per_r=None,
         )
+        base.update(over)
+        return AccountView(account=SimpleNamespace(**base), rulebook=rulebooks.get(key))
 
     def registry(self, monkeypatch, rows):
         from app.services import challenge_accounts
@@ -1097,7 +1111,11 @@ class TestThePropRulebookGovernsWhenThereIsOne:
         allowed, why, _ = self.gate(session)
 
         assert allowed is False
-        assert "rulebook is incomplete" in why
+        # Both halves, because they need different answers: a gate is a rule
+        # that is entered and could not be cleared, an incomplete rulebook is
+        # one nobody wrote down.
+        assert "incomplete" in why
+        assert "challenge gate is shut" in why
         assert "leverage" in why or "position cap" in why
 
     def test_an_unreadable_registry_refuses_rather_than_passing(
@@ -1116,6 +1134,227 @@ class TestThePropRulebookGovernsWhenThereIsOne:
 
         assert allowed is False
         assert "could not be read" in why
+
+
+class TestTheGateReadsTheAccountAndNotItsWrapper:
+    """The two tests above this line all hand the gate a stand-in. These hand
+    it the registry itself, because the bug they exist for lived exactly in
+    the gap between the two: `listing` returns `AccountView`, every read in
+    the gate was aimed at the wrapper, and `getattr(view, ..., default)`
+    answered the default every time instead of raising.
+
+    The result was silent and total. A correctly registered account reported
+    `rulebook '?' is not one this build knows` and refused every trade, so the
+    ten transcribed rulebooks in `brain/challenge.py` had a caller that could
+    never reach them. It fails closed, which is why nothing screamed."""
+
+    KEY = "ftmo-challenge-2step-phase1"
+
+    def register(self, session, **over):
+        from decimal import Decimal
+
+        from app.services import challenge_accounts
+
+        return challenge_accounts.create(
+            session,
+            tenant_id=challenge_accounts.default_tenant(session),
+            label=over.pop("label", "FTMO 10k"),
+            rulebook_key=over.pop("rulebook_key", self.KEY),
+            starting_balance=Decimal("10000"),
+            **over,
+        )
+
+    def gate(self, session):
+        from datetime import date
+
+        return autotrade._challenge_gate(
+            session,
+            {"equity": 10_000.0, "balance": 10_000.0},
+            1,
+            0.002,
+            today=date(2026, 8, 18),
+            moment=NEWS_NOW,
+            in_news_window=False,
+        )
+
+    def test_a_registered_rulebook_is_recognised_as_one(self, session):
+        """Reading the wrapper made the key `'?'`, so a known rulebook was
+        rejected as unknown. Getting as far as "incomplete" is the proof the
+        lookup succeeded: that verdict comes from the rules themselves."""
+        self.register(session)
+
+        allowed, why, _ = self.gate(session)
+
+        assert "not one this build knows" not in why
+        assert "'?'" not in why
+        # Reaching the rules at all is the point; which of them it then stops
+        # on is a separate question this test does not own.
+        assert "rulebook is incomplete" in why or "challenge gate is shut" in why
+        assert allowed is False
+
+    def test_a_switched_off_account_is_not_a_registration(self, session):
+        """Off is not deleted, but it is not governing either. Filtering the
+        wrapper on a missing `is_active` took the `True` default, so an
+        account the holder had switched off still imposed its rules."""
+        from app.services import challenge_accounts
+
+        account = self.register(session)
+        challenge_accounts.set_active(
+            session,
+            tenant_id=challenge_accounts.default_tenant(session),
+            account_id=account.id,
+            active=False,
+        )
+
+        allowed, why, headroom = self.gate(session)
+
+        assert allowed is True
+        assert why == ""
+        assert headroom is None
+
+    def test_the_second_of_two_is_counted_only_while_it_is_on(self, session):
+        """Two live registrations refuse rather than pick. Switching one off
+        must leave one - the count has to follow the flag it could not read."""
+        from app.services import challenge_accounts
+
+        self.register(session)
+        second = self.register(session, label="FTMO 10k #2")
+
+        allowed, why, _ = self.gate(session)
+        assert allowed is False
+        assert "cannot be known" in why
+
+        challenge_accounts.set_active(
+            session,
+            tenant_id=challenge_accounts.default_tenant(session),
+            account_id=second.id,
+            active=False,
+        )
+
+        allowed, why, _ = self.gate(session)
+        assert "cannot be known" not in why
+
+
+class TestTheGateSuppliesWhatItAlreadyKnows:
+    """Two of the gate's refusals were about its own telemetry, not about the
+    provider's rules, and both figures were already to hand.
+
+    The distinction matters because the two kinds of block need opposite
+    responses. "The holder has not confirmed the automation permission" is
+    answered by asking the holder; "one R is not expressed in account
+    currency" was answered by reading a column that was already filled in.
+    A gate that reports the second in the same voice as the first sends
+    somebody to their contract to fix a bug in this file.
+    """
+
+    #: FundedNext rather than FTMO, because only a book that carries a
+    #: leverage cap can gate on an unmeasurable leverage. FTMO's is unread,
+    #: so there is nothing to be unable to measure against.
+    KEY = "fundednext-stellar-2step-phase1"
+
+    def register(self, session, **over):
+        from decimal import Decimal
+
+        from app.services import challenge_accounts
+
+        return challenge_accounts.create(
+            session,
+            tenant_id=challenge_accounts.default_tenant(session),
+            label="FundedNext 10k",
+            rulebook_key=self.KEY,
+            starting_balance=Decimal("10000"),
+            **over,
+        )
+
+    def gate(self, session, published=None):
+        from datetime import date
+
+        return autotrade._challenge_gate(
+            session,
+            published or {"equity": 10_000.0, "balance": 10_000.0, "margin": 0.0},
+            1,
+            0.002,
+            today=date(2026, 8, 18),
+            moment=NEWS_NOW,
+            in_news_window=False,
+        )
+
+    def test_a_registered_r_value_is_used_rather_than_left_unknown(self, session):
+        """The column exists so a drawdown allowance in money can become a
+        risk figure. The gate built its state without it, so every verdict
+        blocked on a number the holder had already entered."""
+        from decimal import Decimal
+
+        self.register(session, currency_per_r=Decimal("50"))
+
+        _allowed, why, _ = self.gate(session)
+
+        assert "one R is not expressed in account currency" not in why
+
+    def test_an_unentered_r_value_still_blocks(self, session):
+        """Reading the column is not the same as inventing one. An account
+        whose holder never entered it is still unsizeable, and must say so."""
+        self.register(session)
+
+        _allowed, why, _ = self.gate(session)
+
+        assert "one R is not expressed in account currency" in why
+
+    def test_a_flat_account_measures_its_leverage_as_zero(self, session):
+        """No margin committed is no exposure. That is a measurement, and it
+        is the state an account is in whenever a position is opened from
+        flat - so refusing to make it blocks the ordinary case."""
+        from decimal import Decimal
+
+        self.register(session, currency_per_r=Decimal("50"))
+
+        _allowed, why, _ = self.gate(session)
+
+        # Leverage is measured, so it is not among the reasons. The account
+        # is still stopped, by the automation permission - which is a fact
+        # about the holder's contract and not something this figure could
+        # ever have answered.
+        assert "leverage" not in why
+        assert "automation permission" in why
+
+    def test_committed_margin_leaves_leverage_unmeasured_rather_than_guessed(
+        self, session
+    ):
+        """Notional is margin times the symbol's own margin rate, and those
+        differ per instrument. Nothing in this payload can close that gap, so
+        the rule reports itself unmeasured instead of picking a direction."""
+        from decimal import Decimal
+
+        self.register(session, currency_per_r=Decimal("50"))
+
+        _allowed, why, _ = self.gate(
+            session,
+            {"equity": 10_000.0, "balance": 10_000.0, "margin": 500.0},
+        )
+
+        assert "leverage" in why
+
+    def test_the_account_leverage_setting_is_never_read_as_usage(self, session):
+        """MetaTrader publishes ACCOUNT_LEVERAGE - what the broker permits.
+        Read as usage it would put a flat account exactly on its own cap and
+        call that a breach."""
+        from decimal import Decimal
+
+        self.register(session, currency_per_r=Decimal("50"))
+
+        _allowed, why, _ = self.gate(
+            session,
+            {
+                "equity": 10_000.0,
+                "balance": 10_000.0,
+                "margin": 0.0,
+                # The broker permits 1:100. Nothing is open.
+                "leverage": 100,
+            },
+        )
+
+        assert "above the" not in why
+        assert "at the" not in why
 
 
 class TestTheOpenBookIsPricedBeforeAddingToIt:

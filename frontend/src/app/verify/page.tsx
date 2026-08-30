@@ -17,9 +17,11 @@ export default async function VerifyPage() {
 
   return (
     <div className="mx-auto max-w-md space-y-4">
-      <header>
-        <h1 className="text-xl font-bold">{t("verify.title")}</h1>
-        <p className="text-xs ink-3 mt-0.5">{t("verify.subtitle")}</p>
+      <header className="page-header">
+        <div className="min-w-0">
+          <h1 className="display">{t("verify.title")}</h1>
+          <p className="page-lede">{t("verify.subtitle")}</p>
+        </div>
       </header>
 
       <Panel title={t("verify.title")}>

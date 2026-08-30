@@ -33,6 +33,12 @@ dev = [
 providers = [
     "yfinance>=0.2.48",
 ]
+# The second brain's language half. Optional on purpose: a deployment with no
+# key does not need the package, and `brain.analyst` reports the absence rather
+# than failing to import. Nothing in the trading path depends on it.
+analyst = [
+    "anthropic>=0.40",
+]
 
 [project.scripts]
 molido = "app.cli:app"

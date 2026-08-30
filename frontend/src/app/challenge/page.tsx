@@ -1,4 +1,7 @@
-import { Empty, Offline, Panel, Stat, StatusBadge } from "@/components/ui";
+import { AccountPhaseMove } from "@/components/AccountPhaseMove";
+import { AccountSwitch } from "@/components/AccountSwitch";
+import { ChallengeAccountForm } from "@/components/ChallengeAccountForm";
+import { Empty, Offline, Panel, Pill, Stat, StatusBadge } from "@/components/ui";
 import { api } from "@/lib/api";
 import { getT } from "@/lib/locale";
 
@@ -32,8 +35,9 @@ export default async function ChallengePage() {
     { key: "targetMet", equity: 111_000, dayOpen: 111_000 },
   ];
 
-  const [books, ...verdicts] = await Promise.all([
+  const [books, recorded, ...verdicts] = await Promise.all([
     api.rulebooks(),
+    api.challengeAccounts(),
     ...STATES.map((state) =>
       api.challenge({
         starting_balance: START,
@@ -57,10 +61,12 @@ export default async function ChallengePage() {
     verdict === "approve" ? "good" : verdict === "reduce" ? "warning" : "critical";
 
   return (
-    <div className="space-y-4">
-      <header>
-        <h1 className="text-xl font-bold">{t("challenge.title")}</h1>
+    <div className="space-y-6">
+      <header className="page-header">
+        <div className="min-w-0">
+          <h1 className="display">{t("challenge.title")}</h1>
         <p className="text-xs ink-3 mt-0.5 max-w-3xl">{t("challenge.subtitle")}</p>
+      </div>
       </header>
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -182,6 +188,168 @@ export default async function ChallengePage() {
             <li key={note}>· {note}</li>
           ))}
         </ul>
+      </Panel>
+
+      {/* The accounts actually recorded, and the form that records them.
+
+          Both are new. The endpoint behind this has existed since challenge
+          tracking was built and nothing in the browser could reach it, so the
+          rulebooks above described programs against which no account was ever
+          registered - a page explaining the rules of a game nobody had said
+          they were playing. */}
+      <Panel
+        title={t("challenge.yourAccounts")}
+        subtitle={
+          recorded.ok
+            ? t("challenge.yourAccountsCount")
+                .replace("{n}", String(recorded.data.total))
+                .replace("{tracked}", String(recorded.data.confirmed))
+            : t("challenge.yourAccountsSubtitle")
+        }
+      >
+        {!recorded.ok ? (
+          <Empty>{t("challenge.accountsUnavailable")}</Empty>
+        ) : recorded.data.accounts.length === 0 ? (
+          <Empty>{t("challenge.noAccounts")}</Empty>
+        ) : (
+          <div className="scroll-x">
+            <table className="data">
+              <thead>
+                <tr>
+                  <th>{t("challenge.accountLabel")}</th>
+                  <th>{t("challenge.formKind")}</th>
+                  <th>{t("challenge.accountProgram")}</th>
+                  <th className="num">{t("challenge.accountBalance")}</th>
+                  <th>{t("challenge.accountState")}</th>
+                  <th>{t("challenge.accountSwitch")}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {recorded.data.accounts.map((account) => (
+                  <tr key={account.id}>
+                    <td className="font-semibold">{account.label}</td>
+                    <td className="ink-2">
+                      {t(`challenge.kind${
+                        account.kind === "live"
+                          ? "Live"
+                          : account.kind === "funded"
+                            ? "Funded"
+                            : "Challenge"
+                      }`)}
+                    </td>
+                    <td className="ink-2">
+                      {/* An em dash rather than an empty cell on a live
+                          account. There is no programme to name, and a blank
+                          reads as a value that failed to load. */}
+                      {account.kind === "live" ? (
+                        "—"
+                      ) : (
+                        <>
+                          <span className="block">
+                            {[account.provider, account.program, account.phase]
+                              .filter(Boolean)
+                              .join(" · ") || account.rulebook_key}
+                          </span>
+                          {/* Beside the phase it would change, rather than in
+                              a column of its own: a seventh column costs more
+                              width on a phone than the whole control does
+                              here, and this is where somebody looks when they
+                              have just passed one. */}
+                          {books.ok && (
+                            <AccountPhaseMove
+                              id={account.id}
+                              rulebooks={books.data.rulebooks}
+                              labels={{
+                                move: t("challenge.phaseMove"),
+                                choose: t("challenge.formChoose"),
+                                confirm: t("challenge.phaseMoveConfirm"),
+                                warning: t("challenge.phaseMoveWarning"),
+                                cancel: t("challenge.phaseMoveCancel"),
+                                failed: t("challenge.switchFailed"),
+                                working: t("challenge.phaseMoveWorking"),
+                              }}
+                            />
+                          )}
+                        </>
+                      )}
+                    </td>
+                    <td className="num" dir="ltr">
+                      {account.starting_balance
+                        ? `${account.starting_balance} ${account.currency ?? ""}`
+                        : "—"}
+                    </td>
+                    <td>
+                      {/* A live account is neither tracked nor unconfirmed.
+                          Warning-toned "unconfirmed" would send its holder
+                          looking for a confirmation step that does not
+                          exist. */}
+                      {account.kind === "live" ? (
+                        <Pill tone="neutral">{t("challenge.ownAccount")}</Pill>
+                      ) : (
+                        <Pill tone={account.rules_confirmed ? "good" : "warning"}>
+                          {account.rules_confirmed
+                            ? t("challenge.tracked")
+                            : t("challenge.unconfirmed")}
+                        </Pill>
+                      )}
+                    </td>
+                    <td>
+                      <AccountSwitch
+                        id={account.id}
+                        active={account.is_active}
+                        labels={{
+                          on: t("challenge.accountOn"),
+                          off: t("challenge.accountOff"),
+                          switchOn: t("challenge.switchOn"),
+                          switchOff: t("challenge.switchOff"),
+                          failed: t("challenge.switchFailed"),
+                        }}
+                      />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Panel>
+
+      <Panel title={t("challenge.addAccount")} subtitle={t("challenge.addAccountSubtitle")}>
+        <div className="p-4">
+          <ChallengeAccountForm
+            labels={{
+              title: t("challenge.addAccount"),
+              subtitle: t("challenge.addAccountSubtitle"),
+              label: t("challenge.formLabel"),
+              labelHint: t("challenge.formLabelHint"),
+              program: t("challenge.formProgram"),
+              programHint: t("challenge.formProgramHint"),
+              balance: t("challenge.formBalance"),
+              balanceHint: t("challenge.formBalanceHint"),
+              currency: t("challenge.formCurrency"),
+              perR: t("challenge.formPerR"),
+              perRHint: t("challenge.formPerRHint"),
+              notes: t("challenge.formNotes"),
+              confirm: t("challenge.formConfirm"),
+              confirmHint: t("challenge.formConfirmHint"),
+              submit: t("challenge.formSubmit"),
+              submitting: t("challenge.formSubmitting"),
+              created: t("challenge.formCreated"),
+              failed: t("challenge.formFailed"),
+              choose: t("challenge.formChoose"),
+              kind: t("challenge.formKind"),
+              kindHint: t("challenge.formKindHint"),
+              kindChallenge: t("challenge.kindChallenge"),
+              kindChallengeHint: t("challenge.kindChallengeHint"),
+              kindFunded: t("challenge.kindFunded"),
+              kindFundedHint: t("challenge.kindFundedHint"),
+              kindLive: t("challenge.kindLive"),
+              kindLiveHint: t("challenge.kindLiveHint"),
+              liveNote: t("challenge.formLiveNote"),
+            }}
+            rulebooks={books.data.rulebooks}
+          />
+        </div>
       </Panel>
 
       <Panel title={t("challenge.whyUnconfirmed")}>

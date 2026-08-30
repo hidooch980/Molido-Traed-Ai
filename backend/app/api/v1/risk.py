@@ -33,7 +33,7 @@ from app.brain import portfolio as portfolio_brain
 from app.brain import risk as risk_brain
 from app.brain import rulebooks as rulebook_module
 from app.brain import stress as stress_brain
-from app.core.enums import Permission
+from app.core.enums import AccountKind, Permission
 from app.db.session import get_db
 from app.services import challenge_accounts
 
@@ -44,15 +44,30 @@ READ = Depends(require(Permission.READ))
 #: EXECUTE: recording which rules an account is measured against is not
 #: permission to trade it, and a route asking for more authority than it needs
 #: is how those two stop being separate questions.
-SIMULATE = Depends(require(Permission.SIMULATE))
+#:
+#: It is its own permission rather than SIMULATE because of what a wrong entry
+#: here does. A transcribed rulebook is what the challenge engine measures the
+#: account against; a daily-loss limit typed one digit out does not fail, it
+#: passes a trade that ends the account. That is the account holder's decision
+#: to get wrong, so `RULEBOOK_WRITE` belongs to the owner alone.
+RULEBOOK_WRITE = Depends(require(Permission.RULEBOOK_WRITE))
 
 
 
 class ChallengeAccountPayload(BaseModel):
-    """A challenge account, as its holder describes it."""
+    """An account, as its holder describes it.
+
+    `kind` defaults to a challenge because that is what this endpoint could
+    only ever record before, so an older caller that omits it keeps meaning
+    what it meant.
+    """
 
     label: str = Field(min_length=1, max_length=120)
-    rulebook_key: str = Field(min_length=1, max_length=80)
+    kind: AccountKind = AccountKind.CHALLENGE
+    #: Optional at this layer and required by the service for every kind but
+    #: live. Validated there rather than here so that the rule and the reason
+    #: for it live in one place.
+    rulebook_key: str | None = Field(default=None, max_length=80)
     starting_balance: Decimal = Field(gt=0)
     currency: str = Field(default="USD", max_length=8)
     currency_per_r: Decimal | None = Field(default=None, gt=0)
@@ -65,6 +80,34 @@ class ChallengeAccountPayload(BaseModel):
 
 class ConfirmPayload(BaseModel):
     notes: str = Field(default="", max_length=2000)
+
+
+class MovePayload(BaseModel):
+    """Where the account goes next in its programme.
+
+    `kind` is optional because most moves stay within one - phase one to phase
+    two is still a challenge. It is given on the move that matters most:
+    passing the last phase turns a challenge into a funded account.
+    """
+
+    rulebook_key: str = Field(min_length=1, max_length=80)
+    kind: AccountKind | None = None
+    #: Optional, and replaces the old one when given. Most programmes reset the
+    #: balance between phases; a phase two measured against phase one's closing
+    #: balance computes every drawdown from the wrong floor.
+    starting_balance: Decimal | None = Field(default=None, gt=0)
+
+
+class ActivePayload(BaseModel):
+    """Which way to move the switch.
+
+    Explicit rather than a toggle. A toggle sent twice by a slow connection
+    lands the account back where it started and the second press looks like it
+    did nothing; a stated destination is the same answer however many times it
+    arrives.
+    """
+
+    active: bool
 
 
 def _account(
@@ -360,20 +403,24 @@ def read_challenge_accounts(
 @router.post("/challenge-accounts")
 def create_challenge_account(
     payload: ChallengeAccountPayload,
-    _: Principal = SIMULATE,
+    _: Principal = RULEBOOK_WRITE,
     session: Session = Depends(get_db),
 ) -> dict[str, Any]:
-    """Record a challenge account against a transcribed rulebook.
+    """Record a challenge, funded or live account.
 
-    An unconfirmed account is stored rather than refused. Somebody part-way
-    through setup has a real account with rules nobody has checked yet, and
-    recording that honestly is better than refusing the row or pretending the
-    check happened.
+    An unconfirmed prop account is stored rather than refused. Somebody
+    part-way through setup has a real account with rules nobody has checked
+    yet, and recording that honestly is better than refusing the row or
+    pretending the check happened.
+
+    A live account takes no rulebook and no confirmation, because nobody
+    outside this deployment sets its limits.
     """
     account = challenge_accounts.create(
         session,
         tenant_id=challenge_accounts.default_tenant(session),
         label=payload.label,
+        kind=payload.kind.value,
         rulebook_key=payload.rulebook_key,
         starting_balance=payload.starting_balance,
         currency=payload.currency,
@@ -400,7 +447,7 @@ def create_challenge_account(
 def confirm_challenge_account(
     account_id: uuid.UUID,
     payload: ConfirmPayload,
-    _: Principal = SIMULATE,
+    _: Principal = RULEBOOK_WRITE,
     session: Session = Depends(get_db),
 ) -> dict[str, Any]:
     """Mark an account's rules as checked against its own contract.
@@ -419,3 +466,74 @@ def confirm_challenge_account(
         account=account, rulebook=challenge_accounts._resolve(account.rulebook_key)
     )
     return {"confirmed": True, "account": view.as_dict()}
+
+
+@router.post("/challenge-accounts/{account_id}/move")
+def move_challenge_account(
+    account_id: uuid.UUID,
+    payload: MovePayload,
+    _: Principal = RULEBOOK_WRITE,
+    session: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Move an account to the next phase of its programme.
+
+    A two-phase evaluation is three documents - phase one, phase two, and the
+    funded account - and to the holder it is one account passing through them.
+    Recording each as a fresh row would scatter one account's history across
+    three, leaving the platform unable to say that a funded account and the
+    challenge that earned it are the same thing.
+
+    Confirmation is reset by the move and the response says so. Phase two is a
+    different document with different numbers, and a tick carried across would
+    have the platform measuring against rules nobody checked while showing them
+    as checked.
+    """
+    account = challenge_accounts.move_to(
+        session,
+        tenant_id=challenge_accounts.default_tenant(session),
+        account_id=account_id,
+        rulebook_key=payload.rulebook_key,
+        kind=payload.kind.value if payload.kind is not None else None,
+        starting_balance=payload.starting_balance,
+    )
+    view = challenge_accounts.AccountView(
+        account=account, rulebook=challenge_accounts._resolve(account.rulebook_key)
+    )
+    return {
+        "moved": True,
+        "account": view.as_dict(),
+        "note": (
+            "the rules have to be confirmed again. This is a different "
+            "document with different numbers, and a confirmation carried over "
+            "from the previous phase would be a tick against rules nobody read"
+        ),
+    }
+
+
+@router.post("/challenge-accounts/{account_id}/active")
+def set_challenge_account_active(
+    account_id: uuid.UUID,
+    payload: ActivePayload,
+    _: Principal = RULEBOOK_WRITE,
+    session: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Switch an account on or off.
+
+    Off rather than deleted. A failed challenge, an account between funding
+    rounds, one the holder has stepped away from - each is a real account with
+    real history, and deleting the row would take the history with it.
+
+    Behind `RULEBOOK_WRITE` like the other two, and for the same reason:
+    switching an account back on puts it under the risk layer's measurement
+    again, which is the account holder's decision to make.
+    """
+    account = challenge_accounts.set_active(
+        session,
+        tenant_id=challenge_accounts.default_tenant(session),
+        account_id=account_id,
+        active=payload.active,
+    )
+    view = challenge_accounts.AccountView(
+        account=account, rulebook=challenge_accounts._resolve(account.rulebook_key)
+    )
+    return {"active": account.is_active, "account": view.as_dict()}

@@ -28,17 +28,39 @@ export default async function JournalPage() {
   const view = await api.journal();
   if (!view.ok) return <Offline error={view.error} />;
 
-  const { arms, comparison, by_source, edge_lost_to_real_prices, why_two_series, note } =
-    view.data;
+  const {
+    arms,
+    comparison,
+    by_source,
+    paired_by_source,
+    paired_by_timeframe,
+    why_one_timeframe,
+    edge_lost_to_real_prices,
+    why_two_series,
+    note,
+  } = view.data;
 
   const label = (source: string) =>
     source === "metatrader" ? t("journal.broker") : t("journal.public");
+
+  /* The API returns its verdicts in English because they are the module's own
+     words. Both panels render them, and only one of them was translating -
+     so a Persian reader got a localised sentence above an English one saying
+     the same thing. One mapping, used by both. */
+  const verdictLabel = (verdict: string | undefined, fallbackWorse = false) => {
+    const worse = verdict?.includes("worse") ?? fallbackWorse;
+    if (worse) return t("journal.worseThanControl");
+    if (verdict?.startsWith("distinguishable")) return t("journal.distinguishable");
+    if (verdict === "not measured") return t("journal.pairedNotMeasured");
+    return t("journal.notDistinguishable");
+  };
 
   const rows = SOURCES.map((source) => ({
     source,
     name: label(source),
     counts: arms?.[source] ?? {},
     result: by_source?.[source],
+    paired: paired_by_source?.[source],
   })).filter((r) => (r.result?.rule?.trials ?? 0) > 0);
 
   const measured = rows.length > 0;
@@ -56,10 +78,12 @@ export default async function JournalPage() {
   );
 
   return (
-    <div className="space-y-4">
-      <header>
-        <h1 className="text-xl font-bold">{t("journal.title")}</h1>
+    <div className="space-y-6">
+      <header className="page-header">
+        <div className="min-w-0">
+          <h1 className="display">{t("journal.title")}</h1>
         <p className="text-xs ink-3 mt-0.5 max-w-3xl">{t("journal.subtitle")}</p>
+      </div>
       </header>
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -153,22 +177,113 @@ export default async function JournalPage() {
       {measured && (
         <Panel title={t("journal.verdict")}>
           <div className="p-4 space-y-3">
-            {rows.map((row) => (
+            {rows.map((row) => {
+              /* `significant` is abs(z): true whether the rule beat the coin
+                 flip or lost to it. Painting that green labelled a losing
+                 series a success. The verdict string carries the sign. */
+              const worse = row.result.verdict?.includes("worse") ?? false;
+              const beat = (row.result.significant ?? false) && !worse;
+              return (
               <div key={row.source} className="space-y-1">
                 <StatusBadge
-                  status={row.result.significant ? "good" : "warning"}
+                  status={worse ? "bad" : beat ? "good" : "warning"}
                   label={`${row.name} — ${
-                    row.result.significant
+                    beat
                       ? t("journal.distinguishable")
-                      : t("journal.notDistinguishable")
+                      : verdictLabel(row.result.verdict, worse)
                   }`}
                 />
                 <p className="text-xs ink-3 leading-relaxed">
                   z = {row.result.z_score ?? "—"} · {t("journal.needs")} 1.96
                 </p>
               </div>
-            ))}
+              );
+            })}
           </div>
+        </Panel>
+      )}
+
+      {measured && (
+        <Panel title={t("journal.paired")} subtitle={t("journal.pairedSubtitle")}>
+          <div className="p-4 space-y-3">
+            {rows.map((row) => (
+              <div key={row.source} className="space-y-1">
+                {row.paired && row.paired.t_statistic != null ? (
+                  <>
+                    <StatusBadge
+                      status={
+                        row.paired.t_statistic >= row.paired.required_t
+                          ? "good"
+                          : "warning"
+                      }
+                      label={`${row.name} — ${verdictLabel(row.paired.verdict)}`}
+                    />
+                    <p className="text-xs ink-3 leading-relaxed">
+                      t = {row.paired.t_statistic} · {t("journal.needs")}{" "}
+                      {row.paired.required_t} ·{" "}
+                      {t("journal.pairedMean")}{" "}
+                      {row.paired.mean_difference_r ?? "—"} R ·{" "}
+                      {row.paired.instants} {t("journal.pairedInstants")} (
+                      {row.paired.pairs} {t("journal.pairedPairs")})
+                    </p>
+                  </>
+                ) : (
+                  <StatusBadge
+                    status="info"
+                    label={`${row.name} — ${t("journal.pairedNotMeasured")}`}
+                  />
+                )}
+              </div>
+            ))}
+            <p className="text-xs ink-3 leading-relaxed">
+              {t("journal.pairedCoarse")}
+            </p>
+          </div>
+        </Panel>
+      )}
+
+      {paired_by_timeframe && Object.keys(paired_by_timeframe).length > 0 && (
+        <Panel
+          title={t("journal.byTimeframe")}
+          subtitle={t("journal.byTimeframeSubtitle")}
+        >
+          <div className="scroll-x">
+            <table className="data">
+              <thead>
+                <tr>
+                  <th>{t("journal.timeframe")}</th>
+                  <th>{t("journal.pairedInstants")}</th>
+                  <th>{t("journal.pairedMean")}</th>
+                  <th>t</th>
+                  <th>{t("journal.needs")}</th>
+                  <th>{t("journal.scope")}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {Object.entries(paired_by_timeframe).map(([tf, card]) => (
+                  <tr key={tf}>
+                    <td className="font-medium">{tf}</td>
+                    <td className="num">{card.instants}</td>
+                    <td className="num">
+                      {card.mean_difference_r != null
+                        ? `${card.mean_difference_r} R`
+                        : "—"}
+                    </td>
+                    <td className="num">{card.t_statistic ?? "—"}</td>
+                    <td className="num">{card.required_t}</td>
+                    <td className="ink-3">
+                      {card.pre_registered
+                        ? t("journal.preRegistered")
+                        : t("journal.exploratory")}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="p-4 pt-3 text-xs ink-3 leading-relaxed">
+            {why_one_timeframe}
+          </p>
         </Panel>
       )}
 

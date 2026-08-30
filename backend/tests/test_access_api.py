@@ -12,6 +12,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.api.deps import ROLE_PERMISSIONS
+from app.core.enums import Permission, UserRole
 from app.core.plans import CATALOG, Feature, Plan
 
 
@@ -65,16 +66,23 @@ class TestThePublishedMatrixIsTheEnforcedOne:
 
 
 class TestTheTwoAxesStayApart:
-    def test_an_admin_on_free_cannot_reach_live_execution(self, client):
+    def test_a_trader_on_free_cannot_reach_live_execution(self, client):
         """The load-bearing row. A role grants authority to act; a plan grants
         access to the capability. If this were true, the two checks would have
-        collapsed into one and the safer one would have lost."""
-        rows = client.get("/api/v1/access/matrix").json()["matrix"]
-        admin_free = next(r for r in rows if r["role"] == "admin" and r["plan"] == "free")
+        collapsed into one and the safer one would have lost.
 
-        assert admin_free["holds_execute_permission"] is True
-        assert admin_free["plan_includes_live_execution"] is False
-        assert admin_free["could_place_an_order"] is False
+        Written against `admin` until the role table was split. Admin no longer
+        holds EXECUTE, so it stopped being able to demonstrate the point: a row
+        blocked on both axes proves nothing about either. `trader` is the role
+        that holds the authority and is still refused by the plan, which is the
+        thing this row exists to show.
+        """
+        rows = client.get("/api/v1/access/matrix").json()["matrix"]
+        trader_free = next(r for r in rows if r["role"] == "trader" and r["plan"] == "free")
+
+        assert trader_free["holds_execute_permission"] is True
+        assert trader_free["plan_includes_live_execution"] is False
+        assert trader_free["could_place_an_order"] is False
 
     def test_a_viewer_on_paid_cannot_place_an_order_either(self, client):
         rows = client.get("/api/v1/access/matrix").json()["matrix"]
@@ -143,3 +151,72 @@ class TestConditionsAreReportedApartFromPaywalls:
         payload = client.get("/api/v1/access/plans").json()
 
         assert "no payment processor" in payload["billing"]
+
+
+class TestTheRolesAreActuallyDifferent:
+    """Five names over three behaviours is not a permission model.
+
+    `OWNER`, `ADMIN` and `TRADER` held an identical set, so every one of these
+    would have passed by accident before the table was split - which is why
+    they are written as differences rather than as memberships. A test that
+    only asserts "admin holds READ" survives a table where admin holds
+    everything.
+    """
+
+    def test_no_two_roles_hold_the_same_set(self, client):
+        published = {
+            row["role"]: frozenset(row["permissions"])
+            for row in client.get("/api/v1/access/roles").json()["roles"]
+        }
+
+        assert len(set(published.values())) == len(published), published
+
+    def test_an_administrator_cannot_send_an_order(self, client):
+        """The separation that was missing. Running the deployment and
+        spending its money are different jobs."""
+        assert Permission.EXECUTE not in ROLE_PERMISSIONS[UserRole.ADMIN]
+        assert Permission.BROKER_MANAGE not in ROLE_PERMISSIONS[UserRole.ADMIN]
+
+    def test_a_trader_cannot_add_a_user_or_issue_a_key(self, client):
+        assert Permission.USERS_MANAGE not in ROLE_PERMISSIONS[UserRole.TRADER]
+        assert Permission.KEYS_MANAGE not in ROLE_PERMISSIONS[UserRole.TRADER]
+
+    def test_the_owner_holds_every_permission(self, client):
+        """Not a list that has to be kept in step with the enum - the set
+        itself, so a permission added tomorrow is the owner's without anyone
+        remembering to add it."""
+        assert ROLE_PERMISSIONS[UserRole.OWNER] == set(Permission)
+
+
+class TestStoppingIsWiderThanStarting:
+    """Halting moves toward safety and releasing moves away from it, so they
+    are not one authority. A single `killswitch` permission would have given
+    whoever could stop the system the power to start it again."""
+
+    def test_every_role_above_viewer_can_halt(self):
+        for role in (UserRole.OWNER, UserRole.ADMIN, UserRole.TRADER, UserRole.ANALYST):
+            assert Permission.HALT in ROLE_PERMISSIONS[role], role
+
+    def test_only_the_owner_can_release(self):
+        holders = [r for r, p in ROLE_PERMISSIONS.items() if Permission.RELEASE in p]
+
+        assert holders == [UserRole.OWNER]
+
+    def test_a_viewer_cannot_halt(self):
+        """Self sign-up lands on viewer. If that role could halt, registering
+        would be a way to stop somebody else's trading."""
+        assert Permission.HALT not in ROLE_PERMISSIONS[UserRole.VIEWER]
+
+
+class TestReadingTheLogIsItsOwnPermission:
+    def test_audit_read_is_not_inside_read(self, client):
+        """The log carries addresses, times and failed attempts. A role made
+        to look at charts does not need to know when the owner last signed in
+        or from where."""
+        assert Permission.AUDIT_READ not in ROLE_PERMISSIONS[UserRole.ANALYST]
+        assert Permission.AUDIT_READ not in ROLE_PERMISSIONS[UserRole.VIEWER]
+
+    def test_the_roles_that_hold_it_are_the_administrative_ones(self):
+        holders = {r for r, p in ROLE_PERMISSIONS.items() if Permission.AUDIT_READ in p}
+
+        assert holders == {UserRole.OWNER, UserRole.ADMIN}

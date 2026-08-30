@@ -40,6 +40,12 @@ SERVER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._\- ]{2,63}$")
 FORBIDDEN_IN_PASSWORD = ("\n", "\r")
 
 
+#: A terminal name is the same shape as an account key elsewhere in this
+#: codebase: short, lowercase, no path characters. It is about to be written
+#: into a file a host agent reads, so the check is about injection, not taste.
+TERMINAL_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,30}[a-z0-9]$")
+
+
 @dataclass(frozen=True)
 class LinkRequest:
     """A broker login on its way to the terminal."""
@@ -47,9 +53,31 @@ class LinkRequest:
     login: str
     server: str
     password: str
+    #: Which terminal to apply it to, by the key the bridge map uses. None
+    #: lets the agent pick the first terminal that has never held an account -
+    #: which is what a person adding "my next account" almost always means.
+    terminal: str | None = None
 
     def as_payload(self) -> dict[str, str]:
-        return {"login": self.login, "server": self.server, "password": self.password}
+        payload = {"login": self.login, "server": self.server, "password": self.password}
+        if self.terminal:
+            payload["terminal"] = self.terminal
+        return payload
+
+
+@dataclass(frozen=True)
+class ClearRequest:
+    """An instruction to log one terminal out and forget its login.
+
+    Carries no credential at all. It exists as its own type so a code path
+    that handles passwords and one that deletes them cannot be conflated by a
+    forgotten keyword argument.
+    """
+
+    terminal: str
+
+    def as_payload(self) -> dict[str, str]:
+        return {"action": "clear", "terminal": self.terminal}
 
 
 @dataclass(frozen=True)
@@ -108,7 +136,32 @@ def validate(login: str, server: str, password: str) -> LinkRequest:
     return LinkRequest(login=login, server=server, password=password)
 
 
-def submit(request: LinkRequest, *, now: datetime | None = None) -> LinkResult:
+def validate_terminal(terminal: str | None) -> str | None:
+    """The terminal key, checked before it reaches a file the agent reads."""
+    if terminal is None or not terminal.strip():
+        return None
+    terminal = terminal.strip()
+    if not TERMINAL_RE.match(terminal):
+        raise ValidationFailedError(
+            "A terminal name is 2 to 32 characters of lowercase letters, "
+            "digits, dash or underscore."
+        )
+    return terminal
+
+
+def validate_clear(terminal: str | None) -> ClearRequest:
+    """A clear must name its terminal. There is no safe default to log out."""
+    checked = validate_terminal(terminal)
+    if checked is None:
+        raise ValidationFailedError(
+            "Clearing a login needs the terminal named. Logging out a default "
+            "terminal on a blank field would disconnect an account nobody "
+            "meant to touch."
+        )
+    return ClearRequest(terminal=checked)
+
+
+def submit(request: LinkRequest | ClearRequest, *, now: datetime | None = None) -> LinkResult:
     """Write the request for the host agent to pick up.
 
     Written to a temporary name and renamed into place. The agent globs for
@@ -132,16 +185,16 @@ def submit(request: LinkRequest, *, now: datetime | None = None) -> LinkResult:
         return LinkResult(
             queued=False,
             request_id=request_id,
-            login=request.login,
-            server=request.server,
+            login=getattr(request, "login", ""),
+            server=getattr(request, "server", ""),
             reason=f"the request could not be written: {exc.strerror or exc}",
         )
 
     return LinkResult(
         queued=True,
         request_id=request_id,
-        login=request.login,
-        server=request.server,
+        login=getattr(request, "login", ""),
+        server=getattr(request, "server", ""),
     )
 
 

@@ -395,3 +395,468 @@ class TestTheControlCarriesWhateverTheRuleIsGroupedBy:
             .one()
         )
         assert "timeframe" not in control.before
+
+
+class TestThePairedReadingUsesTheBarBothArmsShare:
+    """`comparison` counts each arm on its own. Both arms are written in one
+    call on the same symbol and bar, so that reading throws away the pairing
+    the table was built to carry - and it is the pairing that the registered
+    claim's own z = 3.69 came from.
+    """
+
+    SINCE = NOW - timedelta(days=365)
+
+    def pair(self, session, *, symbol, at, rule_r, control_r):
+        """One bar, both arms, both closed - what `record_with_control` writes."""
+        for arm, r in ((ARM_RULE, rule_r), (ARM_CONTROL, control_r)):
+            entry = journal_log.record_decision(
+                session, symbol=symbol, decision="long", at=at, arm=arm
+            )
+            journal_log.close(
+                session,
+                entry.entry_id,
+                outcome="win" if r > 0 else "loss",
+                r_multiple=r,
+            )
+
+    def test_it_pairs_the_two_arms_on_one_bar(self, session):
+        self.pair(session, symbol="EURUSD", at=bar(1), rule_r=1.0, control_r=-1.0)
+        self.pair(session, symbol="EURUSD", at=bar(2), rule_r=1.0, control_r=-1.0)
+
+        paired = journal_log.paired_comparison(session, since=self.SINCE)
+
+        assert paired.pairs == 2
+        assert paired.instants == 2
+        assert paired.mean_difference == 2.0
+
+    def test_two_symbols_on_one_bar_are_one_instant(self, session):
+        """One market move ranked across two symbols is one piece of evidence
+        about that move, not two. Counting them apart is the clustering the
+        registered claim corrected for, and it cost 1.1x of significance."""
+        self.pair(session, symbol="EURUSD", at=bar(1), rule_r=1.0, control_r=-1.0)
+        self.pair(session, symbol="GBPUSD", at=bar(1), rule_r=1.0, control_r=-1.0)
+
+        paired = journal_log.paired_comparison(session, since=self.SINCE)
+
+        assert paired.pairs == 2
+        assert paired.instants == 1
+
+    def test_a_half_resolved_pair_is_not_evidence(self, session):
+        """A closed rule entry whose control is still open says nothing about
+        the difference between them, and counting it lets the two arms drift
+        apart whenever they resolve at different rates."""
+        self.pair(session, symbol="EURUSD", at=bar(1), rule_r=1.0, control_r=-1.0)
+        lonely = journal_log.record_decision(
+            session, symbol="AUDUSD", decision="long", at=bar(2), arm=ARM_RULE
+        )
+        journal_log.close(session, lonely.entry_id, outcome="win", r_multiple=1.0)
+
+        paired = journal_log.paired_comparison(session, since=self.SINCE)
+
+        assert paired.pairs == 1
+
+    def test_pairing_sees_a_consistent_edge_the_unpaired_test_misses(self, session):
+        """The point of the whole change, on data where the answer is known.
+
+        The rule beats the control by a steady 0.2R on every one of thirty
+        bars while both arms swing far more than that from bar to bar. Paired,
+        the swing cancels and the edge is unmistakable. Unpaired, each arm
+        carries its own variance and the difference in *hit rate* is zero,
+        because the rule and the control win on exactly the same bars.
+        """
+        for n in range(30):
+            # A market swing far larger than the edge, common to both arms.
+            swing = 3.0 if n % 2 else -3.0
+            # The edge itself wobbles, so the difference has real spread and
+            # the t below is a measurement rather than a division by zero.
+            edge = 0.2 + (0.02 if n % 3 == 0 else -0.01)
+            self.pair(
+                session,
+                symbol="EURUSD",
+                at=bar(n),
+                rule_r=swing + edge,
+                control_r=swing,
+            )
+
+        paired = journal_log.paired_comparison(session, since=self.SINCE)
+        unpaired = journal_log.comparison(session, since=self.SINCE)
+
+        assert paired.mean_difference is not None
+        assert 0.19 < paired.mean_difference < 0.21
+        # The swing cancels, so what is left is the edge against its own
+        # small wobble - a t far above the threshold on thirty bars.
+        assert paired.t_statistic is not None
+        assert paired.t_statistic > 1.96
+        assert paired.verdict() == "distinguishable from the control"
+        # The unpaired reading sees two arms that won on exactly the same
+        # bars, so their hit rates are identical and the edge reads as zero.
+        assert unpaired.edge == 0.0
+
+    def test_it_does_not_call_a_coarse_measurement_a_refutation(self, session):
+        """Below the threshold the verdict says "not distinguishable", never
+        "no edge". An interval holding both zero and the effect being looked
+        for means the instrument was too coarse - and calling that a
+        refutation is the same mistake as calling an overfit backtest a
+        confirmation, pointed the other way."""
+        for n in range(10):
+            self.pair(
+                session,
+                symbol="EURUSD",
+                at=bar(n),
+                rule_r=1.0 if n % 2 else -1.0,
+                control_r=-1.0 if n % 2 else 1.0,
+            )
+
+        paired = journal_log.paired_comparison(session, since=self.SINCE)
+
+        assert paired.verdict() == "not distinguishable from the control"
+        assert "no edge" not in paired.verdict()
+
+
+class TestTheWaitIsSizedOnTheSpreadItCanSee:
+    """`readiness_of` projects a date from a per-instant spread, and until the
+    arms were paired there was no forward spread to project from - so it used
+    the one recovered from the historical claim. That is the number under
+    test, and the wait depends on its square.
+    """
+
+    SINCE = NOW - timedelta(days=365)
+
+    def pairs(self, session, n, *, spread):
+        """`n` instants whose rule-minus-control differences vary by `spread`.
+
+        Written after `MEASUREMENT_STARTS_AT`, because `readiness_of` counts
+        from there and entries before it are excluded by design - the window
+        that keeps the debugging period out of the measurement.
+        """
+        for i in range(n):
+            at = journal_log.MEASUREMENT_STARTS_AT + timedelta(hours=i + 1)
+            swing = 2.0 if i % 2 else -2.0
+            delta = spread if i % 2 else -spread
+            for arm, r in ((ARM_RULE, swing + delta), (ARM_CONTROL, swing)):
+                entry = journal_log.record_decision(
+                    session, symbol="EURUSD", decision="long", at=at, arm=arm
+                )
+                journal_log.close(
+                    session,
+                    entry.entry_id,
+                    outcome="win" if r > 0 else "loss",
+                    r_multiple=r,
+                )
+
+    def test_below_the_threshold_it_says_it_is_assuming(self, session):
+        """A spread from a handful of instants is itself noisy, and the sample
+        size goes as its square - so an early low reading would shorten the
+        wait on nothing, in the flattering direction."""
+        self.pairs(session, 5, spread=0.1)
+
+        card = journal_log.readiness_of(session).as_dict()
+
+        assert card["spread_is_measured"] is False
+        assert "recovered from the historical claim" in card["the_assumption"]
+
+    def test_with_enough_instants_it_measures_and_says_so(self, session):
+        self.pairs(session, journal_log.MIN_INSTANTS_FOR_SPREAD + 2, spread=0.1)
+
+        card = journal_log.readiness_of(session).as_dict()
+
+        assert card["spread_is_measured"] is True
+        assert "measured from the forward pairs" in card["the_assumption"]
+
+    def test_the_stated_spread_is_the_one_the_date_was_sized_on(self, session):
+        """`as_dict` used to recompute the historical spread for display while
+        `assess` accepted one as an argument, so a measured spread would have
+        moved the date and left the sentence explaining it quoting the
+        assumption. The two cannot disagree now because there is one value."""
+        self.pairs(session, journal_log.MIN_INSTANTS_FOR_SPREAD + 2, spread=0.1)
+
+        card = journal_log.readiness_of(session).as_dict()
+
+        assert f"{card['spread_r']:.3f}" in card["the_assumption"]
+
+    def test_a_wider_spread_needs_a_larger_sample(self, session):
+        """Quadratically, which is why guessing it is not a small matter."""
+        from app.learning import readiness as readiness_module
+
+        tight = readiness_module.instants_needed(0.02, 0.2)
+        wide = readiness_module.instants_needed(0.02, 0.4)
+
+        assert tight is not None and wide is not None
+        assert wide > tight * 3
+
+
+class TestTimeframesAreNotReadTogether:
+    """The worker records on five timeframes and the readers used none of
+    that. Two separate faults sat behind one missing filter.
+    """
+
+    SINCE = NOW - timedelta(days=365)
+
+    def pair(self, session, *, at, timeframe, rule_r, control_r):
+        for arm, r in ((ARM_RULE, rule_r), (ARM_CONTROL, control_r)):
+            entry = journal_log.record_decision(
+                session,
+                symbol="EURUSD",
+                decision="long",
+                at=at,
+                arm=arm,
+                timeframe=timeframe,
+            )
+            journal_log.close(
+                session,
+                entry.entry_id,
+                outcome="win" if r > 0 else "loss",
+                r_multiple=r,
+            )
+
+    def test_one_timestamp_on_two_timeframes_is_two_observations(self, session):
+        """An M15 bar and an H1 bar share a timestamp every hour. Grouped by
+        moment alone they became one instant whose difference was the mean of
+        two regimes - the join invisible afterwards."""
+        moment = journal_log.MEASUREMENT_STARTS_AT + timedelta(hours=3)
+        self.pair(session, at=moment, timeframe="H1", rule_r=1.0, control_r=-1.0)
+        self.pair(session, at=moment, timeframe="M15", rule_r=-1.0, control_r=1.0)
+
+        h1 = journal_log.paired_comparison(session, since=self.SINCE, timeframe="H1")
+        m15 = journal_log.paired_comparison(session, since=self.SINCE, timeframe="M15")
+
+        assert h1.instants == 1 and h1.pairs == 1
+        assert m15.instants == 1 and m15.pairs == 1
+        # Opposite results, and neither cancels the other into a zero.
+        assert h1.mean_difference == 2.0
+        assert m15.mean_difference == -2.0
+
+    def test_the_headline_is_the_timeframe_the_rule_trades(self, session):
+        """H1, because that is what the live rule decides on. A faster
+        timeframe carrying more instants must not pull the headline toward a
+        series nobody is trading."""
+        moment = journal_log.MEASUREMENT_STARTS_AT + timedelta(hours=5)
+        self.pair(session, at=moment, timeframe="H1", rule_r=1.0, control_r=-1.0)
+        for i in range(6):
+            self.pair(
+                session,
+                at=moment + timedelta(minutes=15 * (i + 1)),
+                timeframe="M15",
+                rule_r=-1.0,
+                control_r=1.0,
+            )
+
+        default = journal_log.paired_comparison(session, since=self.SINCE)
+
+        assert journal_log.TRADED_TIMEFRAME == "H1"
+        assert default.instants == 1
+        assert default.mean_difference == 2.0
+
+    def test_the_unpaired_count_is_scoped_too(self, session):
+        """`comparison` had the same gap, and it is the one on the page."""
+        moment = journal_log.MEASUREMENT_STARTS_AT + timedelta(hours=7)
+        self.pair(session, at=moment, timeframe="H1", rule_r=1.0, control_r=-1.0)
+        self.pair(
+            session,
+            at=moment + timedelta(minutes=15),
+            timeframe="M15",
+            rule_r=1.0,
+            control_r=1.0,
+        )
+
+        h1 = journal_log.comparison(session, since=self.SINCE, timeframe="H1")
+
+        assert h1.rule_trials == 1
+        assert h1.control_trials == 1
+
+    def test_the_breakdown_names_every_timeframe_recorded(self, session):
+        """Published so the headline's scope is visible beside it. Nobody
+        should have to know a constant to see that four other series exist."""
+        moment = journal_log.MEASUREMENT_STARTS_AT + timedelta(hours=9)
+        self.pair(session, at=moment, timeframe="H1", rule_r=1.0, control_r=-1.0)
+        self.pair(session, at=moment, timeframe="M5", rule_r=1.0, control_r=-1.0)
+
+        view = journal_log.summary(session)
+
+        assert set(view["by_timeframe"]) >= {"H1", "M5"}
+
+
+class TestTheRateIsMeasuredOverTheTimeItWasRecording:
+    """`MEASUREMENT_STARTS_AT` is the date bad entries stop counting, not the
+    date recording began. Dividing by the whole window divides a real
+    numerator by an idle denominator, and the answer travels straight into
+    the projected date.
+    """
+
+    def entries(self, session, *, start_offset_days, n):
+        base = journal_log.MEASUREMENT_STARTS_AT + timedelta(days=start_offset_days)
+        for i in range(n):
+            e = journal_log.record_decision(
+                session, symbol="EURUSD", decision="long",
+                at=base + timedelta(hours=i), arm=ARM_RULE,
+            )
+            journal_log.close(session, e.entry_id, outcome="win", r_multiple=1.0)
+
+    def test_idle_days_before_the_first_entry_do_not_dilute_the_rate(self, session):
+        """Recording that began nine days into the window is a nine-day-
+        shorter measurement, not a slower one."""
+        self.entries(session, start_offset_days=9, n=20)
+        now = journal_log.MEASUREMENT_STARTS_AT + timedelta(days=19)
+
+        card = journal_log.readiness_of(session, now=now)
+
+        # Ten days of recording, not nineteen: 20 instants over ~10 days is
+        # about 14 a week, and over nineteen it would read as about 7.
+        assert card.instants_per_week is not None
+        assert 12.0 < card.instants_per_week < 16.0
+
+    def test_a_series_that_never_recorded_has_no_rate(self, session):
+        """No entries is not a rate of zero - it is nothing to divide."""
+        now = journal_log.MEASUREMENT_STARTS_AT + timedelta(days=30)
+
+        card = journal_log.readiness_of(session, now=now)
+
+        assert card.instants_per_week is None
+        assert card.answerable_on is None
+
+
+class TestAnExploratoryLookCarriesAWiderBar:
+    """Today's mistake, encoded so it cannot be repeated silently: four extra
+    timeframes were read and their results treated like the one that was
+    pre-registered.
+    """
+
+    def pair(self, session, *, at, timeframe, rule_r, control_r):
+        for arm, r in ((ARM_RULE, rule_r), (ARM_CONTROL, control_r)):
+            e = journal_log.record_decision(
+                session, symbol="EURUSD", decision="long",
+                at=at, arm=arm, timeframe=timeframe,
+            )
+            journal_log.close(
+                session, e.entry_id,
+                outcome="win" if r > 0 else "loss", r_multiple=r,
+            )
+
+    def populate(self, session, timeframe, n, *, rule_r, control_r):
+        base = journal_log.MEASUREMENT_STARTS_AT + timedelta(days=1)
+        for i in range(n):
+            self.pair(
+                session, at=base + timedelta(hours=i), timeframe=timeframe,
+                rule_r=rule_r + (0.1 if i % 2 else -0.1), control_r=control_r,
+            )
+
+    def test_the_traded_timeframe_keeps_the_plain_bar(self, session):
+        self.populate(session, "H1", 8, rule_r=1.0, control_r=-1.0)
+
+        cards = journal_log.paired_by_timeframe(session)
+
+        assert cards["H1"]["pre_registered"] is True
+        assert cards["H1"]["required_t"] == 1.96
+
+    def test_a_faster_series_must_clear_more(self, session):
+        """Not because M15 is less real, but because it is one of several
+        looks nobody committed to in advance."""
+        self.populate(session, "H1", 8, rule_r=1.0, control_r=-1.0)
+        self.populate(session, "M15", 8, rule_r=1.0, control_r=-1.0)
+        self.populate(session, "M5", 8, rule_r=1.0, control_r=-1.0)
+
+        cards = journal_log.paired_by_timeframe(session)
+
+        assert cards["M15"]["pre_registered"] is False
+        assert cards["M15"]["required_t"] > 1.96
+        assert cards["M15"]["required_t"] == cards["M5"]["required_t"]
+
+    def test_the_bar_widens_with_the_number_of_looks(self, session):
+        self.populate(session, "H1", 6, rule_r=1.0, control_r=-1.0)
+        self.populate(session, "M15", 6, rule_r=1.0, control_r=-1.0)
+        one_look = journal_log.paired_by_timeframe(session)["M15"]["required_t"]
+
+        self.populate(session, "M5", 6, rule_r=1.0, control_r=-1.0)
+        self.populate(session, "M1", 6, rule_r=1.0, control_r=-1.0)
+        three_looks = journal_log.paired_by_timeframe(session)["M15"]["required_t"]
+
+        assert three_looks > one_look
+
+    def test_each_timeframe_is_judged_against_its_own_bar(self, session):
+        """The verdict string has to follow the widened threshold, or the bar
+        is decoration."""
+        self.populate(session, "H1", 6, rule_r=1.0, control_r=-1.0)
+        self.populate(session, "M15", 6, rule_r=1.0, control_r=-1.0)
+        self.populate(session, "M5", 6, rule_r=1.0, control_r=-1.0)
+        self.populate(session, "M1", 6, rule_r=1.0, control_r=-1.0)
+
+        cards = journal_log.paired_by_timeframe(session)
+
+        for tf, card in cards.items():
+            t, bar = card["t_statistic"], card["required_t"]
+            if t is None:
+                continue
+            verdict = card["verdict"]
+            if t >= bar:
+                assert verdict == "distinguishable from the control", tf
+            elif t <= -bar:
+                assert verdict == "distinguishably worse than the control", tf
+            else:
+                assert verdict == "not distinguishable from the control", tf
+
+
+class TestLosingIsAFindingAndNotAnAbsence:
+    """A rule beaten by its own coin flip by more than the threshold demands
+    is a result. Reported as "not distinguishable" it reads as "nothing found
+    yet", which is the flattering direction and the one this package must
+    never take.
+
+    Live H1 was at t = -2.71 against a bar of 1.96 when this was written, and
+    the verdict string called it not distinguishable.
+    """
+
+    def pair(self, session, *, at, rule_r, control_r):
+        for arm, r in ((ARM_RULE, rule_r), (ARM_CONTROL, control_r)):
+            e = journal_log.record_decision(
+                session, symbol="EURUSD", decision="long", at=at, arm=arm
+            )
+            journal_log.close(
+                session, e.entry_id,
+                outcome="win" if r > 0 else "loss", r_multiple=r,
+            )
+
+    def losing_series(self, session, n=12):
+        base = journal_log.MEASUREMENT_STARTS_AT + timedelta(days=1)
+        for i in range(n):
+            # The rule loses to the control on every bar, by a margin that
+            # wobbles just enough to have a spread.
+            wobble = 0.1 if i % 3 else -0.1
+            self.pair(
+                session, at=base + timedelta(hours=i),
+                rule_r=-1.0 + wobble, control_r=1.0,
+            )
+
+    def test_a_significantly_worse_rule_says_so(self, session):
+        self.losing_series(session)
+
+        paired = journal_log.paired_comparison(
+            session, since=NOW - timedelta(days=365)
+        )
+
+        assert paired.t_statistic is not None and paired.t_statistic < -1.96
+        assert paired.verdict() == "distinguishably worse than the control"
+
+    def test_it_is_not_reported_as_nothing_found(self, session):
+        """The exact wording that hid it: a losing rule must not borrow the
+        sentence a coarse measurement uses."""
+        self.losing_series(session)
+
+        paired = journal_log.paired_comparison(
+            session, since=NOW - timedelta(days=365)
+        )
+
+        assert paired.verdict() != "not distinguishable from the control"
+
+    def test_a_widened_bar_still_applies_to_the_losing_side(self, session):
+        """Symmetric, or an exploratory look could claim a loss on a bar it
+        never had to clear."""
+        self.losing_series(session)
+
+        paired = journal_log.paired_comparison(
+            session, since=NOW - timedelta(days=365)
+        )
+        t = paired.t_statistic
+
+        assert paired.verdict(required=abs(t) + 1.0) == (
+            "not distinguishable from the control"
+        )

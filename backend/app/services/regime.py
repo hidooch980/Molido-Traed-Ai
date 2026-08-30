@@ -257,28 +257,62 @@ def classify(
     for s in scores:
         current = merged.get(s.regime)
         if current is None or s.score > current.score:
-            merged[s.regime] = s
+            merged[s.regime] = RegimeScore(
+                s.regime,
+                s.score,
+                list(s.evidence),
+            )
         else:
             current.evidence.extend(s.evidence)
 
     ranked = sorted(merged.values(), key=lambda x: -x.score)
-    best = ranked[0]
-    runner_up = ranked[1].score if len(ranked) > 1 else 0.0
+
+    # Structural market regimes compete with structural regimes.
+    # Volatility is context and must not invalidate an otherwise valid
+    # structural classification such as RANGE or TREND_UP.
+    structural_regimes = {
+        Regime.TREND_UP,
+        Regime.TREND_DOWN,
+        Regime.RANGE,
+        Regime.BREAKOUT,
+        Regime.REVERSAL,
+    }
+
+    structural = [s for s in ranked if s.regime in structural_regimes]
+
+    # Prefer structural classification whenever one exists.
+    # Volatility remains visible in `scores` as supporting context.
+    candidates = structural if structural else ranked
+
+    best = candidates[0]
+    runner_up = candidates[1].score if len(candidates) > 1 else 0.0
     margin = best.score - runner_up
 
-    if margin < MIN_MARGIN:
+    if len(candidates) > 1 and margin < MIN_MARGIN:
+        runner_name = candidates[1].regime.value
         result = _uncertain(
-            f"top two readings are {margin:.2f} apart, below the {MIN_MARGIN} margin",
+            f"top two structural readings are "
+            f"{best.regime.value} and {runner_name}, "
+            f"{margin:.4f} apart, below the {MIN_MARGIN:.2f} margin",
             missing,
         )
         result.as_of = cutoff
         result.scores = ranked
         return result
 
+    # With only one structural reading there is no runner-up margin.
+    # Use the rule score itself as confidence instead of manufacturing
+    # certainty from `best.score - 0`.
+    confidence = (
+        min(1.0, best.score)
+        if len(candidates) == 1
+        else min(1.0, margin * 2)
+    )
+
     return RegimeResult(
         regime=best.regime,
         # The margin, scaled — explicitly not a probability.
-        confidence=min(1.0, margin * 2),
+        confidence=confidence,
         as_of=cutoff,
         scores=ranked,
         evidence=best.evidence,

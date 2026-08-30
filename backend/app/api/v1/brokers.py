@@ -26,7 +26,7 @@ from app.brain import rulebooks as rulebook_module
 from app.core.config import get_settings
 from app.core.enums import Permission
 from app.execution import broker as broker_module
-from app.providers.metatrader import MetaTraderBridge
+from app.providers.metatrader import MetaTraderBridge, bridge_dirs
 from app.services import mt5_link
 
 router = APIRouter(prefix="/brokers", tags=["brokers"])
@@ -34,7 +34,9 @@ router = APIRouter(prefix="/brokers", tags=["brokers"])
 READ = Depends(require(Permission.READ))
 #: Not EXECUTE. Connecting a terminal is not placing an order, and a route that
 #: asks for more authority than it needs is how the two stop being separate.
-SIMULATE = Depends(require(Permission.SIMULATE))
+#: Not SIMULATE either, which an analyst holds: handing a broker login to the
+#: host agent is the point at which a deployment stops being a simulator.
+BROKER_MANAGE = Depends(require(Permission.BROKER_MANAGE))
 
 log = structlog.get_logger(__name__)
 
@@ -46,6 +48,16 @@ class LinkPayload(BaseModel):
     server: str = Field(min_length=3, max_length=64, description="Broker server name")
     # No example, and never echoed back in a response or a log line.
     password: str = Field(min_length=1, max_length=256, repr=False)
+    #: Which terminal to apply it to. Blank lets the agent pick the first one
+    #: that has never held an account, which is what "add my next account"
+    #: almost always means.
+    terminal: str | None = Field(default=None, max_length=32)
+
+
+class ClearPayload(BaseModel):
+    """Log one terminal out. Names its terminal, carries no credential."""
+
+    terminal: str = Field(min_length=2, max_length=32)
 
 #: Where MetaTrader lives on the host. The application runs in a container and
 #: cannot see it, which is itself worth reporting rather than hiding: a bridge
@@ -92,20 +104,7 @@ def read_brokers(_: Principal = READ) -> dict[str, Any]:
                 "will"
             ),
         },
-        "metatrader": {
-            "name": "MetaTrader 5",
-            "installed_on_host": True,
-            "reachable_from_application": False,
-            "terminal_path": MT5_TERMINAL_PATH,
-            "role": "prices, symbol specifications and order placement",
-            "blocked_by": [
-                "no account is logged in to the terminal, and MetaTrader "
-                "returns no price and accepts no order until one is",
-                "the MetaTrader Python package is Windows-only, so the "
-                "application reaches the terminal through a bridge process "
-                "rather than by importing it, and that bridge is not built yet",
-            ],
-        },
+        "metatrader": _metatrader_summary(),
         "challenge_providers": rulebook_module.providers(),
         "no_broker_catalogue_here": True,
         "why": (
@@ -113,6 +112,44 @@ def read_brokers(_: Principal = READ) -> dict[str, Any]:
             "provider, in writing. Publishing a guessed one produces a "
             "connection that never establishes and a search for the reason "
             "that goes everywhere except the list that looked authoritative"
+        ),
+    }
+
+
+def _metatrader_summary() -> dict[str, Any]:
+    """Every terminal's live state, read from what its expert publishes.
+
+    This block was once a hardcoded "no account, bridge not built yet" - true
+    on the day it was written and false ever after, which meant the site's own
+    brokers page denied eight running terminals. Everything here is now read
+    from the bridge files at request time; when a terminal stops publishing,
+    its row says so instead of the page saying nothing exists.
+    """
+    terminals: dict[str, Any] = {}
+    connected = 0
+    for key, path in sorted(bridge_dirs().items()):
+        each = MetaTraderBridge(directory=path)
+        account = each.account()
+        terminals[key] = account
+        # `connected` lives inside the bridge state, not beside the balance.
+        if account.get("available") and account.get("state", {}).get("connected"):
+            connected += 1
+
+    return {
+        "name": "MetaTrader 5",
+        "installed_on_host": True,
+        "reachable_from_application": connected > 0,
+        "terminal_path": MT5_TERMINAL_PATH,
+        "role": "prices, symbol specifications and order placement",
+        "terminals": terminals,
+        "connected_terminals": connected,
+        "blocked_by": (
+            []
+            if connected
+            else [
+                "no terminal is currently publishing a connected account - "
+                "add one on this page and the host agent applies it"
+            ]
         ),
     }
 
@@ -154,22 +191,34 @@ def read_link_result(request_id: str, _: Principal = READ) -> dict[str, Any]:
 @router.post("/link")
 def create_link(
     payload: LinkPayload,
-    principal: Principal = SIMULATE,
+    principal: Principal = BROKER_MANAGE,
 ) -> dict[str, Any]:
     """Hand a broker login to the host agent.
 
-    Carries SIMULATE rather than READ, which means an unauthenticated caller is
+    Carries a permission above READ, which means an unauthenticated caller is
     refused before the body is read - `require()` enforces that for every
     permission above READ regardless of whether authentication is switched on.
     It deliberately does not carry EXECUTE: this connects a terminal, it does
     not place an order, and a route that asked for more authority than it needs
     would be the first step in blurring the two.
 
+    `BROKER_MANAGE` rather than SIMULATE, which every analyst holds. Handing
+    over a broker login is the moment a deployment stops being a simulator,
+    and the roles that may do it are the ones whose accounts they are.
+
     The password is validated, written into the request, and kept nowhere in
     this application. MetaTrader holds it in its own config, which it would do
     whatever this endpoint did.
     """
     request = mt5_link.validate(payload.login, payload.server, payload.password)
+    terminal = mt5_link.validate_terminal(payload.terminal)
+    if terminal is not None:
+        request = mt5_link.LinkRequest(
+            login=request.login,
+            server=request.server,
+            password=request.password,
+            terminal=terminal,
+        )
     result = mt5_link.submit(request)
     body = result.as_dict()
     body["applied_by"] = "host agent"
@@ -181,6 +230,38 @@ def create_link(
         request_id=result.request_id,
         login=result.login,
         server=result.server,
+        queued=result.queued,
+        tenant_id=str(principal.tenant_id) if principal.tenant_id else None,
+    )
+    return body
+
+
+@router.post("/unlink")
+def unlink_account(
+    payload: ClearPayload,
+    principal: Principal = BROKER_MANAGE,
+) -> dict[str, Any]:
+    """Log a terminal out and forget its login.
+
+    The startup config is deleted and the terminal restarted with nothing to
+    log into; the saved session inside its prefix goes too, or it would
+    quietly log back in with remembered credentials and report itself cleared
+    while trading the same account. Deactivate and delete are the same
+    mechanical act here - what differs is bookkeeping, and the accounts table
+    on the challenge page owns that.
+
+    `BROKER_MANAGE`, exactly like linking. Disconnecting a terminal mid-trade
+    is as much an act on the account as connecting it was.
+    """
+    request = mt5_link.validate_clear(payload.terminal)
+    result = mt5_link.submit(request)
+    body = result.as_dict()
+    body["applied_by"] = "host agent"
+    body["next"] = f"/api/v1/brokers/link/{result.request_id}"
+    log.info(
+        "broker.unlink_requested",
+        request_id=result.request_id,
+        terminal=payload.terminal,
         queued=result.queued,
         tenant_id=str(principal.tenant_id) if principal.tenant_id else None,
     )
@@ -199,6 +280,23 @@ def read_metatrader(_: Principal = READ) -> dict[str, Any]:
     bridge = MetaTraderBridge()
     state = bridge.state()
     payload: dict[str, Any] = {"state": state.as_dict()}
+
+    # Every terminal, not just the built-in one. The bridge map grew to eight
+    # directories while this endpoint kept reporting the first, which read on
+    # the site as seven connected accounts not existing.
+    terminals: dict[str, Any] = {}
+    for key, path in sorted(bridge_dirs().items()):
+        each = MetaTraderBridge(directory=path)
+        each_state = each.state()
+        terminals[key] = {
+            "state": each_state.as_dict(),
+            "account": (
+                each.account()
+                if each_state.usable
+                else {"available": False, "reason": each_state.reason}
+            ),
+        }
+    payload["terminals"] = terminals
 
     if not state.usable:
         payload["account"] = {"available": False, "reason": state.reason}

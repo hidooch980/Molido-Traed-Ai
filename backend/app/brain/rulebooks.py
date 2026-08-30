@@ -37,10 +37,12 @@ from app.brain.challenge import (
     AllowanceBasis,
     ChallengeRules,
     DrawdownBasis,
+    LeverageCaps,
 )
+from app.core.enums import AssetClass
 
 #: When the FundedNext pages below were read.
-FUNDEDNEXT_RETRIEVED = date(2026, 8, 13)
+FUNDEDNEXT_RETRIEVED = date(2026, 8, 30)
 FUNDEDNEXT_SOURCE = "https://fundednext.com/general-rules"
 
 
@@ -113,24 +115,100 @@ def _publish(value: Any) -> Any:
 #   News trading is "allowed, with no restrictions on when or how you trade",
 #   and the 40% news profit split explicitly excludes the challenge phases.
 #
-#   No consistency rule appears anywhere in the published Trading Objectives.
-#   That is recorded as NOT_IMPOSED on the strength of the page's own claim to
-#   list "every rule, every condition" - an inference, and named as one.
+#   The consistency inference above was WRONG, and was withdrawn on 30 Aug.
+#   It read NOT_IMPOSED out of the Trading Objectives page's claim to list
+#   "every rule, every condition". A 40% consistency rule does exist - best
+#   day's profit no more than 40% of total - it simply lives in the help
+#   centre rather than that page, attached to reward eligibility on the
+#   FundedNext account. Whether it binds a Stellar *challenge* phase is not
+#   stated either way, so the field is now `None` and blocks.
 #
-#   Weekend holding is left unknown. It is not mentioned on any tab, and the
-#   exhaustiveness claim is a weaker basis for a rule about when positions may
-#   be held than for one about how they are scored.
+#   The lesson is about direction. Every other unknown in this file blocks;
+#   a NOT_IMPOSED asserts a rule's absence and therefore permits, so it is
+#   the one value an inference must never produce. Only a sentence that says
+#   the rule does not exist can write it - Instant has such a sentence and
+#   keeps NOT_IMPOSED; the challenge phases never did.
+#
+#   Three facts were published between 13 and 30 Aug that were absent before,
+#   and are now read rather than inferred:
+#     - weekend holding: "allowed across every CFDs account, at every stage"
+#     - position cap: "Challenge / FundedNext: no hard cap, no fixed limit"
+#       (help centre, "What is the maximum lot size in FundedNext?", 24 Feb
+#       2026). The 5-position cap on the same page is the monthly competition
+#       and binds nothing here.
+#     - leverage: now published, but per asset class - see `max_leverage`.
+
+# Leverage as the Symbols & Conditions tab publishes it, read 30 Aug 2026.
+# Gold, silver and oil are filed under "Commodities" by that page, so METAL
+# takes the commodity cap rather than one of its own - the enum splits them
+# and the provider does not.
+#
+# These are the challenge-phase figures. The funded phase tightens indices
+# and commodities on both programmes, and there is no funded FundedNext
+# rulebook here to hold that; Instant is funded from day one and has its own.
+_CRYPTO_ONE_TO_ONE = {AssetClass.CRYPTO: 1.0}
+
+_LEVERAGE_1STEP = LeverageCaps(
+    {
+        AssetClass.FOREX: 30.0,
+        AssetClass.INDEX: 10.0,
+        AssetClass.COMMODITY: 15.0,
+        AssetClass.METAL: 15.0,
+        **_CRYPTO_ONE_TO_ONE,
+    }
+)
+
+_LEVERAGE_2STEP_AND_LITE = LeverageCaps(
+    {
+        AssetClass.FOREX: 100.0,
+        AssetClass.INDEX: 25.0,
+        AssetClass.COMMODITY: 25.0,
+        AssetClass.METAL: 25.0,
+        **_CRYPTO_ONE_TO_ONE,
+    }
+)
+
+_LEVERAGE_INSTANT = LeverageCaps(
+    {
+        AssetClass.FOREX: 30.0,
+        AssetClass.INDEX: 5.0,
+        AssetClass.COMMODITY: 7.5,
+        AssetClass.METAL: 7.5,
+        **_CRYPTO_ONE_TO_ONE,
+    }
+)
 
 _COMMON: dict[str, Any] = {
+    # Left unread on purpose, which is not the same as an omission.
+    #
+    # The page permits Expert Advisors on every model *subject to a paid
+    # add-on bought per account*. That is neither a permission nor a
+    # prohibition for any particular account, and there is no value here for
+    # "conditional" - so it stays `None`, the gate reports the permission as
+    # unread, and the holder confirms it for the account they actually bought.
+    # Writing `True` would assert an add-on nobody has evidence of.
+    "automated_trading_allowed": None,
     "drawdown_basis": DrawdownBasis.EQUITY,
     "allowance_basis": AllowanceBasis.STARTING_BALANCE,
     "total_drawdown_trailing": False,
     "max_trading_days": NOT_IMPOSED,       # "No deadline to pass the Challenge."
-    "max_single_day_profit_share": NOT_IMPOSED,
+    # Was NOT_IMPOSED by inference until 30 Aug; the 40% consistency rule is
+    # real and the inference was withdrawn. Unknown for a challenge phase, so
+    # it blocks. Instant overrides this - its own page says it has none.
+    "max_single_day_profit_share": None,
     "news_trading_allowed": True,
-    "weekend_holding_allowed": None,       # not stated anywhere
-    "max_leverage": None,                  # varies per symbol, not published here
-    "max_concurrent_positions": None,      # not stated
+    # "Overnight and weekend holding are allowed across every CFDs account,
+    # at every stage." Swap applies; triple swap Wednesday on forex and
+    # commodities, Friday on indices and crypto.
+    "weekend_holding_allowed": True,
+    # `max_leverage` is not here: it is the one rule that differs by programme
+    # as well as by asset class, so each book names its own `LeverageCaps`
+    # above. It was `None` until 30 Aug for want of a type that could hold
+    # "forex 1:100 and crypto 1:1 on the same account".
+    # "Challenge / FundedNext: no hard cap, no fixed limit." Stated, not
+    # inferred - which is what separates this NOT_IMPOSED from the consistency
+    # one that had to be withdrawn.
+    "max_concurrent_positions": NOT_IMPOSED,
 }
 
 _INACTIVITY = (
@@ -184,6 +262,11 @@ FTMO_SOURCE = "https://ftmo.com/en/trading-objectives/"
 #   "No time limit" on the challenge, so there is no deadline to pass.
 
 _FTMO_COMMON: dict[str, Any] = {
+    # Not stated on this page, like the four fields below it. Inferring
+    # permission from silence is how a rulebook acquires a rule its provider
+    # never wrote - and this is the one rule where the wrong inference costs
+    # the account rather than a position size.
+    "automated_trading_allowed": None,
     "drawdown_basis": DrawdownBasis.EQUITY,
     "allowance_basis": AllowanceBasis.STARTING_BALANCE,
     "total_drawdown_trailing": True,
@@ -293,6 +376,7 @@ RULEBOOKS: tuple[Rulebook, ...] = (
             max_total_drawdown_pct=0.06,
             min_trading_days=2,
             **_COMMON,
+            max_leverage=_LEVERAGE_1STEP,
         ),
         source=FUNDEDNEXT_SOURCE,
         retrieved=FUNDEDNEXT_RETRIEVED,
@@ -309,6 +393,7 @@ RULEBOOKS: tuple[Rulebook, ...] = (
             max_total_drawdown_pct=0.10,
             min_trading_days=5,
             **_COMMON,
+            max_leverage=_LEVERAGE_2STEP_AND_LITE,
         ),
         source=FUNDEDNEXT_SOURCE,
         retrieved=FUNDEDNEXT_RETRIEVED,
@@ -325,6 +410,7 @@ RULEBOOKS: tuple[Rulebook, ...] = (
             max_total_drawdown_pct=0.10,
             min_trading_days=5,
             **_COMMON,
+            max_leverage=_LEVERAGE_2STEP_AND_LITE,
         ),
         source=FUNDEDNEXT_SOURCE,
         retrieved=FUNDEDNEXT_RETRIEVED,
@@ -341,6 +427,7 @@ RULEBOOKS: tuple[Rulebook, ...] = (
             max_total_drawdown_pct=0.08,
             min_trading_days=5,
             **_COMMON,
+            max_leverage=_LEVERAGE_2STEP_AND_LITE,
         ),
         source=FUNDEDNEXT_SOURCE,
         retrieved=FUNDEDNEXT_RETRIEVED,
@@ -357,6 +444,7 @@ RULEBOOKS: tuple[Rulebook, ...] = (
             max_total_drawdown_pct=0.08,
             min_trading_days=5,
             **_COMMON,
+            max_leverage=_LEVERAGE_2STEP_AND_LITE,
         ),
         source=FUNDEDNEXT_SOURCE,
         retrieved=FUNDEDNEXT_RETRIEVED,
@@ -372,7 +460,15 @@ RULEBOOKS: tuple[Rulebook, ...] = (
             max_daily_drawdown_pct=NOT_IMPOSED,
             max_total_drawdown_pct=0.06,
             min_trading_days=NOT_IMPOSED,
-            **{**_COMMON, "total_drawdown_trailing": True},
+            **{
+                **_COMMON,
+                "max_leverage": _LEVERAGE_INSTANT,
+                "total_drawdown_trailing": True,
+                # "The Stellar Instant Account has no consistency rules." A
+                # sentence that states the absence, so this one may assert it
+                # where the challenge phases may not.
+                "max_single_day_profit_share": NOT_IMPOSED,
+            },
         ),
         source=FUNDEDNEXT_SOURCE,
         retrieved=FUNDEDNEXT_RETRIEVED,

@@ -14,6 +14,7 @@ from datetime import date
 import pytest
 
 from app.brain import challenge as ch
+from app.core.enums import AssetClass
 
 TODAY = date(2026, 3, 12)
 
@@ -31,6 +32,11 @@ def rules(**overrides) -> ch.ChallengeRules:
         news_trading_allowed=False,
         weekend_holding_allowed=False,
         max_concurrent_positions=3,
+        # Stated, because an unread automation permission now gates and this
+        # helper is meant to be a *complete* rulebook - a test about drawdown
+        # that fails on a field it never mentioned is testing the wrong thing.
+        # The tests about this rule override it.
+        automated_trading_allowed=True,
         # Stated rather than assumed: this provider quotes its percentages of
         # the initial account size. With the basis left unspecified the module
         # reads it the stricter way, which is a different rulebook.
@@ -80,6 +86,11 @@ def uncapped() -> ch.ChallengeRules:
             news_trading_allowed=ch.NOT_IMPOSED,
             weekend_holding_allowed=ch.NOT_IMPOSED,
             max_concurrent_positions=ch.NOT_IMPOSED,
+            # Read like the rest. The docstring says the documentation was
+            # read and carries no rule; leaving this one `None` would say the
+            # reader stopped before the last page, and since it gates that is
+            # a different fixture than the one this helper claims to be.
+            automated_trading_allowed=ch.NOT_IMPOSED,
         )
 
 
@@ -844,3 +855,180 @@ class TestTheMarkerDidNotBreakTheRulesItTouched:
 
         assert ch.check(rules(), healthy, 1.0).allowed is False
         assert ch.check(rules(), state(currency_per_r=200.0), 1.0).allowed is True
+
+
+class TestAutomatedTrading:
+    """The one rule here that can rule this platform out of an account.
+
+    Several providers permit money-management and copy-trading experts while
+    forbidding automated decision-making, which is exactly what this system
+    does. "Do you use an expert" is not the question; "did your software pick
+    the trade" is, and the answer is always yes.
+    """
+
+    def test_a_provider_that_forbids_it_is_a_breach(self):
+        verdict = ch.check(
+            rules(automated_trading_allowed=False), state(), proposed_risk_r=0.5
+        )
+
+        assert verdict.breaches, "a forbidden account must not be tradeable"
+        assert any("automated" in b.lower() for b in verdict.breaches)
+        assert verdict.allowed is False
+
+    def test_it_is_a_breach_rather_than_a_gate(self):
+        """Unlike every other restriction here, the state it depends on is
+        never in doubt. There is no window to wait out and no size to reduce
+        to - so it is not something that can be satisfied by trading smaller.
+        """
+        verdict = ch.check(
+            rules(automated_trading_allowed=False), state(), proposed_risk_r=0.01
+        )
+        assert verdict.allowed is False
+
+    def test_a_provider_that_permits_it_says_nothing(self):
+        verdict = ch.check(
+            rules(automated_trading_allowed=True), state(), proposed_risk_r=0.5
+        )
+        assert not any("automated" in b.lower() for b in verdict.breaches)
+        assert not any("automated" in u.lower() for u in verdict.unverified)
+
+    def test_an_explicit_absence_of_the_rule_says_nothing(self):
+        verdict = ch.check(
+            rules(automated_trading_allowed=ch.NOT_IMPOSED),
+            state(),
+            proposed_risk_r=0.5,
+        )
+        assert not any("automated" in u.lower() for u in verdict.unverified)
+
+    def test_an_unread_rule_blocks_because_it_cannot_be_answered_smaller(self):
+        """This rule is gated where every other unread rule is only reported,
+        and the asymmetry is the point rather than an inconsistency.
+
+        The others answer "how much may be risked", and an unknown one is
+        honoured by risking less. This one asks whether software may pick the
+        trades at all, and there is no smaller version of yes: a provider that
+        forbids it closes the account on the first automated order, which no
+        position size prevents.
+
+        It was gated, then reported-only, and is gated again. The reversal is
+        recorded in the check itself with both arguments intact.
+        """
+        verdict = ch.check(
+            rules(automated_trading_allowed=None), state(), proposed_risk_r=0.5
+        )
+
+        assert any("automated" in u.lower() for u in verdict.unverified)
+        assert verdict.allowed is False
+        # Named, not silent. An unexplained block on a healthy account reads
+        # as a bug and gets worked around instead of answered.
+        assert any("automation permission" in g.lower() for g in verdict.gates)
+
+    def test_an_unread_rule_is_a_gate_and_never_a_breach(self):
+        """A breach is a rule the account broke. Nobody has broken anything
+        here - the document was not read. Filing it as a breach would tell a
+        holder their account had failed."""
+        verdict = ch.check(
+            rules(automated_trading_allowed=None), state(), proposed_risk_r=0.5
+        )
+
+        assert not any("automated" in b.lower() for b in verdict.breaches)
+
+    def test_no_catalogued_provider_is_silently_forbidden(self):
+        """Every rulebook in the catalogue states this field or leaves it
+        unread, and either is fine - what must not happen is a `False` nobody
+        noticed, which would refuse an account with no explanation on screen.
+
+        The provider this gate was written for has since been withdrawn from
+        the catalogue. The gate stays, because the rule it enforces belongs to
+        whichever firm publishes it next.
+        """
+        from app.brain.rulebooks import RULEBOOKS
+
+        for book in RULEBOOKS:
+            forbidden = book.rules.automated_trading_allowed is False
+            if forbidden:
+                notes = " ".join(book.notes).lower()
+                assert "automated" in notes, (
+                    f"{book.key} forbids automation in its rules but says "
+                    "nothing about it in its notes"
+                )
+
+
+class TestLeverageIsCappedPerAssetClass:
+    """A single float could not say what providers publish. FundedNext caps
+    forex at 1:100 and crypto at 1:1 on one account, so any one number is
+    false for some instrument that account can trade - too high permits what
+    the provider's server rejects, too low refuses what it allows. Neither is
+    a cap. The type exists so the rule can be transcribed instead of rounded
+    to whichever lie is more comfortable.
+    """
+
+    @staticmethod
+    def caps():
+        return ch.LeverageCaps(
+            {
+                AssetClass.FOREX: 100.0,
+                AssetClass.INDEX: 25.0,
+                AssetClass.CRYPTO: 1.0,
+            }
+        )
+
+    def test_a_named_asset_gets_its_own_cap(self):
+        caps = self.caps()
+
+        assert caps.binding(AssetClass.FOREX) == 100.0
+        assert caps.binding(AssetClass.CRYPTO) == 1.0
+
+    def test_an_unnamed_asset_gets_the_tightest_cap(self):
+        """The whole invariant of this package in one line: not knowing may
+        reduce exposure and may never grant it. Resolving an unnamed trade to
+        the forex cap would hand 100x to a position nobody identified."""
+        assert self.caps().binding(None) == 1.0
+
+    def test_an_asset_the_page_never_listed_gets_the_tightest_cap(self):
+        """Absent from the table is not permission. A provider that lists no
+        bond cap has not published a bond cap, and the safe reading of a gap
+        is the strictest number it did publish."""
+        assert self.caps().binding(AssetClass.BOND) == 1.0
+
+    def test_empty_caps_are_refused_rather_than_meaning_no_limit(self):
+        """An empty mapping would be a `LeverageCaps` that caps nothing while
+        looking like a transcribed rule. `NOT_IMPOSED` says that on purpose."""
+        with pytest.raises(ValueError):
+            ch.LeverageCaps({})
+
+    def test_a_zero_cap_is_refused(self):
+        """1:1 is 1.0. A 0.0 forbids every position, and a page saying 1:1
+        never means that - it is a transcription slip, not a rule."""
+        with pytest.raises(ValueError):
+            ch.LeverageCaps({AssetClass.FOREX: 0.0})
+
+    def test_the_cap_that_binds_is_the_one_enforced(self):
+        """Leverage of 8x is fine on forex here and a breach on crypto, and
+        the difference is the asset class the state names."""
+        rules = ch.ChallengeRules(max_leverage=self.caps())
+
+        forex = ch.check(
+            rules,
+            state(current_leverage=8.0, asset_class=AssetClass.FOREX),
+            0.01,
+        )
+        crypto = ch.check(
+            rules,
+            state(current_leverage=8.0, asset_class=AssetClass.CRYPTO),
+            0.01,
+        )
+
+        assert not any("leverage" in b for b in forex.breaches)
+        assert any("leverage" in b for b in crypto.breaches)
+
+    def test_an_unnamed_asset_is_judged_and_says_so(self):
+        """It must not pass silently on the loosest cap, and it must not
+        refuse either - the tightest cap is a real answer, and the warning is
+        what stops it being mistaken for the instrument's own."""
+        rules = ch.ChallengeRules(max_leverage=self.caps())
+
+        verdict = ch.check(rules, state(current_leverage=8.0), 0.01)
+
+        assert any("leverage" in b for b in verdict.breaches)
+        assert any("no asset class" in w for w in verdict.warnings)

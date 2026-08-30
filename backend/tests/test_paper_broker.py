@@ -12,10 +12,9 @@ like it that its fills get counted as real.
 
 from __future__ import annotations
 
-import uuid
-
 from datetime import UTC, datetime
 
+from app.execution.broker import BrokerAdapter
 from app.execution.contracts import (
     Approval,
     OrderIntent,
@@ -23,8 +22,7 @@ from app.execution.contracts import (
     OrderState,
     OrderType,
 )
-from app.execution.paper_broker import PAPER_MARKER, PaperBroker
-
+from app.execution.paper_broker import PAPER_MARKER, LivePaperBroker
 
 AT = datetime(2026, 8, 18, 12, 0, tzinfo=UTC)
 
@@ -55,13 +53,13 @@ class TestItAnswersLikeTheRealAdapter:
     of them, and the first time any of it runs is on real money."""
 
     def test_a_sized_order_fills(self):
-        report = PaperBroker().submit(intent())
+        report = LivePaperBroker().submit(intent())
 
         assert report.state is OrderState.FILLED
         assert report.filled_quantity == 0.05
 
     def test_it_fills_at_the_requested_price(self):
-        report = PaperBroker().submit(
+        report = LivePaperBroker().submit(
             intent(entry=1.2345, stop=1.2295, target=1.2395)
         )
 
@@ -69,7 +67,7 @@ class TestItAnswersLikeTheRealAdapter:
 
     def test_a_zero_lot_order_is_refused_as_the_real_one_refuses_it(self):
         """A request that cannot succeed should not look like one that did."""
-        report = PaperBroker().submit(intent(metadata={"lots": 0.0}))
+        report = LivePaperBroker().submit(intent(metadata={"lots": 0.0}))
 
         assert report.state is OrderState.REJECTED
         assert "no lots" in (report.reason or "")
@@ -78,14 +76,14 @@ class TestItAnswersLikeTheRealAdapter:
         """UNKNOWN would exercise the retry path every cycle and teach the
         journal that every order times out. The point is to exercise the path
         a working broker produces."""
-        report = PaperBroker().submit(intent())
+        report = LivePaperBroker().submit(intent())
 
         assert report.state is not OrderState.UNKNOWN
 
     def test_the_client_order_id_is_the_intent_id(self):
         one = intent()
 
-        assert PaperBroker().submit(one).client_order_id == str(one.intent_id)
+        assert LivePaperBroker().submit(one).client_order_id == str(one.intent_id)
 
 
 class TestAPaperFillCannotPassForAReal:
@@ -93,23 +91,23 @@ class TestAPaperFillCannotPassForAReal:
     rate, and in the evidence the edge registry is waiting on."""
 
     def test_the_ticket_says_what_it_is_on_sight(self):
-        report = PaperBroker().submit(intent())
+        report = LivePaperBroker().submit(intent())
 
         assert report.broker_order_id.startswith(PAPER_MARKER)
 
     def test_the_raw_payload_names_the_broker(self):
-        assert PaperBroker().submit(intent()).raw["broker"] == PAPER_MARKER
+        assert LivePaperBroker().submit(intent()).raw["broker"] == PAPER_MARKER
 
     def test_the_note_admits_the_overstatement(self):
         """Filling at the requested price overstates the result by exactly the
         spread, and saying so beats inventing a slippage number that would
         look measured."""
-        note = PaperBroker().submit(intent()).raw["note"]
+        note = LivePaperBroker().submit(intent()).raw["note"]
 
         assert "overstates" in note
 
     def test_two_tickets_do_not_collide(self):
-        broker = PaperBroker()
+        broker = LivePaperBroker()
 
         first = broker.submit(intent())
         second = broker.submit(intent(symbol="GBPUSD"))
@@ -122,7 +120,7 @@ class TestItRemembersWithoutPersisting:
     indistinguishable from a real one to everything that reads it."""
 
     def test_it_keeps_what_it_saw_in_order(self):
-        broker = PaperBroker()
+        broker = LivePaperBroker()
         broker.submit(intent(symbol="EURUSD"))
         broker.submit(intent(symbol="GBPUSD"))
 
@@ -130,13 +128,13 @@ class TestItRemembersWithoutPersisting:
 
     def test_a_rejected_order_is_still_remembered(self):
         """It was still a decision the cycle made."""
-        broker = PaperBroker()
+        broker = LivePaperBroker()
         broker.submit(intent(metadata={"lots": 0.0}))
 
         assert len(broker.submitted) == 1
 
     def test_the_summary_counts_and_names(self):
-        broker = PaperBroker()
+        broker = LivePaperBroker()
         broker.submit(intent(symbol="EURUSD"))
         broker.submit(intent(symbol="GBPUSD"))
 
@@ -147,4 +145,61 @@ class TestItRemembersWithoutPersisting:
         }
 
     def test_a_fresh_broker_remembers_nothing(self):
-        assert PaperBroker().submitted == []
+        assert LivePaperBroker().submitted == []
+
+
+class TestItIsAWholeAdapter:
+    """`submit` alone is not the boundary. `BrokerAdapter` asks for four
+    methods and calls `reconcile` the one that is not optional: an execution
+    layer with no way to ask "what do you actually have?" cannot recover from
+    its own uncertainty. An adapter that satisfies only part of the protocol
+    types as the protocol nowhere, which is how this one ended up passed to a
+    parameter annotated for a different class entirely."""
+
+    def test_it_satisfies_the_protocol(self):
+        adapter: BrokerAdapter = LivePaperBroker()
+
+        assert adapter.name == PAPER_MARKER
+
+    def test_status_returns_what_submit_answered(self):
+        broker = LivePaperBroker()
+        one = intent()
+
+        report = broker.submit(one)
+
+        assert broker.status(str(one.intent_id)) is report
+
+    def test_status_of_an_unknown_order_is_unknown_not_rejected(self):
+        """Not having a record is not evidence that nothing happened. Here it
+        genuinely is, but an adapter whose UNKNOWN means something different
+        from every other adapter's is worse than one that never says it."""
+        report = LivePaperBroker().status("never-sent")
+
+        assert report.state is OrderState.UNKNOWN
+        assert "may never have arrived" in (report.reason or "")
+
+    def test_cancelling_a_fill_returns_the_fill_not_a_cancellation(self):
+        """Every report here is terminal on the instant it is made. CANCELLED
+        would be a state that never happened going into the journal."""
+        broker = LivePaperBroker()
+        one = intent()
+        filled = broker.submit(one)
+
+        assert broker.cancel(str(one.intent_id)) is filled
+        assert filled.state is OrderState.FILLED
+
+    def test_cancelling_an_unknown_order_is_unknown(self):
+        assert LivePaperBroker().cancel("never-sent").state is OrderState.UNKNOWN
+
+    def test_reconcile_answers_per_account(self):
+        broker = LivePaperBroker()
+        broker.submit(intent(account_id="68345601"))
+        broker.submit(intent(symbol="GBPUSD", account_id="99999999"))
+
+        mine = broker.reconcile("68345601")
+
+        assert len(mine) == 1
+        assert mine[0].filled_quantity == 0.05
+
+    def test_reconcile_knows_nothing_about_an_account_it_never_saw(self):
+        assert LivePaperBroker().reconcile("68345601") == []

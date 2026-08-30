@@ -85,13 +85,45 @@ export interface Health {
  */
 const INTERNAL_KEY = process.env.MOLIDO_INTERNAL_API_KEY ?? "";
 
+/**
+ * The signed-in visitor's session, forwarded to the API.
+ *
+ * Without this the API sees an anonymous caller on every request, and an
+ * anonymous caller holds `READ` - so every instrument, bar, journal entry,
+ * risk limit and account figure on this deployment was readable by anybody who
+ * knew the path. The pages were gated by the middleware and the data
+ * underneath them was not, which is the more expensive half of the pair.
+ *
+ * Forwarded rather than replaced by a service key. A single privileged
+ * identity for every visitor would work and would quietly hand a viewer
+ * whatever an owner can read; passing the cookie keeps the permission the API
+ * applies the permission the person actually has.
+ *
+ * `cookies()` only exists inside a request, and every page here is
+ * `force-dynamic` so there always is one - but a build-time call would throw
+ * rather than return nothing, and a thrown error in a data reader is a page
+ * that says "backend unreachable" about a backend that is fine.
+ */
+async function sessionHeader(): Promise<Record<string, string>> {
+  try {
+    const { cookies } = await import("next/headers");
+    const jar = await cookies();
+    const session = jar.get("molido_session")?.value;
+    return session ? { cookie: `molido_session=${session}` } : {};
+  } catch {
+    return {};
+  }
+}
+
 async function request<T>(path: string): Promise<ApiResult<T>> {
   try {
     const response = await fetch(`${BASE_URL}${path}`, {
       cache: "no-store",
-      headers: INTERNAL_KEY
-        ? { accept: "application/json", "X-API-Key": INTERNAL_KEY }
-        : { accept: "application/json" },
+      headers: {
+        accept: "application/json",
+        ...(INTERNAL_KEY ? { "X-API-Key": INTERNAL_KEY } : {}),
+        ...(await sessionHeader()),
+      },
     });
     if (!response.ok) {
       const body = await response.json().catch(() => ({}));
@@ -273,6 +305,77 @@ export interface WorldState {
   quality: WorldStateBlock;
 }
 
+/** One account that can sign in, from `/users`. */
+export interface UserRow {
+  id: string;
+  email: string;
+  display_name: string;
+  role: string;
+  is_active: boolean;
+  /** Stated rather than inferred: an account nobody has ever signed in to and
+   *  one that was switched off look identical from the outside otherwise. */
+  can_sign_in: boolean;
+  last_login_at: string | null;
+}
+
+export interface UsersView {
+  count: number;
+  users: UserRow[];
+  assignable_roles: string[];
+}
+
+/** One recorded account, from `/risk/challenge-accounts`.
+ *
+ *  Three kinds share the shape. A challenge and a funded account are measured
+ *  against a rulebook somebody else wrote; a live account is the holder's own
+ *  money and carries no rulebook at all, which is why every rulebook field
+ *  here is nullable.
+ */
+export interface ChallengeAccountView {
+  id: string;
+  label: string;
+  kind: "challenge" | "funded" | "live";
+  provider: string | null;
+  program: string | null;
+  phase: string | null;
+  starting_balance: string | null;
+  currency: string | null;
+  currency_per_r: string | null;
+  rulebook_key: string | null;
+  rulebook_available: boolean;
+  /** Whether the holder has checked the transcribed rules against their own
+   *  contract. Until they have, tracking stays shut - a confident verdict
+   *  about the wrong document is worse than no verdict.
+   *
+   *  **Named for the field the API actually sends.** It was declared as
+   *  `confirmed` here while the server sent `rules_confirmed`, so the value
+   *  read `undefined` on every account and the status pill said "unconfirmed"
+   *  for all of them - including the ones somebody had confirmed. TypeScript
+   *  could not catch it: the type was a claim about a payload it never saw. */
+  rules_confirmed: boolean;
+  /** False on a live account for a reason that is not a missing step, so
+   *  `why_not` carries the sentence rather than the page guessing. */
+  tracking_available: boolean;
+  why_not: string | null;
+  /** Switched off rather than deleted. An account out of measurement keeps
+   *  every fact it holds; deleting the row would take the history with it. */
+  is_active: boolean;
+}
+
+export interface ChallengeAccountsView {
+  accounts: ChallengeAccountView[];
+  total: number;
+  /** Counts per kind. Live accounts are in the total and out of the
+   *  confirmation figures below - there is nothing about them to confirm. */
+  by_kind: Record<string, number>;
+  /** How many are switched on. */
+  active: number;
+  confirmed: number;
+  unconfirmed: number;
+  trackable: number;
+  note: string;
+}
+
 /** One connection, from `/brokers`. */
 export interface Connection {
   name: string;
@@ -280,6 +383,30 @@ export interface Connection {
   simulated?: boolean;
   role: string;
   note?: string;
+}
+
+/** The third brain's verdict, from `/brain/context/{id}`. */
+export interface BrainContextView {
+  symbol: string;
+  timeframe: string;
+  as_of: string;
+  proposal: { decision: string; conviction: number };
+  verdict: {
+    stance: "clear" | "caution" | "stand_aside";
+    scale: number;
+    reasons: string[];
+    abstained: string[];
+    method: string;
+    version: number;
+  };
+  signals: {
+    crowd_tilt: number | null;
+    rate_differential: number | null;
+    seconds_to_close: number | null;
+    gap_seconds: number | null;
+  };
+  signal_errors: Record<string, string>;
+  binding_at: string;
 }
 
 export interface BrokerView {
@@ -292,6 +419,22 @@ export interface BrokerView {
     terminal_path: string;
     role: string;
     blocked_by: string[];
+    /** One row per terminal, straight from what each expert publishes.
+     *  `available: false` rows carry a `reason` instead of figures. */
+    terminals: Record<
+      string,
+      {
+        available: boolean;
+        reason?: string;
+        login?: number;
+        server?: string | null;
+        currency?: string | null;
+        balance?: number;
+        equity?: number;
+        state?: { connected?: boolean };
+      }
+    >;
+    connected_terminals: number;
   };
   challenge_providers: string[];
   no_broker_catalogue_here: boolean;
@@ -655,6 +798,85 @@ export interface Readiness {
   note: string;
 }
 
+export interface PolicyRateRow {
+  currency: string;
+  area: string;
+  bank: string;
+  /** Per cent per year, as published. 3.625 means 3.625%. */
+  rate: number;
+  observed: string;
+}
+
+export interface RateDifferential {
+  pair: string;
+  base: string;
+  quote: string;
+  /** Base rate minus quote rate. Positive means the base pays more. */
+  differential: number;
+}
+
+export interface PolicyRatesView {
+  /** False when the upstream feed could not be read. Distinct from an empty
+   *  table: one means "we do not know", the other means "there is nothing",
+   *  and on a screen a stale rate looks exactly like a live one. */
+  available: boolean;
+  reason?: string;
+  rates: PolicyRateRow[];
+  differentials: RateDifferential[];
+  note?: string;
+}
+
+export interface PositioningRow {
+  key: string;
+  contract: string;
+  /** The Tuesday the positions were held. */
+  report_date: string;
+  /** The Friday it became public. Three days later, and the whole reason
+   *  both dates are carried rather than one. */
+  published_at: string;
+  long: number;
+  short: number;
+  net: number;
+  open_interest: number;
+  traders_long: number;
+  traders_short: number;
+}
+
+export interface PositioningView {
+  available: boolean;
+  key: string;
+  reason?: string;
+  known?: string[];
+  latest?: PositioningRow;
+  net_share?: number | null;
+  history?: PositioningRow[];
+  note?: string;
+}
+
+export interface TerminalRow {
+  id: string;
+  key: string;
+  label: string;
+  broker: string;
+  kind: string;
+  is_active: boolean;
+  created_at: string | null;
+  /** Whether a heartbeat is arriving. A registration is a claim; this is the
+   *  evidence, and the two are different questions on one screen. */
+  publishing: boolean;
+  usable?: boolean;
+  login: number;
+  age_seconds?: number | null;
+  reason?: string | null;
+}
+
+export interface TerminalsView {
+  terminals: TerminalRow[];
+  total: number;
+  publishing: number;
+  note: string;
+}
+
 export interface SetupView {
   claimed: boolean;
   password_min_length: number;
@@ -721,6 +943,12 @@ export interface JournalArm {
 }
 
 export interface JournalComparison {
+  /**
+   * The reading with its sign. `significant` is `abs(z)` and so is true for a
+   * rule losing to its own coin flip as loudly as for one beating it - which
+   * painted a z of -2.57 green. Read this instead.
+   */
+  verdict?: string;
   rule: { trials: number; wins: number; hit_rate: number | null };
   control: { trials: number; wins: number; hit_rate: number | null };
   edge_over_control: number | null;
@@ -741,10 +969,49 @@ export interface JournalView {
   /** The public series, kept at the top level so older readers still work. */
   comparison: JournalComparison;
   by_source: Record<string, JournalComparison>;
+  /**
+   * The same rows read the way the registered claim was measured: rule minus
+   * control on the bar they share, averaged per instant. `by_source` counts
+   * each arm on its own and so carries the market's move as noise; this
+   * subtracts it. Both are published because showing only the stronger would
+   * flatter the rule.
+   */
+  paired_by_source: Record<string, JournalPaired>;
+  /**
+   * Every timeframe read on its own, each with the threshold its own question
+   * earned. The worker records on five and reading them together hid a
+   * negative H1 behind three positive fast series, so the split is published
+   * rather than left to whoever remembers the constant.
+   */
+  paired_by_timeframe: Record<string, JournalPaired>;
+  /** Resolved instants per timeframe per series. */
+  by_timeframe: Record<string, Record<string, number>>;
+  why_one_timeframe: string;
+  why_a_wider_bar: string;
+  why_paired: string;
   /** Broker result minus public result. Null until both have resolved. */
   edge_lost_to_real_prices: number | null;
   why_two_series: string;
   note: string;
+}
+
+export interface JournalPaired {
+  /**
+   * True for the timeframe the live rule decides on, which was named before
+   * this data existed. False for a look taken because the data was there -
+   * and those carry a threshold widened for how many were taken.
+   */
+  pre_registered?: boolean;
+
+  /** The sample the t rests on: one per bar, however many symbols ranked. */
+  instants: number;
+  /** How many decisions went into those instants. Always >= instants. */
+  pairs: number;
+  mean_difference_r: number | null;
+  t_statistic: number | null;
+  required_t: number;
+  /** "not measured" | "not distinguishable..." | "distinguishable..." */
+  verdict: string;
 }
 
 export interface EvidenceSeries {
@@ -760,6 +1027,14 @@ export interface EvidenceSeries {
   what_the_date_means: string;
   why_instants: string;
   the_assumption: string;
+  /**
+   * The per-instant spread the sample size was computed from, and whether it
+   * came from this series or from the historical claim. The date is the
+   * headline here, and it moves with the square of this number - so which of
+   * the two it rests on belongs beside it, not only inside a paragraph.
+   */
+  spread_r: number;
+  spread_is_measured: boolean;
 }
 
 export interface EvidenceView {
@@ -795,6 +1070,18 @@ export interface TimezoneView {
   places: { name: string; offset: number; local: string }[];
   broker_offset_known: boolean;
   note: string;
+  /** The four liquidity sessions, hours shown on Iran's fixed clock -
+   *  computed server-side against each session's real timezone so DST in
+   *  Sydney or London cannot quietly shift the numbers half the year. */
+  sessions?: {
+    session: string;
+    timezone: string;
+    is_open: boolean;
+    opens_local: string;
+    closes_local: string;
+    opens_iran: string;
+    closes_iran: string;
+  }[];
 }
 
 export interface EquityPoint {
@@ -859,6 +1146,23 @@ export const api = {
     ),
   autopilot: () => request<AutopilotView>("/api/v1/execution/autopilot"),
   setup: () => request<SetupView>("/api/v1/users/setup"),
+  /** Every registered MetaTrader terminal, with whether it is actually
+   *  publishing. Eleven rows that all look configured and none of which
+   *  are alive is the state this call exists to make visible. */
+  terminals: () => request<TerminalsView>("/api/v1/terminals"),
+  /** What the world's central banks charge, and the gap between any two of
+   *  them. The only reading in this client that is not derived from a price. */
+  policyRates: () => request<PolicyRatesView>("/api/v1/fundamentals/policy-rates"),
+  /** Where the large speculators sit in one futures market, as of what had
+   *  actually been published - not as of the Tuesday the report describes. */
+  positioning: (key: string) =>
+    request<PositioningView>(
+      `/api/v1/fundamentals/positioning?key=${encodeURIComponent(key)}`,
+    ),
+  /** Everybody who exists. Behind `users.manage`, so an unauthorised caller
+   *  gets a refusal rather than an empty list - a page that renders "no users"
+   *  when it was actually refused is a page that lies quietly. */
+  users: () => request<UsersView>("/api/v1/users"),
   health: () => request<Health>("/health/ready"),
   systemSettings: () => request<SystemSettings>("/api/v1/system/settings"),
   riskLimits: () => request<RiskLimits>("/api/v1/risk/limits"),
@@ -872,6 +1176,13 @@ export const api = {
   rulebooks: () => request<RulebookView>("/api/v1/risk/rulebooks"),
   executionPolicy: () => request<ExecutionPolicyView>("/api/v1/execution/policy"),
   accounts: () => request<AccountsView>("/api/v1/execution/accounts"),
+  /** Prop-firm challenge accounts. A different kind of account from the broker
+   *  connection above and deliberately a separate call: one is "which terminal
+   *  is logged in", the other is "which sets of somebody else's rules are we
+   *  being measured against". Merging them would make a page that cannot say
+   *  which of the two is missing. */
+  challengeAccounts: () =>
+    request<ChallengeAccountsView>("/api/v1/risk/challenge-accounts"),
   learningThresholds: () =>
     request<LearningThresholds>("/api/v1/learning/thresholds"),
   drift: () => request<DriftView>("/api/v1/learning/drift"),
@@ -901,6 +1212,11 @@ export const api = {
   scanner: (limit = 40) =>
     request<Scanner>(`/api/v1/market-map/scanner?limit=${limit}`),
   posture: () => request<Posture>("/api/v1/decisions/posture"),
+  /** The third brain: slow context, and the right to say "not now". */
+  brainContext: (instrumentId: string, timeframe = "H1") =>
+    request<BrainContextView>(
+      `/api/v1/brain/context/${instrumentId}?timeframe=${timeframe}`,
+    ),
   proposal: (instrumentId: string, timeframe = "H1") =>
     request<Proposal>(`/api/v1/brain/think/${instrumentId}?timeframe=${timeframe}`),
   worldState: (instrumentId: string, timeframe = "H1") =>
@@ -911,6 +1227,10 @@ export const api = {
       `/api/v1/decisions/${instrumentId}?timeframe=${timeframe}`,
     ),
   instruments: () => request<Instrument[]>("/api/v1/instruments"),
+  /** Every active instrument's market state in one call. The per-instrument
+   *  version below is still right for a detail page; using it for a list meant
+   *  one round trip per row, which is why that list used to be truncated. */
+  allSessionStatus: () => request<SessionStatus[]>("/api/v1/sessions/status"),
   dataQuality: (instrumentId: string) =>
     request<DataQuality>(`/api/v1/data-quality/${instrumentId}`),
   sessionStatus: (instrumentId: string) =>

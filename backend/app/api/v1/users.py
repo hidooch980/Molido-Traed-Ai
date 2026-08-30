@@ -29,44 +29,62 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, Cookie, Depends
+from fastapi import APIRouter, Cookie, Depends, Request
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
 
 from app.api.deps import Principal, require
 from app.api.guard import public_mutation
+from app.api.net import client_address, user_agent
 from app.core.config import get_settings
-from app.core.enums import Permission, UserRole
-from app.core.errors import ValidationFailedError
+from app.core.enums import AuditEventType, Permission, UserRole
+from app.core.errors import MolidoError, ValidationFailedError
 from app.db.session import get_db
 from app.integrations import email
 from app.models.tenancy import User
-from app.services import referrals, sessions_auth, verification
+from app.services import (
+    human_check,
+    login_guard,
+    referrals,
+    security_log,
+    sessions_auth,
+    verification,
+)
 from app.services import users as user_service
 
 router = APIRouter(prefix="/users", tags=["users"])
 
 READ = Depends(require(Permission.READ))
 
-#: Creating an account and switching one off are mutations, so they carry a
-#: permission above READ - which is what the execution gate checks and what an
-#: anonymous caller does not hold.
+#: Acting on your own account: changing your password, asking for a fresh
+#: verification link. A mutation, so above READ, but not account management -
+#: needing the permission that mints admins in order to change your own
+#: password would give every user the power to mint one.
 #:
-#: SIMULATE rather than EXECUTE, for the same reason `brokers/link` gives:
-#: EXECUTE is the tier that sends orders, and it refuses to boot at all unless
-#: MOLIDO_REQUIRE_AUTH is on. Declaring it here would tie account management to
-#: a switch about order execution. The control that actually matters is the
-#: owner-or-admin check below, which no permission tier can express: trader and
-#: admin both hold EXECUTE, and a trader must not be able to mint an admin.
-SIMULATE = Depends(require(Permission.SIMULATE))
+#: This was SIMULATE, which a viewer does not hold - so the role with the least
+#: to lose was the one role that could not change its own password. `READ` is
+#: not an option either: an anonymous caller holds it, and these mutate.
+SELF_MANAGE = Depends(require(Permission.SELF_MANAGE))
 
-#: Who may create accounts and switch them off. Not a permission tier: trader
-#: and admin both hold EXECUTE, and a trader must not be able to mint an admin.
-MANAGING_ROLES: frozenset[UserRole] = frozenset({UserRole.OWNER, UserRole.ADMIN})
+#: Creating accounts, switching them off, and reading the roster.
+#:
+#: This used to be SIMULATE plus a hand-written owner-or-admin check, and the
+#: comment above it explained why: the three tiers could not express "manages
+#: accounts" at all, because trader and admin both held EXECUTE and a trader
+#: must not be able to mint an admin. The permission now says exactly that, so
+#: the second check is gone rather than kept alongside it. Two places deciding
+#: one question is how they come to disagree, and then neither is the answer.
+USERS_MANAGE = Depends(require(Permission.USERS_MANAGE))
 
 
 class Signup(BaseModel):
     email: str = Field(min_length=3, max_length=320)
+    #: The proof of work, when one is being asked for. Optional in the schema
+    #: and demanded by the handler, so the first registration on a quiet
+    #: deployment costs nothing and the thousandth from one address costs real
+    #: time.
+    challenge_id: str | None = None
+    nonce: str | int | None = None
     #: Optional. A code that does not exist fails the registration rather than
     #: being dropped - see `referrals.resolve_code` for why silence is worse.
     referral_code: str = Field(default="", max_length=32)
@@ -109,13 +127,73 @@ class PasswordChange(BaseModel):
     replacement: str = Field(min_length=1, max_length=256, repr=False)
 
 
-def _require_manager(principal: Principal) -> None:
-    if principal.role not in MANAGING_ROLES:
-        raise ValidationFailedError(
-            "Only an owner or an admin can manage accounts.",
-            your_role=principal.role.value,
-            required=sorted(r.value for r in MANAGING_ROLES),
+def _guard_public_signup(
+    session: Session,
+    request: Request,
+    *,
+    email: str,
+    purpose: str,
+    event: AuditEventType,
+    challenge_id: str | None,
+    nonce: str | int | None,
+) -> None:
+    """The same door `sign-in` has, on the two routes that create accounts.
+
+    Both are `public_mutation`: they must be reachable without a session,
+    because a door that needs a key to reach the key is not a door. That is
+    exactly what makes them worth guarding. An unauthenticated POST that writes
+    a row is a machine for filling a table, and `register` also sends mail -
+    which makes it a machine for sending mail to addresses somebody else owns,
+    from this deployment's reputation.
+
+    Refusals are recorded and committed, for the reason the sign-in route
+    learned the expensive way: `get_db` rolls back on the exception this
+    raises, so a record written without a commit is destroyed by the failure it
+    was recording.
+    """
+    address = client_address(request)
+    agent = user_agent(request)
+
+    try:
+        verdict = login_guard.enforce(session, email=email, address=address)
+    except login_guard.TooManyAttemptsError:
+        security_log.record(
+            session,
+            AuditEventType.SIGN_IN_THROTTLED,
+            summary=f"{purpose} refused by the rate limiter",
+            subject=login_guard.normalise(email),
+            address=address,
+            user_agent=agent,
         )
+        session.commit()
+        raise
+
+    if not verdict.human_check_required:
+        return
+
+    try:
+        human_check.verify(
+            session, challenge_id=challenge_id, nonce=nonce, purpose=purpose
+        )
+    except MolidoError:
+        login_guard.record(
+            session,
+            email=email,
+            address=address,
+            succeeded=False,
+            reason=f"{purpose}: human check failed",
+            user_agent=agent,
+        )
+        security_log.record(
+            session,
+            event,
+            summary=f"{purpose} attempted without a valid proof of work",
+            subject=login_guard.normalise(email),
+            address=address,
+            user_agent=agent,
+        )
+        session.commit()
+        raise
 
 
 @router.get("/setup")
@@ -152,10 +230,20 @@ def read_setup(
 )
 def claim_deployment(
     body: Signup,
+    request: Request,
     _: Principal = READ,
     session: Session = Depends(get_db),
 ) -> dict[str, Any]:
     """Become the owner. Refused with 409 once anybody has a password."""
+    _guard_public_signup(
+        session,
+        request,
+        email=body.email,
+        purpose=human_check.CLAIM,
+        event=AuditEventType.DEPLOYMENT_CLAIMED,
+        challenge_id=body.challenge_id,
+        nonce=body.nonce,
+    )
     created = user_service.claim(
         session,
         email=body.email,
@@ -173,10 +261,20 @@ def claim_deployment(
 )
 def register_user(
     body: Signup,
+    request: Request,
     _: Principal = READ,
     session: Session = Depends(get_db),
 ) -> dict[str, Any]:
     """Sign yourself up as a viewer."""
+    _guard_public_signup(
+        session,
+        request,
+        email=body.email,
+        purpose=human_check.REGISTER,
+        event=AuditEventType.USER_REGISTERED,
+        challenge_id=body.challenge_id,
+        nonce=body.nonce,
+    )
     created = user_service.register(
         session,
         email=body.email,
@@ -197,11 +295,10 @@ def register_user(
 
 @router.get("")
 def list_users(
-    principal: Principal = READ,
+    _: Principal = USERS_MANAGE,
     session: Session = Depends(get_db),
 ) -> dict[str, Any]:
-    """Everybody who exists, for an owner or admin. No hashes, no tokens."""
-    _require_manager(principal)
+    """Everybody who exists, for whoever manages accounts. No hashes, no tokens."""
     people = user_service.listing(session)
     return {
         "count": len(people),
@@ -213,11 +310,10 @@ def list_users(
 @router.post("", status_code=201)
 def create_user(
     body: NewUser,
-    principal: Principal = SIMULATE,
+    _: Principal = USERS_MANAGE,
     session: Session = Depends(get_db),
 ) -> dict[str, Any]:
     """Add somebody at a chosen role. Owner and admin only."""
-    _require_manager(principal)
     created = user_service.create(
         session,
         email=body.email,
@@ -233,11 +329,10 @@ def create_user(
 def set_user_active(
     user_id: uuid.UUID,
     body: ActiveFlag,
-    principal: Principal = SIMULATE,
+    principal: Principal = USERS_MANAGE,
     session: Session = Depends(get_db),
 ) -> dict[str, Any]:
     """Switch an account on or off. Never deletes - the audit trail stays."""
-    _require_manager(principal)
     result = user_service.set_active(
         session, user_id, active=body.active, actor_id=principal.user_id
     )
@@ -248,7 +343,7 @@ def set_user_active(
 @router.post("/me/password")
 def change_own_password(
     body: PasswordChange,
-    principal: Principal = SIMULATE,
+    principal: Principal = SELF_MANAGE,
     session: Session = Depends(get_db),
     molido_session: str | None = Cookie(
         default=None, alias=sessions_auth.COOKIE_NAME
@@ -350,7 +445,7 @@ def verify_account(
 
 @router.post("/me/verification")
 def resend_verification(
-    principal: Principal = SIMULATE,
+    principal: Principal = SELF_MANAGE,
     session: Session = Depends(get_db),
 ) -> dict[str, Any]:
     """Ask for a new link. The previous unused one stops working."""

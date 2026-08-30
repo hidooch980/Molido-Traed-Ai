@@ -486,7 +486,6 @@ def ingest_broker_bars() -> dict[str, Any]:
     Each timeframe commits on its own. A malformed M1 file must not roll back
     the hourly bars, which are the ones the live rule is deciding on.
     """
-    from app.core.enums import Timeframe
     from app.workers.broker_bars import ingest
 
     reports: dict[str, Any] = {}
@@ -579,6 +578,24 @@ async def collect(ctx: dict) -> dict[str, Any]:
             "reason": f"{type(problem).__name__} while resolving open entries",
         }
 
+    # Logged rather than only returned. This result used to travel purely as
+    # the task's return value, which arq stores and nobody reads, so a cycle
+    # that learned nothing explained itself in a sentence that reached no one -
+    # while `collector.cycle_complete` beside it reported six entries ingested
+    # and no failures, which is exactly what a healthy collector looks like.
+    # The journal sat at zero for as long as that was true.
+    forward = payload.get("forward") or {}
+    resolved = payload.get("resolved") or {}
+    log.info(
+        "collector.forward_complete",
+        recorded=forward.get("recorded", 0),
+        # Present only when nothing was written, and it is the whole point of
+        # this line: it names which gate stopped the cycle.
+        reason=forward.get("reason"),
+        considered=forward.get("considered"),
+        resolved=resolved.get("resolved", 0),
+    )
+
     return payload
 
 
@@ -592,6 +609,35 @@ async def startup(ctx: dict) -> None:
         watchlist=settings.watchlist,
         interval_seconds=settings.collector_interval_seconds,
     )
+
+    # A watchlist shorter than the cross-section's floor can never produce a
+    # ranking, so the deployment collects bars indefinitely and learns nothing
+    # from any of them. That is knowable here, before a single cycle runs,
+    # rather than only by counting an empty journal weeks later and reading
+    # source to find out why. Deferred import for the same reason the forward
+    # recorder defers its own: the brain package pulls in the model layer.
+    from app.brain.crosssection import MIN_CROSS_SECTION
+
+    counts: dict[str, int] = {}
+    for entry in parse_watchlist(settings.watchlist):
+        counts[entry.timeframe.value] = counts.get(entry.timeframe.value, 0) + 1
+    for timeframe, count in sorted(counts.items()):
+        if count < MIN_CROSS_SECTION:
+            # A warning rather than a refusal to start. Collection is worth
+            # doing on its own - the bars are still real and still kept - and
+            # a deployment being filled up towards the floor is a legitimate
+            # state to run in. What is not legitimate is doing it silently.
+            log.warning(
+                "collector.watchlist_below_cross_section",
+                timeframe=timeframe,
+                instruments=count,
+                required=MIN_CROSS_SECTION,
+                detail=(
+                    "The cross-section will not rank fewer instruments than "
+                    "this, so no forward entry can be written on this "
+                    "timeframe and nothing will be learned from it."
+                ),
+            )
 
 
 # How often the DNA profiles are recomputed. Daily rather than per cycle: they

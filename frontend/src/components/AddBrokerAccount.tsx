@@ -43,13 +43,25 @@ export interface BrokerFormLabels {
   signInFirst: string;
   stillWaiting: string;
   connected: string;
+  terminal: string;
+  terminalAuto: string;
+  terminalHint: string;
 }
 
-export function AddBrokerAccount({ labels }: { labels: BrokerFormLabels }) {
+export function AddBrokerAccount({
+  labels,
+  terminals = [],
+}: {
+  labels: BrokerFormLabels;
+  /** Terminal keys from the live map, for the optional selector. Empty keeps
+   *  the selector hidden and the agent picking the first free terminal. */
+  terminals?: string[];
+}) {
   const [open, setOpen] = useState(false);
   const [login, setLogin] = useState("");
   const [server, setServer] = useState("");
   const [password, setPassword] = useState("");
+  const [terminal, setTerminal] = useState("");
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [tone, setTone] = useState<"good" | "warning" | "critical">("warning");
@@ -67,7 +79,15 @@ export function AddBrokerAccount({ labels }: { labels: BrokerFormLabels }) {
         // hunting for a key in a terminal is a step that does not get taken.
         headers: { "Content-Type": "application/json" },
         credentials: "same-origin",
-        body: JSON.stringify({ login, server, password }),
+        // Blank terminal is sent as absent: the agent reads a missing key as
+        // "first terminal that has never held an account", and an empty
+        // string would be a name lookup that fails.
+        body: JSON.stringify({
+          login,
+          server,
+          password,
+          terminal: terminal || null,
+        }),
       });
       const body = await response.json();
 
@@ -174,6 +194,25 @@ export function AddBrokerAccount({ labels }: { labels: BrokerFormLabels }) {
           />
         </label>
       </div>
+
+      {terminals.length > 0 && (
+        <label className="space-y-1 block">
+          <span className="eyebrow">{labels.terminal}</span>
+          <select
+            value={terminal}
+            onChange={(e) => setTerminal(e.target.value)}
+            style={field}
+          >
+            <option value="">{labels.terminalAuto}</option>
+            {terminals.map((key) => (
+              <option key={key} value={key}>
+                {key}
+              </option>
+            ))}
+          </select>
+          <span className="text-xs ink-3 block">{labels.terminalHint}</span>
+        </label>
+      )}
 
       <label className="space-y-1 block">
         <span className="eyebrow">{labels.password}</span>

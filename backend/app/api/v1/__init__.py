@@ -4,12 +4,14 @@ from app.api.v1 import (
     access,
     auth,
     brain,
+    bridge_ingest,
     brokers,
     data_quality,
     decisions,
     episodes,
     execution,
     features,
+    fundamentals,
     instruments,
     integrations,
     learning,
@@ -17,10 +19,12 @@ from app.api.v1 import (
     market_map,
     memory,
     risk,
+    security,
     sessions,
     similarity,
     symbol_dna,
     system,
+    terminals,
     users,
     world_state,
 )
@@ -45,12 +49,16 @@ api_router.include_router(similarity.router)
 api_router.include_router(world_state.router)
 api_router.include_router(decisions.router)
 api_router.include_router(risk.router)
+api_router.include_router(fundamentals.router)
 api_router.include_router(learning.router)
 api_router.include_router(execution.router)
 api_router.include_router(integrations.router)
+api_router.include_router(bridge_ingest.router)
+api_router.include_router(terminals.router)
 api_router.include_router(users.router)
 api_router.include_router(system.router)
 api_router.include_router(market_map.router)
 api_router.include_router(brokers.router)
+api_router.include_router(security.router)
 
 __all__ = ["api_router"]

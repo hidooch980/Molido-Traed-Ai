@@ -12,8 +12,16 @@ rulebook. Two people on the same program can hold different contracts - a
 provider changes terms and honours the old ones for existing accounts - so
 confirmation belongs to the account, not to the transcription.
 
-Nothing here holds a credential. A challenge account is rules and a balance;
-the broker login that trades it lives in MetaTrader's own config.
+Three kinds of account pass through here. A challenge and a funded account are
+measured against a rulebook somebody else wrote, so both require one and both
+require the holder to confirm it. A live account is the holder's own money at a
+broker: nothing external ends it, there is no rulebook, and asking somebody to
+"confirm" rules that do not exist would collect a meaningless yes. So a live
+account carries no rulebook and no confirmation, and says so rather than
+sitting permanently unconfirmed as though somebody had failed to finish setup.
+
+Nothing here holds a credential. An account is rules and a balance; the broker
+login that trades it lives in MetaTrader's own config.
 """
 
 from __future__ import annotations
@@ -28,6 +36,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.brain import rulebooks as rulebook_module
+from app.core.enums import AccountKind
 from app.core.errors import NotFoundError, ValidationFailedError
 from app.models.challenge_accounts import ChallengeAccount
 
@@ -47,9 +56,12 @@ class AccountView:
 
     def as_dict(self) -> dict[str, Any]:
         book = self.rulebook
+        live = self.account.kind == AccountKind.LIVE
+        off = not self.account.is_active
         return {
             "id": str(self.account.id),
             "label": self.account.label,
+            "kind": self.account.kind,
             "rulebook_key": self.account.rulebook_key,
             "provider": book.provider if book else None,
             "program": book.program if book else None,
@@ -74,9 +86,30 @@ class AccountView:
             ),
             "notes": self.account.notes,
             "is_active": self.account.is_active,
-            "tracking_available": self.account.rules_confirmed and book is not None,
+            # A live account is never "trackable" in this sense and that is
+            # not a gap to be closed. Challenge tracking measures an account
+            # against limits somebody else can end it on; the holder's own
+            # account has none, so there is nothing to track it against and
+            # showing it as pending setup would invite a fix that does not
+            # exist.
+            "tracking_available": (
+                False
+                if (live or off)
+                else (self.account.rules_confirmed and book is not None)
+            ),
             "why_not": (
-                None
+                # Switched off first: it is the holder's most recent decision
+                # about this account, and it outranks every other reason. An
+                # account paused mid-challenge would otherwise report the
+                # rulebook problem it had before it was paused, and somebody
+                # would go and fix a rulebook for an account nobody is trading.
+                "this account is switched off, so nothing is measured against "
+                "it until it is switched back on"
+                if off
+                else "nobody outside this deployment sets the limits on a live "
+                "account, so there is no rulebook to measure it against"
+                if live
+                else None
                 if (self.account.rules_confirmed and book is not None)
                 else (
                     "the rulebook this account points at is no longer published"
@@ -131,7 +164,14 @@ def default_tenant(session: Session) -> uuid.UUID:
     return tenant.id
 
 
-def _resolve(key: str):
+def _resolve(key: str | None):
+    """The rulebook with this key, or None.
+
+    None in, None out: a live account has no key, and that is an answer rather
+    than a lookup failure.
+    """
+    if not key:
+        return None
     return next((book for book in rulebook_module.RULEBOOKS if book.key == key), None)
 
 
@@ -140,7 +180,8 @@ def create(
     *,
     tenant_id: uuid.UUID,
     label: str,
-    rulebook_key: str,
+    rulebook_key: str | None = None,
+    kind: str = AccountKind.CHALLENGE.value,
     starting_balance: Decimal,
     currency: str = "USD",
     currency_per_r: Decimal | None = None,
@@ -148,22 +189,47 @@ def create(
     notes: str = "",
     now: datetime | None = None,
 ) -> ChallengeAccount:
-    """Record a challenge account.
+    """Record an account of one of the three kinds.
 
-    An unconfirmed account is stored rather than refused. Somebody part-way
+    An unconfirmed prop account is stored rather than refused. Somebody part-way
     through setup has a real account with rules nobody has checked, and that is
     a state worth recording honestly - the row simply cannot be tracked against
     until the flag flips.
+
+    A live account is a different case, not a lesser one. It carries no
+    rulebook because none exists, and its confirmation flag is forced false
+    rather than left to the caller: "yes, I checked the rules" is not a
+    statement anybody can truthfully make about rules that were never written.
     """
     label = label.strip()
     if not label or len(label) > MAX_LABEL:
         raise ValidationFailedError(f"A label is required, up to {MAX_LABEL} characters.")
 
-    if _resolve(rulebook_key) is None:
-        known = ", ".join(book.key for book in rulebook_module.RULEBOOKS)
+    if kind not in {k.value for k in AccountKind}:
+        known_kinds = ", ".join(k.value for k in AccountKind)
         raise ValidationFailedError(
-            f"No transcribed rulebook has the key {rulebook_key!r}. Known keys: {known}"
+            f"{kind!r} is not a kind of account. Known kinds: {known_kinds}"
         )
+
+    live = kind == AccountKind.LIVE.value
+    if live:
+        # Dropped rather than refused if one arrives. A caller that sends a
+        # rulebook with a live account has misunderstood the kind, not made a
+        # typo, and storing the key would leave a row claiming a programme the
+        # holder is not on.
+        rulebook_key = None
+        rules_confirmed = False
+    else:
+        if not rulebook_key:
+            raise ValidationFailedError(
+                f"A {kind} account is measured against a rulebook, so one has to "
+                "be named. Only a live account has none."
+            )
+        if _resolve(rulebook_key) is None:
+            known = ", ".join(book.key for book in rulebook_module.RULEBOOKS)
+            raise ValidationFailedError(
+                f"No transcribed rulebook has the key {rulebook_key!r}. Known keys: {known}"
+            )
 
     if starting_balance < MIN_BALANCE:
         raise ValidationFailedError(
@@ -189,6 +255,7 @@ def create(
     account = ChallengeAccount(
         tenant_id=tenant_id,
         label=label,
+        kind=kind,
         rulebook_key=rulebook_key,
         starting_balance=starting_balance,
         currency=currency.upper()[:8],
@@ -221,10 +288,137 @@ def confirm(
     if account is None:
         raise NotFoundError("No challenge account with that id.")
 
+    if account.kind == AccountKind.LIVE:
+        # Refused rather than quietly ignored. A caller that gets a 200 here
+        # will believe the account is confirmed, and the honest answer is that
+        # there was never anything to confirm.
+        raise ValidationFailedError(
+            "A live account has no rulebook, so there are no rules to confirm. "
+            "Confirmation exists to check a transcription against a contract, "
+            "and this account is not on anybody's programme."
+        )
+
     account.rules_confirmed = True
     account.confirmed_at = now or datetime.now(UTC)
     if notes.strip():
         account.notes = notes.strip()[:MAX_NOTES]
+    session.flush()
+    return account
+
+
+def move_to(
+    session: Session,
+    *,
+    tenant_id: uuid.UUID,
+    account_id: uuid.UUID,
+    rulebook_key: str,
+    kind: str | None = None,
+    starting_balance: Decimal | None = None,
+) -> ChallengeAccount:
+    """Point an existing account at a different rulebook.
+
+    This is how a two-phase programme is actually sat. Phase one, phase two and
+    the funded account are three different documents with three different
+    numbers, and the holder passes through all of them on what is, to them, one
+    account. Recording each as a fresh row would scatter one account's history
+    across three, and the platform would have no way to say that the funded
+    account and the challenge that earned it are the same thing.
+
+    **Confirmation is reset, always.** The holder confirmed the phase one
+    rules; phase two is a different document with a different profit target and
+    frequently a different time limit. Carrying the tick across would mean the
+    platform measuring an account against numbers nobody checked while
+    displaying it as checked - which is the single failure this whole
+    confirmation mechanism exists to prevent.
+
+    The starting balance is optional and replaces the old one when given.
+    Most programmes reset the balance between phases, and a phase two measured
+    against phase one's closing balance would compute every drawdown from the
+    wrong floor.
+    """
+    account = session.scalar(
+        select(ChallengeAccount).where(
+            ChallengeAccount.id == account_id, ChallengeAccount.tenant_id == tenant_id
+        )
+    )
+    if account is None:
+        raise NotFoundError("No challenge account with that id.")
+
+    if account.kind == AccountKind.LIVE and kind in (None, AccountKind.LIVE.value):
+        raise ValidationFailedError(
+            "A live account is on nobody's programme, so there is no phase to "
+            "move it to. Record the prop account separately."
+        )
+
+    if kind is not None and kind not in {k.value for k in AccountKind}:
+        known_kinds = ", ".join(k.value for k in AccountKind)
+        raise ValidationFailedError(
+            f"{kind!r} is not a kind of account. Known kinds: {known_kinds}"
+        )
+
+    if kind == AccountKind.LIVE.value:
+        raise ValidationFailedError(
+            "Moving a prop account to a live one would keep its programme "
+            "history against an account that is on no programme. Record the "
+            "live account separately."
+        )
+
+    if _resolve(rulebook_key) is None:
+        known = ", ".join(book.key for book in rulebook_module.RULEBOOKS)
+        raise ValidationFailedError(
+            f"No transcribed rulebook has the key {rulebook_key!r}. Known keys: {known}"
+        )
+
+    if starting_balance is not None and starting_balance < MIN_BALANCE:
+        raise ValidationFailedError(
+            f"A starting balance of at least {MIN_BALANCE} is required: below that "
+            "a percentage drawdown rounds to nothing and every check blocks."
+        )
+
+    account.rulebook_key = rulebook_key
+    if kind is not None:
+        account.kind = kind
+    if starting_balance is not None:
+        account.starting_balance = starting_balance
+
+    # Never carried across. See the docstring: this is the one line in the
+    # module that the confirmation mechanism depends on.
+    account.rules_confirmed = False
+    account.confirmed_at = None
+    session.flush()
+    return account
+
+
+def set_active(
+    session: Session,
+    *,
+    tenant_id: uuid.UUID,
+    account_id: uuid.UUID,
+    active: bool,
+) -> ChallengeAccount:
+    """Switch an account on or off.
+
+    Off rather than deleted, and the distinction is the point. A challenge that
+    failed, an account between funding rounds, one the holder has stepped away
+    from - all of them are real accounts with real history, and deleting the
+    row would take the history with it. Switched off, the account keeps
+    everything it knows and is measured against nothing.
+
+    Nothing is recomputed here. Whether an account can be tracked is derived
+    from its state every time it is read, so an account switched off stops
+    being tracked at the next read rather than at the next sweep - and one
+    switched back on resumes with the confirmation it already had, because
+    pausing an account was never a statement about its rulebook.
+    """
+    account = session.scalar(
+        select(ChallengeAccount).where(
+            ChallengeAccount.id == account_id, ChallengeAccount.tenant_id == tenant_id
+        )
+    )
+    if account is None:
+        raise NotFoundError("No challenge account with that id.")
+
+    account.is_active = active
     session.flush()
     return account
 
@@ -247,16 +441,29 @@ def summary(session: Session, *, tenant_id: uuid.UUID | None = None) -> dict[str
     verified pad the number that suggests the system is set up.
     """
     views = listing(session, tenant_id=tenant_id)
-    confirmed = [v for v in views if v.account.rules_confirmed]
+    # Confirmation is counted over prop accounts alone. A live account is
+    # permanently unconfirmed by design, and letting it into the denominator
+    # would make a fully configured deployment read as half-finished for a
+    # reason nobody could act on.
+    prop = [v for v in views if v.account.kind != AccountKind.LIVE]
+    confirmed = [v for v in prop if v.account.rules_confirmed]
     return {
         "accounts": [view.as_dict() for view in views],
         "total": len(views),
+        "active": sum(1 for v in views if v.account.is_active),
+        "by_kind": {
+            kind.value: sum(1 for v in views if v.account.kind == kind) 
+            for kind in AccountKind
+        },
         "confirmed": len(confirmed),
-        "unconfirmed": len(views) - len(confirmed),
+        "unconfirmed": len(prop) - len(confirmed),
         "trackable": sum(1 for v in views if v.as_dict()["tracking_available"]),
         "note": (
             "confirmation is per account, not per rulebook. Two holders on the "
             "same program can be on different contracts - providers change "
-            "terms and honour the old ones for existing accounts"
+            "terms and honour the old ones for existing accounts. Live "
+            "accounts are counted in the total and left out of the "
+            "confirmation figures: they are measured against no rulebook, so "
+            "there is nothing about them to confirm"
         ),
     }

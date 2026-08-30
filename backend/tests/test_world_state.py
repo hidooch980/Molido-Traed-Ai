@@ -101,3 +101,39 @@ class TestAssembly:
         state = world_state.build(session, instrument.id, Timeframe.H1)
 
         assert state.as_of.tzinfo is not None
+
+
+class TestItReportsWhatItSpent:
+    """This call takes seconds while each of its seven parts looks cheap.
+
+    Without a number beside each name, "the world state is slow" is a sentence
+    somebody answers by guessing which of seven things to optimise - and the
+    expensive one reads thousands of bars while the ones beside it read a row.
+    """
+
+    def test_every_block_is_timed(self, session, instrument, provider):
+        state = world_state.build(session, instrument.id, Timeframe.H1)
+
+        assert set(state.timings_ms) == set(state.blocks)
+
+    def test_a_block_that_refused_is_timed_too(self, session, instrument):
+        """A block taking two seconds to decide it has no data costs exactly
+        what one taking two seconds to produce some costs, and only one of
+        those is obvious from the output."""
+        state = world_state.build(session, instrument.id, Timeframe.H1)
+
+        refused = [n for n, b in state.blocks.items() if not b.available]
+        assert refused, "this fixture has no bars, so something must refuse"
+        for name in refused:
+            assert name in state.timings_ms
+
+    def test_the_timings_reach_the_caller(self, session, instrument):
+        """Published rather than logged only.
+
+        Whoever asks why a page is slow is looking at the page, not at a log
+        stream on a server they may not be able to reach.
+        """
+        payload = world_state.build(session, instrument.id, Timeframe.H1).as_dict()
+
+        assert "timings_ms" in payload
+        assert all(isinstance(v, float) for v in payload["timings_ms"].values())

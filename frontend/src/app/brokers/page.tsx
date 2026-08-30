@@ -1,5 +1,6 @@
 import { Offline, Panel, Stat, StatusBadge } from "@/components/ui";
 import { AddBrokerAccount } from "@/components/AddBrokerAccount";
+import { TerminalUnlink } from "@/components/TerminalUnlink";
 import { api } from "@/lib/api";
 import { getT } from "@/lib/locale";
 
@@ -33,10 +34,12 @@ export default async function BrokersPage() {
     typeof v === "number" ? `${(v * 100).toFixed(0)}%` : t("brokers.notImposed");
 
   return (
-    <div className="space-y-4">
-      <header>
-        <h1 className="text-xl font-bold">{t("brokers.title")}</h1>
+    <div className="space-y-6">
+      <header className="page-header">
+        <div className="min-w-0">
+          <h1 className="display">{t("brokers.title")}</h1>
         <p className="text-xs ink-3 mt-0.5 max-w-2xl">{t("brokers.subtitle")}</p>
+      </div>
       </header>
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -124,6 +127,64 @@ export default async function BrokersPage() {
             </tbody>
           </table>
         </div>
+        {/* Every terminal, one row each. This answers the question the page
+            used to leave open - "I connected my accounts, where are they?" -
+            with figures read from what each terminal publishes right now. */}
+        <div className="scroll-x">
+          <table className="data">
+            <thead>
+              <tr>
+                <th>{t("brokers.terminal")}</th>
+                <th>{t("brokers.account")}</th>
+                <th>{t("brokers.server")}</th>
+                <th className="num">{t("brokers.balance")}</th>
+                <th>{t("brokers.connection")}</th>
+                <th>{t("brokers.actions")}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {Object.entries(b.metatrader.terminals).map(([key, term]) => (
+                <tr key={key}>
+                  <td className="font-semibold" dir="ltr">{key}</td>
+                  <td dir="ltr">{term.available ? term.login : "—"}</td>
+                  <td dir="ltr">{term.available ? (term.server ?? "—") : "—"}</td>
+                  <td className="num" dir="ltr">
+                    {term.available && term.balance !== undefined
+                      ? `${term.balance} ${term.currency ?? ""}`
+                      : "—"}
+                  </td>
+                  <td>
+                    {term.available && term.state?.connected ? (
+                      <StatusBadge status="good" label={t("brokers.connected")} />
+                    ) : (
+                      <StatusBadge
+                        status="warning"
+                        label={term.available ? t("brokers.disconnected") : t("brokers.silent")}
+                      />
+                    )}
+                  </td>
+                  <td>
+                    {/* Only where there is a login to forget. A log-out
+                        button on an empty terminal would queue a restart
+                        that changes nothing and reads as broken. */}
+                    {term.available && (
+                      <TerminalUnlink
+                        terminal={key}
+                        labels={{
+                          unlink: t("brokers.unlink"),
+                          confirm: t("brokers.unlinkConfirm"),
+                          cancel: t("brokers.unlinkCancel"),
+                          working: t("brokers.unlinkWorking"),
+                          failed: t("brokers.unlinkFailed"),
+                        }}
+                      />
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
         <ul className="p-4 space-y-1.5 text-xs ink-3 leading-relaxed">
           {b.metatrader.blocked_by.map((reason) => (
             <li key={reason}>— {reason}</li>
@@ -190,6 +251,7 @@ export default async function BrokersPage() {
       <Panel title={t("broker.add")} subtitle={t("broker.howTo")}>
         <div className="p-4">
           <AddBrokerAccount
+            terminals={Object.keys(b.metatrader.terminals)}
             labels={{
               add: t("broker.add"),
               login: t("broker.login"),
@@ -206,6 +268,9 @@ export default async function BrokersPage() {
               signInFirst: t("broker.signInFirst"),
               stillWaiting: t("broker.stillWaiting"),
               connected: t("broker.connected"),
+              terminal: t("broker.terminalField"),
+              terminalAuto: t("broker.terminalAuto"),
+              terminalHint: t("broker.terminalHint"),
             }}
           />
         </div>

@@ -529,3 +529,70 @@ class TestThePendingClaimIsNotTreatedAsProven:
         assert evidence.z_score == 3.69
         assert evidence.measured_z_method
         assert "clustered" in evidence.as_dict()["z_method"]
+
+
+class TestTheFleetPassSelectsAccountsAndNotTheirWrappers:
+    """`run_fleet` shares one market analysis across every account, so the
+    only thing it does per account is pick it and name it. Both were read off
+    the `AccountView` that `listing` returns rather than the account inside
+    it, and `getattr(view, "is_active", True)` cannot fail loudly - it answers
+    the default. A switched-off account traded, and every row in the pass was
+    labelled "". The same misread refused every trade in the autotrade gate;
+    this function had no caller yet, which is the only reason it was latent.
+    """
+
+    @staticmethod
+    def register(session, label, *, active=True):
+        from decimal import Decimal
+
+        from app.services import challenge_accounts
+
+        account = challenge_accounts.create(
+            session,
+            tenant_id=challenge_accounts.default_tenant(session),
+            label=label,
+            rulebook_key="ftmo-challenge-2step-phase1",
+            starting_balance=Decimal("10000"),
+        )
+        if not active:
+            challenge_accounts.set_active(
+                session,
+                tenant_id=challenge_accounts.default_tenant(session),
+                account_id=account.id,
+                active=False,
+            )
+        return account
+
+    @staticmethod
+    def pass_over(session, monkeypatch):
+        monkeypatch.setattr(autopilot, "mode_now", lambda: ("paper", "no proven edge", False))
+        instrument = (uuid.uuid4(), "EURUSD")
+        return autopilot.run_fleet(
+            session,
+            instruments=[instrument],
+            now=datetime(2026, 8, 18, 12, 0, tzinfo=UTC),
+            analyse_fn=lambda *a, **k: object(),
+            apply_fn=lambda *a, **k: None,
+        )
+
+    def test_a_switched_off_account_is_not_swept(self, session, monkeypatch):
+        self.register(session, "on")
+        self.register(session, "off", active=False)
+
+        result = self.pass_over(session, monkeypatch)
+
+        assert result.accounts_considered == 1
+        assert [row["account"] for row in result.per_account] == ["on"]
+
+    def test_every_account_is_named(self, session, monkeypatch):
+        """Read off the wrapper, `label` was "" and `id` was "" too, so the
+        fallback had nothing to fall back to: two accounts, two blank rows,
+        and a skipped-account report that could not say which one."""
+        self.register(session, "FTMO 10k")
+        self.register(session, "FundedNext 100k")
+
+        result = self.pass_over(session, monkeypatch)
+
+        named = sorted(row["account"] for row in result.per_account)
+        assert named == ["FTMO 10k", "FundedNext 100k"]
+        assert "" not in named

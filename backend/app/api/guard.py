@@ -191,6 +191,40 @@ PUBLIC_PATHS = frozenset({
 })
 
 
+#: Paths a caller must be able to reach *in order to obtain* a credential.
+#:
+#: `require_auth` makes `resolve_principal` refuse anybody without a key or a
+#: session. Applied without exception that closes the sign-in route too, and a
+#: deployment with the flag on and nobody signed in can never be signed into
+#: again - the failure is total, silent until somebody tries, and unfixable
+#: from the outside.
+#:
+#: So these seven, and the reason each is here:
+#:
+#:   session/challenge   issues the proof of work the sign-in form must carry
+#:   session/sign-in     exchanges a password for a session
+#:   session/sign-out    must work for somebody whose cookie already expired
+#:   users/setup         one boolean: is this deployment claimed yet
+#:   users/claim         creates the first owner, on a deployment with no
+#:                       account to authenticate as
+#:   users/register      self sign-up, which by definition has no session
+#:   users/verify        spends a token from an emailed link
+#:
+#: Everything here is still guarded - by the rate limiter, the proof of work,
+#: and in the mutating cases by `@public_mutation`, which demands a written
+#: reason. What they are exempt from is only the requirement to already be
+#: who they are trying to become.
+BOOTSTRAP_PATHS = frozenset({
+    "/api/v1/session/challenge",
+    "/api/v1/session/sign-in",
+    "/api/v1/session/sign-out",
+    "/api/v1/users/setup",
+    "/api/v1/users/claim",
+    "/api/v1/users/register",
+    "/api/v1/users/verify",
+})
+
+
 def find_ungated_routes(app: Any, *, require_auth: bool) -> list[UngatedRoute]:
     """Routes that are not safely reachable. Empty means the gate holds.
 
@@ -215,7 +249,7 @@ def find_ungated_routes(app: Any, *, require_auth: bool) -> list[UngatedRoute]:
 
         mutating = tuple(sorted(set(methods) - SAFE_METHODS))
         if not mutating:
-            if not require_auth or path in PUBLIC_PATHS:
+            if not require_auth or path in PUBLIC_PATHS or path in BOOTSTRAP_PATHS:
                 continue
             if not (_declared_permissions(dependant) | set(inherited)):
                 offenders.append(

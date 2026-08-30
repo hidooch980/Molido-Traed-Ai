@@ -18,6 +18,7 @@ import pytest
 
 from app.brain import challenge as ch
 from app.brain import rulebooks as rb
+from app.core.enums import AssetClass
 
 
 class TestEveryRulebookCarriesItsProvenance:
@@ -52,8 +53,34 @@ class TestTheNumbersSurviveTheChallengeBrain:
         """Every transcribed book must produce a usable answer for an untouched
         account. One that blocks a fresh account has a rule in the wrong state,
         and the block would read as caution rather than as a transcription
-        error."""
+        error.
+
+        Unless the provider forbids the automation, which is a refusal about
+        this platform rather than about the account's health - the numbers are
+        fine and the software is not allowed to act on them. That case is
+        asserted rather than excused: it must block, and it must say why.
+        """
         verdict = ch.check(book.rules, _fresh(), 1.0)
+
+        if book.rules.automated_trading_allowed is False:
+            assert verdict.allowed is False
+            assert any("automated" in b.lower() for b in verdict.breaches), (
+                "a refusal here must name the reason; an unexplained block on "
+                "a healthy account reads as a transcription error"
+            )
+            return
+
+        if book.rules.automated_trading_allowed is None:
+            # Every catalogued book is in this state today, so this is the
+            # branch that actually runs. It is not a transcription error: the
+            # permission is a fact about the holder's contract, and no reading
+            # of a public page can settle it. The block is the correct answer
+            # and stays until somebody confirms the account they bought.
+            assert verdict.allowed is False
+            assert any(
+                "automation permission" in g.lower() for g in verdict.gates
+            ), "a block on an unread permission must say that is what it is"
+            return
 
         assert verdict.allowed is True, verdict.unverified
 
@@ -72,17 +99,36 @@ class TestTheNumbersSurviveTheChallengeBrain:
 
         assert not any("never entered" in note for note in drawdown_notes)
 
+    #: The word each unentered rule must put into `unverified`, by field.
+    UNENTERED_READS_AS = {
+        "max_leverage": "leverage",
+        "max_concurrent_positions": "concurrent-position",
+        "weekend_holding_allowed": "weekend",
+        "news_trading_allowed": "news",
+        "max_single_day_profit_share": "consistency",
+        "automated_trading_allowed": "automated",
+        "min_trading_days": "minimum trading days",
+        "max_trading_days": "maximum trading days",
+    }
+
     @pytest.mark.parametrize("book", rb.RULEBOOKS, ids=lambda b: b.key)
-    def test_the_unknown_rules_are_named_rather_than_silently_skipped(self, book):
-        """The three this file could not source have to show up somewhere. A
-        rule nobody checked and nobody mentioned is indistinguishable from a
-        rule that passed."""
+    def test_every_unentered_rule_is_named_rather_than_silently_skipped(self, book):
+        """A rule nobody checked and nobody mentioned is indistinguishable
+        from a rule that passed.
+
+        Asked of whatever is actually unentered rather than of three
+        hard-coded names. The previous version named leverage, the position
+        cap and weekend holding, and had to be rewritten by hand the day
+        FundedNext published two of them - a test that breaks when a rulebook
+        gets *better* sourced is testing the transcription, not the property.
+        This asks the property: whatever is `None`, say so.
+        """
         verdict = ch.check(book.rules, _fresh(), 1.0)
         notes = " ".join(verdict.unverified)
 
-        assert "leverage" in notes
-        assert "concurrent-position" in notes
-        assert "weekend" in notes
+        for field, word in self.UNENTERED_READS_AS.items():
+            if getattr(book.rules, field) is None:
+                assert word in notes, f"{field} is unentered but unnamed in {book.key}"
 
 
 class TestTheFundedNextFiguresAreWhatThePagePublishes:
@@ -178,21 +224,71 @@ class TestTheRulersAreTranscribedNotAssumed:
         assert book.rules.drawdown_basis is ch.DrawdownBasis.EQUITY
 
     @pytest.mark.parametrize("book", rb.RULEBOOKS, ids=lambda b: b.key)
-    def test_there_is_no_deadline(self, book):
-        assert book.rules.max_trading_days is rb.NOT_IMPOSED
+    def test_a_deadline_is_a_number_or_an_explicit_absence(self, book):
+        """This asserted that no programme had a deadline, which was true of
+        every provider in the catalogue until one arrived that does.
+
+        The property worth holding is not "there is never a deadline" - that
+        is a fact about which firms happened to be listed - but that the field
+        is either a real count of days or the explicit `NOT_IMPOSED`. A `None`
+        here would read as "unknown", and a deadline nobody knows about is one
+        the account fails on.
+        """
+        days = book.rules.max_trading_days
+        assert days is rb.NOT_IMPOSED or (isinstance(days, int) and days > 0)
 
 
 class TestWhatThePageDoesNotSayStaysUnknown:
-    @pytest.mark.parametrize("book", rb.RULEBOOKS, ids=lambda b: b.key)
-    def test_weekend_holding_is_not_guessed(self, book):
-        """It appears on no tab. Inferring it from silence is how a rulebook
-        acquires a rule its provider never wrote."""
+    @pytest.mark.parametrize(
+        "book",
+        [b for b in rb.RULEBOOKS if b.provider == "FundedNext"],
+        ids=lambda b: b.key,
+    )
+    def test_fundednext_weekend_holding_is_allowed_because_it_is_stated(self, book):
+        """Unknown until 30 Aug, when the Symbols & Conditions tab gained
+        "overnight and weekend holding are allowed across every CFDs account,
+        at every stage". Read now, where before there was nothing to read."""
+        assert book.rules.weekend_holding_allowed is True
+
+    @pytest.mark.parametrize(
+        "book",
+        [b for b in rb.RULEBOOKS if b.provider == "FTMO"],
+        ids=lambda b: b.key,
+    )
+    def test_ftmo_weekend_holding_stays_unknown(self, book):
+        """FundedNext publishing it says nothing about FTMO. Copying it
+        across because both are prop firms is how a rulebook acquires a rule
+        its provider never wrote."""
         assert book.rules.weekend_holding_allowed is None
 
-    @pytest.mark.parametrize("book", rb.RULEBOOKS, ids=lambda b: b.key)
-    def test_leverage_is_not_guessed(self, book):
-        """Published per symbol, not on the rules page."""
+    @pytest.mark.parametrize(
+        "book",
+        [b for b in rb.RULEBOOKS if b.provider == "FTMO"],
+        ids=lambda b: b.key,
+    )
+    def test_ftmo_leverage_stays_unknown(self, book):
+        """FTMO's objectives page does not publish it. FundedNext's numbers
+        are FundedNext's."""
         assert book.rules.max_leverage is None
+
+    @pytest.mark.parametrize(
+        "book",
+        [b for b in rb.RULEBOOKS if b.provider == "FundedNext"],
+        ids=lambda b: b.key,
+    )
+    def test_fundednext_leverage_is_read_per_asset_class(self, book):
+        """One float could not hold this and so it stayed unread until 30 Aug:
+        the same account is capped at 1:100 on forex and 1:1 on crypto. The
+        cap for an unnamed asset is the tightest published, never the
+        loosest."""
+        caps = book.rules.max_leverage
+
+        assert isinstance(caps, ch.LeverageCaps)
+        assert caps.binding(AssetClass.CRYPTO) == 1.0
+        assert caps.binding(AssetClass.FOREX) > caps.binding(AssetClass.CRYPTO)
+        assert caps.binding(None) == caps.most_restrictive
+        # An asset class the page never listed is not a licence.
+        assert caps.binding(AssetClass.BOND) == caps.most_restrictive
 
     @pytest.mark.parametrize(
         "book",
@@ -251,4 +347,9 @@ def _fresh() -> ch.ChallengeState:
         open_positions=0,
         current_date=date(2026, 8, 13),
         currency_per_r=200.0,
+        # Nothing is open, so leverage is zero - a measurement, not a default.
+        # Left unset while every cap was unread, which cost nothing; once a
+        # book carries a real cap, an unstated leverage gates the trade as
+        # unmeasurable, and this account can state it.
+        current_leverage=0.0,
     )

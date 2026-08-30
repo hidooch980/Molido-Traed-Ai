@@ -277,3 +277,60 @@ def test_idempotency_key_is_stable_and_window_sensitive():
 
     assert a == b
     assert a != c
+
+
+class TestABarFromOutsideTheWindow:
+    """A provider does not promise to answer inside the range it was asked for.
+
+    Yahoo answers a fifteen-minute request with whatever its session
+    boundaries produce, and a bar arriving from outside the requested window
+    was invisible to a lookup shaped like that window. The insert that
+    followed collided with a row already stored and took the whole symbol down
+    with it - seven of a hundred and twenty-five entries on every sweep, each
+    one an instrument that stops collecting entirely.
+    """
+
+    def test_a_bar_already_stored_is_not_inserted_twice(
+        self, session, instrument, provider
+    ):
+        from datetime import UTC, datetime
+
+        from app.core.enums import Timeframe
+        from app.services import ingestion
+
+        moment = datetime(2026, 7, 2, 14, 30, tzinfo=UTC)
+
+        # Stored once, as an earlier sweep would have left it.
+        stored = ingestion._existing_bars(
+            session, instrument.id, provider.id, Timeframe.M15, [moment]
+        )
+        assert stored == {}
+
+        from tests.conftest import insert_bar
+
+        insert_bar(
+            session, instrument.id, provider.id,
+            event_time=moment, ingested_at=moment,
+            close=1.1, open_=1.1, timeframe=Timeframe.M15,
+        )
+        session.flush()
+
+        # Found by timestamp, even though no window was given.
+        found = ingestion._existing_bars(
+            session, instrument.id, provider.id, Timeframe.M15, [moment]
+        )
+        assert moment in found, (
+            "the bar is stored; a lookup that cannot see it is the lookup "
+            "that lets the next insert collide"
+        )
+
+    def test_an_empty_list_asks_the_database_nothing(
+        self, session, instrument, provider
+    ):
+        """A fetch that returned nothing must not turn into `IN ()`."""
+        from app.core.enums import Timeframe
+        from app.services import ingestion
+
+        assert ingestion._existing_bars(
+            session, instrument.id, provider.id, Timeframe.M15, []
+        ) == {}

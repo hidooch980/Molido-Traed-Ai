@@ -67,6 +67,10 @@ class SignIn:
     expires_at: datetime
     role: UserRole
     tenant_id: uuid.UUID
+    #: Who signed in. Carried so the attempt record can say which account
+    #: succeeded - a log of successes that cannot name one answers none of the
+    #: questions asked after a scare.
+    user_id: uuid.UUID
 
 
 def _digest(token: str) -> str:
@@ -119,6 +123,7 @@ def sign_in(
         expires_at=expires,
         role=UserRole(user.role),
         tenant_id=user.tenant_id,
+        user_id=user.id,
     )
 
 

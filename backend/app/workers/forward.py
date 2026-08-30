@@ -30,7 +30,7 @@ from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.brain import crosssection
@@ -103,32 +103,81 @@ def snapshot(
         return {}, None
     cutoff = instant
 
-    built: dict[str, dict[str, Any]] = {}
+    # One query for the whole active universe instead of one query per symbol.
+    # First isolate the latest revision for each instrument/event_time, then
+    # rank those rows per instrument and keep the newest LOOKBACK bars.
+    from sqlalchemy import func
 
-    for instrument in instruments:
-        rows = session.scalars(
-            select(Bar)
-            .where(
-                Bar.instrument_id == instrument.id,
-                Bar.timeframe == timeframe.value,
-                Bar.provider_id == provider_id,
-                Bar.event_time <= cutoff,
+    active_ids = [instrument.id for instrument in instruments]
+    if not active_ids:
+        return {}, instant
+
+    latest_revision = (
+        select(
+            Bar.instrument_id,
+            Bar.event_time,
+            func.max(Bar.revision).label("revision"),
+        )
+        .where(
+            Bar.instrument_id.in_(active_ids),
+            Bar.timeframe == timeframe.value,
+            Bar.provider_id == provider_id,
+            Bar.event_time <= cutoff,
+        )
+        .group_by(Bar.instrument_id, Bar.event_time)
+        .subquery()
+    )
+
+    ranked = (
+        select(
+            Bar,
+            func.row_number()
+            .over(
+                partition_by=Bar.instrument_id,
+                order_by=Bar.event_time.desc(),
             )
-            .order_by(Bar.event_time.desc())
-            .limit(LOOKBACK)
-        ).all()
-        if len(rows) < LOOKBACK:
+            .label("_rn"),
+        )
+        .join(
+            latest_revision,
+            (Bar.instrument_id == latest_revision.c.instrument_id)
+            & (Bar.event_time == latest_revision.c.event_time)
+            & (Bar.revision == latest_revision.c.revision),
+        )
+        .where(
+            Bar.timeframe == timeframe.value,
+            Bar.provider_id == provider_id,
+        )
+        .subquery()
+    )
+
+    rows = session.execute(
+        select(ranked).where(ranked.c._rn <= LOOKBACK)
+    ).all()
+
+    by_instrument: dict[uuid.UUID, list[Any]] = {}
+    for row in rows:
+        values = row._mapping
+        instrument_id = values["instrument_id"]
+        by_instrument.setdefault(instrument_id, []).append(values)
+
+    built: dict[str, dict[str, Any]] = {}
+    for instrument in instruments:
+        # Its own name rather than reusing `values`: the loop above binds that
+        # name to a RowMapping, and one identifier carrying two types is how
+        # the type checker - and the next reader - lose the thread.
+        bucket = by_instrument.get(instrument.id, [])
+        if len(bucket) < LOOKBACK:
             continue
 
-        rows = list(reversed(rows))
+        bucket.sort(key=lambda x: x["event_time"])
         built[instrument.symbol] = {
-            "closes": [float(r.close) for r in rows],
-            "bars": [(float(r.high), float(r.low), float(r.close)) for r in rows],
-            # Carried so the ranking can exclude a series that stopped moving.
-            # A frozen series drifts one way from its own mean, so it ranks
-            # extreme and gets picked, and the pick is about the outage rather
-            # than the market.
-            "last_at": rows[-1].event_time,
+            "closes": [float(v["close"]) for v in bucket],
+            "bars": [
+                (float(v["high"]), float(v["low"]), float(v["close"]))
+                for v in bucket
+            ],
+            "last_at": bucket[-1]["event_time"],
         }
 
     return built, instant
@@ -151,26 +200,28 @@ def _instant(
     staleness guard - correctly - threw all of it away. That cycle ranked two
     instruments out of forty-nine.
     """
-    counts: dict[datetime, int] = {}
-    for instrument in instruments:
-        stamps = session.scalars(
-            select(Bar.event_time)
-            .where(
-                Bar.instrument_id == instrument.id,
-                Bar.timeframe == timeframe.value,
-                Bar.provider_id == provider_id,
-                Bar.event_time <= ceiling,
-            )
-            .order_by(Bar.event_time.desc())
-            .limit(1)
-        ).all()
-        for stamp in stamps:
-            counts[stamp] = counts.get(stamp, 0) + 1
+    if not instruments:
+        return None
 
-    for stamp in sorted(counts, reverse=True):
-        if counts[stamp] >= MIN_FOR_INSTANT:
-            return stamp
-    return None
+    active_ids = [instrument.id for instrument in instruments]
+
+    # Find the newest closed timestamp shared by enough active instruments.
+    # This replaces one expensive latest-row query per instrument with one
+    # grouped query over the hypertable.
+    stamp = session.scalar(
+        select(Bar.event_time)
+        .where(
+            Bar.instrument_id.in_(active_ids),
+            Bar.timeframe == timeframe.value,
+            Bar.provider_id == provider_id,
+            Bar.event_time <= ceiling,
+        )
+        .group_by(Bar.event_time)
+        .having(func.count(func.distinct(Bar.instrument_id)) >= MIN_FOR_INSTANT)
+        .order_by(Bar.event_time.desc())
+        .limit(1)
+    )
+    return stamp
 
 
 def _provider_id(session: Session, code: str) -> uuid.UUID | None:
@@ -220,6 +271,11 @@ def record_cycle(
                 price=pick.price,
                 stop_distance=pick.atr * STOP_MULTIPLE,
                 price_source=price_source,
+                # The whole point of widening the measurement: an entry that
+                # cannot say which timeframe it came from cannot be separated
+                # from one that came from another, and the hourly and minute
+                # bars share a timestamp every hour.
+                timeframe=timeframe.value,
                 account_key=account_key,
                 before={
                     "rule": "cross-sectional-stretch",

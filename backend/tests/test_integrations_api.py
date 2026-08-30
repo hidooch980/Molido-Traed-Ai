@@ -130,9 +130,31 @@ class TestSecurityPosture:
     def test_every_role_is_published_with_its_permissions(self, client):
         roles = client.get("/api/v1/integrations/security").json()["roles"]
 
-        assert roles["viewer"] == ["read"]
+        # Read, and acting on its own account - a viewer must be able to change
+        # its own password and turn on a second factor, or the role with the
+        # least to lose is the one that cannot be secured. Nothing here moves.
+        assert roles["viewer"] == ["read", "self.manage"]
         assert "execute" in roles["trader"]
         assert "execute" not in roles["analyst"]
+
+    def test_a_viewer_still_holds_nothing_that_moves(self, client):
+        """The claim the row above is really making. Asserted against the
+        moving permissions by name, so a future addition to the viewer set has
+        to be checked against this rather than against a list length."""
+        roles = client.get("/api/v1/integrations/security").json()["roles"]
+
+        for permission in ("execute", "simulate", "halt", "release", "broker.manage",
+                           "users.manage", "keys.manage", "settings.write",
+                           "rulebook.write", "audit.read"):
+            assert permission not in roles["viewer"], permission
+
+    def test_the_anonymous_caller_cannot_act_on_any_account(self, client):
+        """`self.manage` is what separates "signed in as the least trusted
+        role" from "not signed in". If anonymous ever held it, every
+        self-service mutation would be reachable by a stranger."""
+        payload = client.get("/api/v1/integrations/security").json()
+
+        assert "self.manage" not in payload["anonymous_holds"]
 
     def test_the_gate_is_described_as_running_at_import(self, client):
         """Not at first request. A hole that appears under load is one that

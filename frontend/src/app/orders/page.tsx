@@ -20,10 +20,12 @@ export default async function OrdersPage() {
   const { states: all, terminal, transitions } = states.data;
 
   return (
-    <div className="space-y-4">
-      <header>
-        <h1 className="text-xl font-bold">{t("orders.title")}</h1>
+    <div className="space-y-6">
+      <header className="page-header">
+        <div className="min-w-0">
+          <h1 className="display">{t("orders.title")}</h1>
         <p className="text-xs ink-3 mt-0.5 max-w-3xl">{t("orders.subtitle")}</p>
+      </div>
       </header>
 
       <Panel title={t("orders.unknownTitle")}>

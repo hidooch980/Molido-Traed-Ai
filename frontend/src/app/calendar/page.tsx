@@ -32,10 +32,12 @@ export default async function CalendarPage() {
   const { releases, next, hours_to_next, clock_warning, note, count } = calendar.data;
 
   return (
-    <div className="space-y-4">
-      <header>
-        <h1 className="text-xl font-bold">{t("calendar.title")}</h1>
+    <div className="space-y-6">
+      <header className="page-header">
+        <div className="min-w-0">
+          <h1 className="display">{t("calendar.title")}</h1>
         <p className="text-xs ink-3 mt-0.5 max-w-3xl">{t("calendar.subtitle")}</p>
+      </div>
       </header>
 
       {/* Published rather than logged. A feed whose clock moved would show

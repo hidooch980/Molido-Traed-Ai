@@ -39,10 +39,13 @@ verdict and a headroom. Execution is phase 25 and does not exist yet.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import date
 from enum import StrEnum
 from typing import Any, Final
+
+from app.core.enums import AssetClass
 
 # Below this many days there is no distribution to speak of. One profitable day
 # is trivially 100% of the profit, so judging consistency that early would fail
@@ -127,6 +130,51 @@ IntRule = int | NotImposed | None
 FlagRule = bool | NotImposed | None
 
 
+@dataclass(frozen=True)
+class LeverageCaps:
+    """Leverage the way providers actually publish it: one cap per asset class.
+
+    `max_leverage` was a single float, and that cannot hold what FundedNext
+    prints on one page: forex 1:100 and crypto 1:1 on the same account. Any
+    one number is false for some instrument that account can trade, and the
+    two ways of being wrong are both bad - too high permits what the
+    provider's server will reject, too low refuses what it would have
+    allowed. Neither is a cap; both are a guess wearing one.
+
+    A cap for an asset class that is not listed falls back to the most
+    restrictive one that is. That is the same rule the rest of this module
+    follows: not knowing may only reduce exposure, never grant it.
+    """
+
+    by_asset: Mapping[AssetClass, float]
+
+    def __post_init__(self) -> None:
+        if not self.by_asset:
+            raise ValueError(
+                "leverage caps with no asset class say nothing - use None for "
+                "unread and NOT_IMPOSED for a provider that caps nothing"
+            )
+        for asset, cap in self.by_asset.items():
+            if not isinstance(cap, float | int) or isinstance(cap, bool):
+                raise ValueError(f"the {asset} leverage cap must be a number")
+            if not cap > 0:
+                raise ValueError(
+                    f"the {asset} leverage cap must be above zero; a cap of "
+                    f"{cap} forbids every position and is not what a page "
+                    "saying 1:1 means"
+                )
+
+    @property
+    def most_restrictive(self) -> float:
+        return float(min(self.by_asset.values()))
+
+    def binding(self, asset: AssetClass | None) -> float:
+        """The cap governing a trade in `asset`; the tightest when unnamed."""
+        if asset is None:
+            return self.most_restrictive
+        return float(self.by_asset.get(asset, self.most_restrictive))
+
+
 @dataclass
 class ChallengeRules:
     """One provider's rulebook, per account.
@@ -149,12 +197,38 @@ class ChallengeRules:
     max_total_drawdown_pct: Rule = None
     min_trading_days: IntRule = None
     max_trading_days: IntRule = None
-    max_leverage: Rule = None
+    #: A figure, per-asset `LeverageCaps`, NOT_IMPOSED, or None for unread.
+    max_leverage: Rule | LeverageCaps = None
     # No single day may be more than this share of total profit.
     max_single_day_profit_share: Rule = None
     news_trading_allowed: FlagRule = None
     weekend_holding_allowed: FlagRule = None
     max_concurrent_positions: IntRule = None
+
+    #: Whether software may choose the trades.
+    #:
+    #: Not a number, and the only rule in this list that can rule this platform
+    #: out of an account entirely. Providers draw the line in different places:
+    #: several permit money-management and copy-trading experts while
+    #: forbidding automated decision-making, which is precisely what this
+    #: system does.
+    #:
+    #: `None` means nobody read the document, and here that is not the same as
+    #: permission: this rule cannot be answered by trading smaller, because the
+    #: question is whether software may choose the trades at all.
+    #:
+    #: It is nonetheless **reported and not gated**. This comment used to say
+    #: the opposite - "this one cannot be reduced, so it stops" - and had said
+    #: it since before `check` was changed to report it, so the description of
+    #: the safety layer and the safety layer disagreed about whether a trade
+    #: gets through. The reasoning for reporting is at the check itself; the
+    #: reasoning for stopping is the paragraph above, and it has not been
+    #: withdrawn. Whether to gate is an open decision, not a settled one.
+    #:
+    #: What that means in practice, now that the gate supplies an R value: a
+    #: registered account passes the challenge gate with this permission
+    #: unread. Four execution switches still stand behind it.
+    automated_trading_allowed: FlagRule = None
 
     # Not rules but rulers — how the two drawdown rules above are read.
     drawdown_basis: DrawdownBasis = DrawdownBasis.EQUITY
@@ -198,6 +272,10 @@ class ChallengeState:
     # floor below the provider's whenever the day opened with a floating loss.
     daily_starting_balance: float | None = None
     current_leverage: float | None = None
+    #: What the proposed trade is in, so a per-asset cap can be resolved.
+    #: `None` is honest and costs exposure rather than granting it: the
+    #: tightest published cap applies to a trade nobody identified.
+    asset_class: AssetClass | None = None
     # What one R is worth in account currency. Without it a risk expressed in R
     # cannot be turned into a loss in money, and the loss projection — the only
     # part of this module that can refuse a trade before it exists — cannot be
@@ -342,6 +420,15 @@ class ChallengeVerdict:
     breaches: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     unverified: list[str] = field(default_factory=list)
+    #: Reasons nothing new may be opened *now*, as distinct from rules the
+    #: account has broken (`breaches`) and rules nobody entered (`unverified`).
+    #:
+    #: Published because `allowed` was computed from these and then dropped, so
+    #: a caller saw a refusal with an empty `breaches` list and had to guess.
+    #: The one caller guessed "the rulebook is incomplete", which is right for
+    #: an unentered rule and wrong for a rule that is entered and could not be
+    #: measured - and those need opposite responses from whoever reads it.
+    gates: list[str] = field(default_factory=list)
 
     @property
     def failed(self) -> bool:
@@ -402,6 +489,7 @@ def _refuse(reason: str) -> ChallengeVerdict:
         consistency=ConsistencyReport(available=False, reason=reason),
         projection=LossProjection(available=False, reason=reason),
         unverified=[reason],
+        gates=[reason],
     )
 
 
@@ -752,26 +840,42 @@ def check(
             gates.append(f"{headroom.limit} drawdown could not be measured")
 
     # ------------------------------------------------------------- leverage
+    # Resolved to the one figure that governs this trade before it is used.
+    # A per-asset rulebook with no asset named resolves to its tightest cap
+    # rather than refusing: the answer is knowable and conservative, and
+    # blocking on it would stop every trade on a rulebook that is complete.
+    cap: float | None = None
     if rules.max_leverage is None:
         unverified.append(
             "the leverage cap was never entered, so it was not checked"
         )
-    if isinstance(rules.max_leverage, float | int):
+    elif isinstance(rules.max_leverage, LeverageCaps):
+        cap = rules.max_leverage.binding(state.asset_class)
+        if state.asset_class is None:
+            warnings.append(
+                f"no asset class was named, so the tightest published leverage "
+                f"cap ({cap:.2f}x) was applied rather than the one for the "
+                "instrument actually traded"
+            )
+    elif isinstance(rules.max_leverage, float | int):
+        cap = float(rules.max_leverage)
+
+    if cap is not None:
         if state.current_leverage is None:
             unverified.append("leverage rule not checked: no leverage in the account state")
             gates.append("leverage could not be measured")
-        elif state.current_leverage > rules.max_leverage:
+        elif state.current_leverage > cap:
             breaches.append(
                 f"leverage {state.current_leverage:.2f}x is above the "
-                f"{rules.max_leverage:.2f}x cap"
+                f"{cap:.2f}x cap"
             )
         else:
-            if state.current_leverage >= rules.max_leverage:
-                gates.append(f"leverage is at the {rules.max_leverage:.2f}x cap")
-            elif state.current_leverage >= rules.max_leverage * LEVERAGE_WARNING_SHARE:
+            if state.current_leverage >= cap:
+                gates.append(f"leverage is at the {cap:.2f}x cap")
+            elif state.current_leverage >= cap * LEVERAGE_WARNING_SHARE:
                 warnings.append(
                     f"leverage {state.current_leverage:.2f}x is near the "
-                    f"{rules.max_leverage:.2f}x cap"
+                    f"{cap:.2f}x cap"
                 )
 
     # ------------------------------------------------------------ positions
@@ -787,6 +891,67 @@ def check(
             )
         elif state.open_positions >= rules.max_concurrent_positions:
             gates.append(f"{state.open_positions} open positions is the concurrent cap")
+
+    # ----------------------------------------------------- automated trading
+    #
+    # The only rule here that can rule this platform out of an account
+    # entirely, and the only one that does not reduce.
+    #
+    # Every other unverified rule lowers what is permitted, because a smaller
+    # position is a safe answer to "we could not check the limit". There is no
+    # smaller position that satisfies "software may not choose the trade" -
+    # either it chose it or it did not - so an unread rule stops here rather
+    # than shrinking. That inverts this module's usual treatment of the
+    # unknown, and it inverts it deliberately: the cost of being wrong is the
+    # account, not a drawdown.
+    #
+    # Providers draw the line in different places. Several permit
+    # money-management and copy-trading experts while forbidding automated
+    # decision-making, which is exactly what this system is - so "we use an
+    # expert" is not the question, and "our software picked the trade" is.
+    if rules.automated_trading_allowed is None:
+        # Gated, and this is the second time the decision has moved - so the
+        # argument on both sides is kept rather than replaced.
+        #
+        # It was gated, then changed to reported-only on the reasoning that
+        # every other unread rule here is reported, and that gating this one
+        # would refuse ten of the fourteen catalogued rulebooks over a field
+        # nobody had filled in yet. Both halves of that were true.
+        #
+        # It gates again because the consistency argument does not survive
+        # what this rule actually asks. Every other rule here answers "how
+        # much may be risked", and an unknown one can be honoured by risking
+        # less. This one asks whether software may choose the trades at all,
+        # and there is no smaller version of yes. If a provider forbids it,
+        # the account is closed for the first automated order, and no position
+        # size prevents that - so the direction that costs least when wrong is
+        # to stop.
+        #
+        # Refusing ten of fourteen is the correct reading of ten unconfirmed
+        # rulebooks, not a cost of the gate. It became visible rather than
+        # theoretical when the gate started supplying an R value: before that
+        # an unsizeable risk was blocking these accounts anyway, and this
+        # rule's state changed nothing on screen.
+        unverified.append(
+            "the rulebook does not say whether this provider permits automated "
+            "trading, and this platform chooses its own trades - so the "
+            "permission has to be confirmed against the account's own contract"
+        )
+        gates.append(
+            "the automation permission is unread, and it is the one rule that "
+            "cannot be answered by trading smaller"
+        )
+    elif isinstance(rules.automated_trading_allowed, NotImposed):
+        pass
+    elif rules.automated_trading_allowed is False:
+        # A breach rather than a gate, because unlike every other restriction
+        # here the state it depends on is never in doubt: this platform always
+        # chooses its own trades. There is no window to wait out and no size
+        # to reduce to.
+        breaches.append(
+            "this provider forbids automated trading experts, and every order "
+            "this platform sends is chosen by software"
+        )
 
     # ----------------------------------------------------------------- news
     # A news window is a gate on the next trade, never a verdict on the last
@@ -862,7 +1027,16 @@ def check(
 
     consistency = evaluate_consistency(rules.max_single_day_profit_share, state.daily_profits)
     consistency_ok: bool | None = None
-    if isinstance(rules.max_single_day_profit_share, float | int):
+    if rules.max_single_day_profit_share is None:
+        # Named, like every other unentered rule in this function. Until now
+        # the whole block below was gated on the rule being a number, so
+        # `evaluate_consistency` composed "the consistency rule was never
+        # entered" and the caller threw it away - the one unknown here that
+        # was silently skipped, which is the exact shape of failure this
+        # module exists to prevent. `NOT_IMPOSED` still says nothing, because
+        # a stated absence is an answer.
+        unverified.append(f"consistency rule not judged: {consistency.reason}")
+    elif isinstance(rules.max_single_day_profit_share, float | int):
         if consistency.available:
             consistency_ok = consistency.within_limit
             if consistency_ok is False and consistency.best_day_share is not None:
@@ -946,6 +1120,7 @@ def check(
             breaches=breaches,
             warnings=warnings,
             unverified=unverified,
+            gates=gates,
         )
 
     if not cap_measurable:
@@ -998,4 +1173,5 @@ def check(
         breaches=breaches,
         warnings=warnings,
         unverified=unverified,
+        gates=gates,
     )

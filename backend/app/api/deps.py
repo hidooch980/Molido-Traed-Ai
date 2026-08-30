@@ -25,11 +25,11 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from fastapi import Cookie, Depends, Header
+from fastapi import Cookie, Depends, Header, Request
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.guard import PERMISSION_ATTR
+from app.api.guard import BOOTSTRAP_PATHS, PERMISSION_ATTR
 from app.core.config import get_settings
 from app.core.enums import Permission, UserRole
 from app.core.errors import MolidoError
@@ -49,14 +49,62 @@ class AuthorizationError(MolidoError):
     http_status = 403
 
 
-# Which permissions each role holds. A trader may execute; an analyst may
-# simulate but never execute; a viewer may only read.
+# Which permissions each role holds.
+#
+# Until now `OWNER`, `ADMIN` and `TRADER` held the same three, so the five
+# roles were three roles wearing five names: anyone added to administer the
+# deployment could send an order, and anyone added to trade could not be
+# stopped from also managing users, because there was nothing to stop.
+#
+# Three separations carry the table, and each answers a different question.
+#
+# **Who may spend money.** `EXECUTE` and `BROKER_MANAGE` belong to the roles
+# whose job is trading. An administrator keeps the deployment running and
+# never needs either; giving them anyway is how the person with the most
+# access ends up being the person with the least reason to have it.
+#
+# **Who may stop, and who may start again.** Every role above `VIEWER` holds
+# `HALT`. Only `OWNER` holds `RELEASE`. A halt anyone can lift is a
+# suggestion.
+#
+# **Who may see who signed in.** `AUDIT_READ` is not inside `READ`. The log
+# carries addresses, times and failures, and a role created to look at charts
+# does not need to know when the owner last logged in and from where.
 ROLE_PERMISSIONS: dict[UserRole, set[Permission]] = {
-    UserRole.OWNER: {Permission.READ, Permission.SIMULATE, Permission.EXECUTE},
-    UserRole.ADMIN: {Permission.READ, Permission.SIMULATE, Permission.EXECUTE},
-    UserRole.TRADER: {Permission.READ, Permission.SIMULATE, Permission.EXECUTE},
-    UserRole.ANALYST: {Permission.READ, Permission.SIMULATE},
-    UserRole.VIEWER: {Permission.READ},
+    # Everything. There is one of these and it is the account holder.
+    UserRole.OWNER: set(Permission),
+    UserRole.ADMIN: {
+        Permission.READ,
+        Permission.SELF_MANAGE,
+        Permission.SIMULATE,
+        Permission.HALT,
+        Permission.USERS_MANAGE,
+        Permission.KEYS_MANAGE,
+        Permission.SETTINGS_WRITE,
+        Permission.AUDIT_READ,
+    },
+    UserRole.TRADER: {
+        Permission.READ,
+        Permission.SELF_MANAGE,
+        Permission.SIMULATE,
+        Permission.EXECUTE,
+        Permission.HALT,
+    },
+    UserRole.ANALYST: {
+        Permission.READ,
+        Permission.SELF_MANAGE,
+        Permission.SIMULATE,
+        Permission.HALT,
+    },
+    # Where self sign-up lands. Read, and nothing that moves - including the
+    # kill switch, which a stranger holding would be a way to stop the system
+    # by registering.
+    # Read, act on itself, and nothing that moves - including the kill
+    # switch, which a stranger holding would be a way to stop the system by
+    # registering. `SELF_MANAGE` is here so a viewer can change their own
+    # password and turn on a second factor; withholding that would mean the
+    # weakest accounts are also the ones that cannot be secured.
+    UserRole.VIEWER: {Permission.READ, Permission.SELF_MANAGE},
 }
 
 
@@ -112,6 +160,7 @@ def _principal_for(session: Session, key: ApiKey) -> Principal:
 
 
 def resolve_principal(
+    request: Request,
     x_api_key: str | None = Header(default=None, alias="X-API-Key"),
     molido_session: str | None = Cookie(default=None, alias="molido_session"),
     session: Session = Depends(get_db),
@@ -136,7 +185,12 @@ def resolve_principal(
         # lock somebody out of the public pages for holding an old cookie.
 
     if not x_api_key:
-        if settings.require_auth:
+        # The seven routes that exist to *obtain* a credential are exempt, and
+        # they have to be: applied without exception, `require_auth` closes the
+        # sign-in route as well, and a deployment with the flag on and nobody
+        # signed in can never be signed into again. The list is in
+        # `api.guard`, next to the other one, so both are read together.
+        if settings.require_auth and request.url.path not in BOOTSTRAP_PATHS:
             raise AuthenticationError("An API key is required for this deployment.")
         return ANONYMOUS
 
