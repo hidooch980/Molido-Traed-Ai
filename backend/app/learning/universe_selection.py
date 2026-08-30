@@ -191,9 +191,17 @@ def score_instrument(
     Measured with the instrument *in* the cross-section rather than alone: the
     rule ranks instruments against each other, so an instrument measured by
     itself is not being measured under the rule at all.
+
+    That is `universe` wide and `only` narrow. Narrowing the ranking instead
+    leaves a cross-section of one, which `rank` refuses as too thin - every
+    instant is skipped, `instants` comes back 0 and `edge_r` 0.0, and since
+    `selected` asks for `edge_r > 0` the answer is that nothing qualifies. Not
+    a thin result: no result at all, reported in the same shape as one.
     """
-    whole = measure(series, bar_interval=bar_interval, universe=frozenset({symbol}) | universe)
-    only_this = measure(series, bar_interval=bar_interval, universe=frozenset({symbol}))
+    mine = frozenset({symbol})
+    contribution = measure(
+        series, bar_interval=bar_interval, universe=mine | universe, only=mine
+    )
 
     span = _span(series)
     positive = 0
@@ -210,7 +218,7 @@ def score_instrument(
             if not block:
                 continue
             result = measure(
-                block, bar_interval=bar_interval, universe=frozenset({symbol})
+                block, bar_interval=bar_interval, universe=mine | universe, only=mine
             )
             if result.instants == 0:
                 continue
@@ -220,8 +228,8 @@ def score_instrument(
 
     return InstrumentScore(
         symbol=symbol,
-        edge_r=only_this.edge_r,
-        instants=only_this.instants,
+        edge_r=contribution.edge_r,
+        instants=contribution.instants,
         blocks_positive=positive,
         blocks_measured=measured,
     )

@@ -25,7 +25,7 @@ that cannot reproduce a known negative is not measuring anything.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable, Protocol
+from typing import Any, Protocol
 
 from app.brain import crosssection
 
@@ -86,12 +86,15 @@ class CrossSectionalStretch:
     def __call__(
         self, snapshot: dict[str, dict[str, Any]], *, universe: frozenset[str] | None
     ) -> Picks:
+        # The latest bar in the snapshot is the instant being ranked. With
+        # none, there is no instant - and `rank` would be asked to rank at
+        # None, which is not a time and not a refusal either.
+        stamps = [row["last_at"] for row in snapshot.values() if row.get("last_at")]
+        if not stamps:
+            return Picks(declined="no instrument in the snapshot carries a bar time")
         ranked = crosssection.rank(
             snapshot,
-            at=max(
-                (row.get("last_at") for row in snapshot.values() if row.get("last_at")),
-                default=None,
-            ),
+            at=max(stamps),
             universe=universe,
         )
         if not ranked.available:

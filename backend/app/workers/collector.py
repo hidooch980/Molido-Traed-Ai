@@ -420,7 +420,6 @@ def record_forward() -> dict[str, Any]:
     often than the public one, and that must not stop the public one.
     """
     from app.core.enums import Timeframe
-    from app.models.journal import SOURCE_BROKER, SOURCE_PUBLIC
     from app.workers.forward import record_cycle
 
     reports: dict[str, Any] = {}

@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from app.learning.measure import Bar
+from app.learning.measure import Bar, measure
 from app.learning.universe_selection import (
     STABILITY_BLOCKS,
     STABILITY_REQUIRED,
@@ -28,6 +28,7 @@ from app.learning.universe_selection import (
     SelectionResult,
     _cut,
     _span,
+    score_instrument,
     select,
 )
 
@@ -227,3 +228,77 @@ class TestCuttingTheSeries:
 
     def test_the_span_of_nothing_is_none(self):
         assert _span({}) is None
+
+
+class TestAnInstrumentIsScoredInsideTheCrossSection:
+    """Scoring one instrument by narrowing the *ranking* to it leaves a
+    cross-section of one, which `rank` refuses as too thin. Every instant is
+    then skipped, `instants` comes back 0 and `edge_r` 0.0 - and `selected`,
+    which asks for `edge_r > 0`, reads that as "not good enough" rather than
+    "never measured". Nothing was ever selected and nothing said so.
+
+    So the ranking stays wide and the count goes narrow.
+    """
+
+    SYMBOLS = [f"S{index:02d}" for index in range(25)]
+    INTERVAL = timedelta(days=1)
+
+    #: Long enough that each of the four sub-periods clears `min_history` on
+    #: its own. A block is cut before it is measured, so the 80 bars of
+    #: history every instant needs have to fit *inside* the block - 200 bars
+    #: split four ways gives 50, and the sub-period count comes back 0.
+    BARS = 600
+
+    def data(self) -> dict[str, list[Bar]]:
+        return series(self.SYMBOLS, count=self.BARS)
+
+    def test_the_instrument_is_actually_measured(self):
+        score = score_instrument(
+            self.data(),
+            "S00",
+            bar_interval=self.INTERVAL,
+            universe=frozenset(self.SYMBOLS),
+        )
+
+        assert score.instants > 0
+
+    def test_narrowing_the_ranking_instead_measures_nothing(self):
+        """The defect, stated as the arithmetic it produced. A cross-section
+        of one is below the minimum, so no instant is ever ranked."""
+        alone = measure(
+            self.data(),
+            bar_interval=self.INTERVAL,
+            universe=frozenset({"S00"}),
+        )
+
+        assert alone.instants == 0
+        assert alone.edge_r == 0.0
+
+    def test_only_the_named_instrument_is_counted(self):
+        """Wide ranking, narrow count. Counting the whole basket would give
+        every instrument the same number, which ranks nothing."""
+        data = self.data()
+        universe = frozenset(self.SYMBOLS)
+
+        basket = measure(data, bar_interval=self.INTERVAL, universe=universe)
+        mine = measure(
+            data,
+            bar_interval=self.INTERVAL,
+            universe=universe,
+            only=frozenset({"S00"}),
+        )
+
+        assert 0 < mine.trades < basket.trades
+
+    def test_the_sub_periods_are_measured_the_same_way(self):
+        """A block scored against a cross-section of one is the same zero,
+        and `stable` would then refuse every instrument for having too little
+        history rather than for being inconsistent."""
+        score = score_instrument(
+            self.data(),
+            "S00",
+            bar_interval=self.INTERVAL,
+            universe=frozenset(self.SYMBOLS),
+        )
+
+        assert score.blocks_measured > 0

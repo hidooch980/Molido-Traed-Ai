@@ -207,6 +207,7 @@ def measure(
     bar_interval: timedelta,
     min_history: int = 80,
     universe: frozenset[str] | None = crosssection.RANKED_UNIVERSE,
+    only: frozenset[str] | None = None,
     rule: Any = None,
 ) -> Measurement:
     """Walk every instant in a stored series and score both arms.
@@ -215,6 +216,14 @@ def measure(
     the instant being decided on, never at the end of the series - the same
     point-in-time rule the live recorder follows, and the one whose absence
     would flatter every result here silently.
+
+    `universe` says what the rule may *rank*; `only` says what is *counted*.
+    They are separate because narrowing the ranking to one instrument does not
+    measure that instrument under the rule - it measures a cross-section of
+    one, which `rank` refuses as too thin, so every instant is skipped and the
+    answer is a confident zero. To ask what one instrument contributed, rank
+    over the real universe and count that instrument's trades: `universe` wide,
+    `only` narrow. Omitted, everything the rule picks is counted.
     """
     index_of: dict[str, dict[datetime, int]] = {
         symbol: {bar.at: i for i, bar in enumerate(bars)}
@@ -273,6 +282,11 @@ def measure(
         for symbols, side_name in ((wanted[0], "long"), (wanted[1], "short")):
             side = 1 if side_name == "long" else -1
             for symbol in symbols:
+                if only is not None and symbol not in only:
+                    # Ranked against everything, counted for one. Skipped here
+                    # rather than at the ranking, so the picks are the picks
+                    # the rule really made.
+                    continue
                 if symbol not in index_of or moment not in index_of[symbol]:
                     continue
                 position = index_of[symbol][moment]

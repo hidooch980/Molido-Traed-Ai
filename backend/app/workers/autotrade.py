@@ -725,10 +725,13 @@ def _levels_from_broker(
             target_distance = None
 
     bid, ask = specification.get("bid"), specification.get("ask")
+    # Entered at the side of the book the order will actually cross, not at a
+    # mid nobody trades: a buy lifts the ask.
+    crossed = ask if side == "long" else bid
+    if crossed is None:
+        return None
     try:
-        # Entered at the side of the book the order will actually cross, not
-        # at a mid nobody trades: a buy lifts the ask.
-        entry = float(ask) if side == "long" else float(bid)
+        entry = float(crossed)
     except (TypeError, ValueError):
         return None
     if entry <= 0:
