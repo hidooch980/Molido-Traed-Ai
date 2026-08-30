@@ -461,6 +461,15 @@ def summary(session: Session) -> dict[str, Any]:
 #: window that contains a weekend - the thing that most changes the rate.
 MIN_OBSERVATION = timedelta(days=7)
 
+#: Instants before the forward spread is used instead of the historical one.
+#:
+#: A spread from a handful of instants is itself noisy, and the sample size
+#: depends on its square - so an early low reading would shorten the projected
+#: wait on nothing, in the flattering direction. Thirty is where the sample
+#: standard deviation stops swinging wildly, and below it the projection keeps
+#: saying openly that it is using the historical figure.
+MIN_INSTANTS_FOR_SPREAD = 30
+
 
 def readiness_of(
     session: Session,
@@ -496,11 +505,22 @@ def readiness_of(
     if elapsed >= MIN_OBSERVATION and instants:
         rate = int(instants) / (elapsed.total_seconds() / 604800.0)
 
+    # Sized against the spread this series actually shows, once there is
+    # enough of it to measure one. The projection has always been computed
+    # from the historical spread because until the arms were paired there was
+    # no forward spread to compute - not because the historical one was
+    # thought to be the right number.
+    paired = paired_comparison(session, price_source=price_source)
+    measured_spread: float | None = None
+    if paired.instants >= MIN_INSTANTS_FOR_SPREAD:
+        measured_spread = paired.observed_spread
+
     return readiness_module.assess(
         instants_resolved=int(instants or 0),
         decisions_resolved=int(decisions or 0),
         instants_per_week=rate,
         today=moment.date(),
+        spread=measured_spread,
         open_requirements=_open_requirements(),
         met_requirements=_met_requirements(),
     )

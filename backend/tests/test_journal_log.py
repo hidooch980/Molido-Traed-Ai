@@ -511,3 +511,75 @@ class TestThePairedReadingUsesTheBarBothArmsShare:
 
         assert paired.verdict() == "not distinguishable from the control"
         assert "no edge" not in paired.verdict()
+
+
+class TestTheWaitIsSizedOnTheSpreadItCanSee:
+    """`readiness_of` projects a date from a per-instant spread, and until the
+    arms were paired there was no forward spread to project from - so it used
+    the one recovered from the historical claim. That is the number under
+    test, and the wait depends on its square.
+    """
+
+    SINCE = NOW - timedelta(days=365)
+
+    def pairs(self, session, n, *, spread):
+        """`n` instants whose rule-minus-control differences vary by `spread`.
+
+        Written after `MEASUREMENT_STARTS_AT`, because `readiness_of` counts
+        from there and entries before it are excluded by design - the window
+        that keeps the debugging period out of the measurement.
+        """
+        for i in range(n):
+            at = journal_log.MEASUREMENT_STARTS_AT + timedelta(hours=i + 1)
+            swing = 2.0 if i % 2 else -2.0
+            delta = spread if i % 2 else -spread
+            for arm, r in ((ARM_RULE, swing + delta), (ARM_CONTROL, swing)):
+                entry = journal_log.record_decision(
+                    session, symbol="EURUSD", decision="long", at=at, arm=arm
+                )
+                journal_log.close(
+                    session,
+                    entry.entry_id,
+                    outcome="win" if r > 0 else "loss",
+                    r_multiple=r,
+                )
+
+    def test_below_the_threshold_it_says_it_is_assuming(self, session):
+        """A spread from a handful of instants is itself noisy, and the sample
+        size goes as its square - so an early low reading would shorten the
+        wait on nothing, in the flattering direction."""
+        self.pairs(session, 5, spread=0.1)
+
+        card = journal_log.readiness_of(session).as_dict()
+
+        assert card["spread_is_measured"] is False
+        assert "recovered from the historical claim" in card["the_assumption"]
+
+    def test_with_enough_instants_it_measures_and_says_so(self, session):
+        self.pairs(session, journal_log.MIN_INSTANTS_FOR_SPREAD + 2, spread=0.1)
+
+        card = journal_log.readiness_of(session).as_dict()
+
+        assert card["spread_is_measured"] is True
+        assert "measured from the forward pairs" in card["the_assumption"]
+
+    def test_the_stated_spread_is_the_one_the_date_was_sized_on(self, session):
+        """`as_dict` used to recompute the historical spread for display while
+        `assess` accepted one as an argument, so a measured spread would have
+        moved the date and left the sentence explaining it quoting the
+        assumption. The two cannot disagree now because there is one value."""
+        self.pairs(session, journal_log.MIN_INSTANTS_FOR_SPREAD + 2, spread=0.1)
+
+        card = journal_log.readiness_of(session).as_dict()
+
+        assert f"{card['spread_r']:.3f}" in card["the_assumption"]
+
+    def test_a_wider_spread_needs_a_larger_sample(self, session):
+        """Quadratically, which is why guessing it is not a small matter."""
+        from app.learning import readiness as readiness_module
+
+        tight = readiness_module.instants_needed(0.02, 0.2)
+        wide = readiness_module.instants_needed(0.02, 0.4)
+
+        assert tight is not None and wide is not None
+        assert wide > tight * 3

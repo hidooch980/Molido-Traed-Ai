@@ -265,6 +265,25 @@ class PairedComparison:
         return (variance / n) ** 0.5
 
     @property
+    def observed_spread(self) -> float | None:
+        """Sample standard deviation of the per-instant differences, in R.
+
+        The quantity the readiness projection needs and has been assuming.
+        Its date is sized against a spread recovered from the historical
+        measurement, because until the arms were paired there was nothing
+        forward to recover one from - and a wait sized on the wrong spread is
+        wrong quadratically.
+        """
+        n = len(self.differences)
+        if n < 2:
+            return None
+        mean = sum(self.differences) / n
+        variance = sum((d - mean) ** 2 for d in self.differences) / (n - 1)
+        if variance <= 0:
+            return None
+        return variance**0.5
+
+    @property
     def t_statistic(self) -> float | None:
         mean, error = self.mean_difference, self.standard_error
         if mean is None or error is None or error <= 0:

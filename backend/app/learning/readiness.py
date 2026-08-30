@@ -110,6 +110,15 @@ class Readiness:
     #: one bar of that window, so consecutive instants are not independent
     #: draws and the instant count is itself an optimistic number.
     horizon_bars: int = HORIZON
+    #: The per-instant spread the sample size was actually computed from, and
+    #: whether it was measured forward or taken from the historical claim.
+    #:
+    #: Carried rather than recomputed for display. `as_dict` used to derive the
+    #: historical spread on the spot while `assess` accepted one as an
+    #: argument, so a measured spread would have changed the date and left the
+    #: sentence explaining it still quoting the assumption.
+    spread: float = 0.0
+    spread_is_measured: bool = False
 
     @property
     def independent_blocks(self) -> int:
@@ -135,8 +144,12 @@ class Readiness:
         return min(1.0, self.instants_resolved / self.instants_needed)
 
     def as_dict(self) -> dict[str, Any]:
-        spread = spread_from_t(HISTORICAL_EDGE_R, HISTORICAL_T, HISTORICAL_INSTANTS)
+        spread = self.spread or spread_from_t(
+            HISTORICAL_EDGE_R, HISTORICAL_T, HISTORICAL_INSTANTS
+        )
         return {
+            "spread_r": round(spread, 4),
+            "spread_is_measured": self.spread_is_measured,
             "instants_resolved": self.instants_resolved,
             "instants_needed": self.instants_needed,
             "fraction": round(self.fraction, 4) if self.fraction is not None else None,
@@ -178,10 +191,17 @@ class Readiness:
             ),
             "the_assumption": (
                 f"sized for an edge of {HISTORICAL_EDGE_R} R per instant "
-                f"against a per-instant spread of {spread:.3f} R - the "
-                "historical figures, which is to say the number under test. A "
-                "smaller forward edge needs a larger sample, and the "
-                "relationship is quadratic: half the edge is four times the wait"
+                f"against a per-instant spread of {spread:.3f} R, "
+                + (
+                    "measured from the forward pairs themselves"
+                    if self.spread_is_measured
+                    else "recovered from the historical claim - which is to "
+                    "say the number under test"
+                )
+                + ". The edge is the historical one either way, so this is "
+                "the wait if the forward edge turns out the same size. A "
+                "smaller one needs a larger sample and the relationship is "
+                "quadratic: half the edge is four times the wait"
             ),
         }
 
@@ -198,8 +218,10 @@ def assess(
     met_requirements: tuple[str, ...] = (),
 ) -> Readiness:
     """Put the pieces together into a date, or say why there is not one."""
-    if spread is None:
+    measured = spread is not None and spread > 0
+    if not measured:
         spread = spread_from_t(HISTORICAL_EDGE_R, HISTORICAL_T, HISTORICAL_INSTANTS)
+    assert spread is not None
 
     needed = instants_needed(edge, spread)
 
@@ -216,4 +238,6 @@ def assess(
         answerable_on=answerable,
         open_requirements=open_requirements,
         met_requirements=met_requirements,
+        spread=spread,
+        spread_is_measured=measured,
     )
