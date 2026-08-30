@@ -66,6 +66,11 @@ export default async function ReadinessPage() {
                   label={t("readiness.date")}
                   value={r.answerable_on ?? t("readiness.noDate")}
                   tone="warning"
+                  hint={`${
+                    r.spread_is_measured
+                      ? t("readiness.spreadMeasured")
+                      : t("readiness.spreadAssumed")
+                  } · ${t("readiness.spread")} ${r.spread_r} R`}
                 />
               </div>
 

@@ -1003,6 +1003,14 @@ export interface EvidenceSeries {
   what_the_date_means: string;
   why_instants: string;
   the_assumption: string;
+  /**
+   * The per-instant spread the sample size was computed from, and whether it
+   * came from this series or from the historical claim. The date is the
+   * headline here, and it moves with the square of this number - so which of
+   * the two it rests on belongs beside it, not only inside a paragraph.
+   */
+  spread_r: number;
+  spread_is_measured: boolean;
 }
 
 export interface EvidenceView {
