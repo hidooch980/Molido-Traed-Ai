@@ -213,11 +213,21 @@ class ChallengeRules:
     #: forbidding automated decision-making, which is precisely what this
     #: system does.
     #:
-    #: `None` means nobody read the document - and here that is not the same as
-    #: permission, which is why the gate treats an unread rule as a reason to
-    #: refuse rather than a reason to proceed. Every other rule in this class
-    #: reduces position size when it is unknown; this one cannot be reduced,
-    #: so it stops.
+    #: `None` means nobody read the document, and here that is not the same as
+    #: permission: this rule cannot be answered by trading smaller, because the
+    #: question is whether software may choose the trades at all.
+    #:
+    #: It is nonetheless **reported and not gated**. This comment used to say
+    #: the opposite - "this one cannot be reduced, so it stops" - and had said
+    #: it since before `check` was changed to report it, so the description of
+    #: the safety layer and the safety layer disagreed about whether a trade
+    #: gets through. The reasoning for reporting is at the check itself; the
+    #: reasoning for stopping is the paragraph above, and it has not been
+    #: withdrawn. Whether to gate is an open decision, not a settled one.
+    #:
+    #: What that means in practice, now that the gate supplies an R value: a
+    #: registered account passes the challenge gate with this permission
+    #: unread. Four execution switches still stand behind it.
     automated_trading_allowed: FlagRule = None
 
     # Not rules but rulers — how the two drawdown rules above are read.
