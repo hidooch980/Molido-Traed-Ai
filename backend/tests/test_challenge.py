@@ -32,6 +32,11 @@ def rules(**overrides) -> ch.ChallengeRules:
         news_trading_allowed=False,
         weekend_holding_allowed=False,
         max_concurrent_positions=3,
+        # Stated, because an unread automation permission now gates and this
+        # helper is meant to be a *complete* rulebook - a test about drawdown
+        # that fails on a field it never mentioned is testing the wrong thing.
+        # The tests about this rule override it.
+        automated_trading_allowed=True,
         # Stated rather than assumed: this provider quotes its percentages of
         # the initial account size. With the basis left unspecified the module
         # reads it the stricter way, which is a different rulebook.
@@ -81,6 +86,11 @@ def uncapped() -> ch.ChallengeRules:
             news_trading_allowed=ch.NOT_IMPOSED,
             weekend_holding_allowed=ch.NOT_IMPOSED,
             max_concurrent_positions=ch.NOT_IMPOSED,
+            # Read like the rest. The docstring says the documentation was
+            # read and carries no rule; leaving this one `None` would say the
+            # reader stopped before the last page, and since it gates that is
+            # a different fixture than the one this helper claims to be.
+            automated_trading_allowed=ch.NOT_IMPOSED,
         )
 
 
@@ -890,17 +900,38 @@ class TestAutomatedTrading:
         )
         assert not any("automated" in u.lower() for u in verdict.unverified)
 
-    def test_an_unread_rule_is_reported_and_does_not_block(self):
-        """Reported, not gated - which is what every other unread rule here
-        does. Blocking on this one alone would refuse ten of the fourteen
-        rulebooks in the catalogue over a field nobody had filled in yet.
+    def test_an_unread_rule_blocks_because_it_cannot_be_answered_smaller(self):
+        """This rule is gated where every other unread rule is only reported,
+        and the asymmetry is the point rather than an inconsistency.
+
+        The others answer "how much may be risked", and an unknown one is
+        honoured by risking less. This one asks whether software may pick the
+        trades at all, and there is no smaller version of yes: a provider that
+        forbids it closes the account on the first automated order, which no
+        position size prevents.
+
+        It was gated, then reported-only, and is gated again. The reversal is
+        recorded in the check itself with both arguments intact.
         """
         verdict = ch.check(
             rules(automated_trading_allowed=None), state(), proposed_risk_r=0.5
         )
 
         assert any("automated" in u.lower() for u in verdict.unverified)
-        assert verdict.allowed is True
+        assert verdict.allowed is False
+        # Named, not silent. An unexplained block on a healthy account reads
+        # as a bug and gets worked around instead of answered.
+        assert any("automation permission" in g.lower() for g in verdict.gates)
+
+    def test_an_unread_rule_is_a_gate_and_never_a_breach(self):
+        """A breach is a rule the account broke. Nobody has broken anything
+        here - the document was not read. Filing it as a breach would tell a
+        holder their account had failed."""
+        verdict = ch.check(
+            rules(automated_trading_allowed=None), state(), proposed_risk_r=0.5
+        )
+
+        assert not any("automated" in b.lower() for b in verdict.breaches)
 
     def test_no_catalogued_provider_is_silently_forbidden(self):
         """Every rulebook in the catalogue states this field or leaves it

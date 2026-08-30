@@ -70,6 +70,18 @@ class TestTheNumbersSurviveTheChallengeBrain:
             )
             return
 
+        if book.rules.automated_trading_allowed is None:
+            # Every catalogued book is in this state today, so this is the
+            # branch that actually runs. It is not a transcription error: the
+            # permission is a fact about the holder's contract, and no reading
+            # of a public page can settle it. The block is the correct answer
+            # and stays until somebody confirms the account they bought.
+            assert verdict.allowed is False
+            assert any(
+                "automation permission" in g.lower() for g in verdict.gates
+            ), "a block on an unread permission must say that is what it is"
+            return
+
         assert verdict.allowed is True, verdict.unverified
 
     @pytest.mark.parametrize("book", rb.RULEBOOKS, ids=lambda b: b.key)

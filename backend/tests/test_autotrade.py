@@ -1103,7 +1103,11 @@ class TestThePropRulebookGovernsWhenThereIsOne:
         allowed, why, _ = self.gate(session)
 
         assert allowed is False
-        assert "rulebook is incomplete" in why
+        # Both halves, because they need different answers: a gate is a rule
+        # that is entered and could not be cleared, an incomplete rulebook is
+        # one nobody wrote down.
+        assert "incomplete" in why
+        assert "challenge gate is shut" in why
         assert "leverage" in why or "position cap" in why
 
     def test_an_unreadable_registry_refuses_rather_than_passing(
@@ -1175,7 +1179,9 @@ class TestTheGateReadsTheAccountAndNotItsWrapper:
 
         assert "not one this build knows" not in why
         assert "'?'" not in why
-        assert "rulebook is incomplete" in why
+        # Reaching the rules at all is the point; which of them it then stops
+        # on is a separate question this test does not own.
+        assert "rulebook is incomplete" in why or "challenge gate is shut" in why
         assert allowed is False
 
     def test_a_switched_off_account_is_not_a_registration(self, session):
@@ -1294,13 +1300,14 @@ class TestTheGateSuppliesWhatItAlreadyKnows:
 
         self.register(session, currency_per_r=Decimal("50"))
 
-        allowed, why, headroom = self.gate(session)
+        _allowed, why, _ = self.gate(session)
 
+        # Leverage is measured, so it is not among the reasons. The account
+        # is still stopped, by the automation permission - which is a fact
+        # about the holder's contract and not something this figure could
+        # ever have answered.
         assert "leverage" not in why
-        # Nothing left unmeasurable, so the gate reaches an actual verdict
-        # and sizes it. Before these two figures were supplied it could not.
-        assert allowed is True
-        assert headroom is not None and headroom > 0
+        assert "automation permission" in why
 
     def test_committed_margin_leaves_leverage_unmeasured_rather_than_guessed(
         self, session

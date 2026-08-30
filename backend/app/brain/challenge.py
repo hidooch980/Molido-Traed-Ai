@@ -420,6 +420,15 @@ class ChallengeVerdict:
     breaches: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     unverified: list[str] = field(default_factory=list)
+    #: Reasons nothing new may be opened *now*, as distinct from rules the
+    #: account has broken (`breaches`) and rules nobody entered (`unverified`).
+    #:
+    #: Published because `allowed` was computed from these and then dropped, so
+    #: a caller saw a refusal with an empty `breaches` list and had to guess.
+    #: The one caller guessed "the rulebook is incomplete", which is right for
+    #: an unentered rule and wrong for a rule that is entered and could not be
+    #: measured - and those need opposite responses from whoever reads it.
+    gates: list[str] = field(default_factory=list)
 
     @property
     def failed(self) -> bool:
@@ -480,6 +489,7 @@ def _refuse(reason: str) -> ChallengeVerdict:
         consistency=ConsistencyReport(available=False, reason=reason),
         projection=LossProjection(available=False, reason=reason),
         unverified=[reason],
+        gates=[reason],
     )
 
 
@@ -900,16 +910,36 @@ def check(
     # decision-making, which is exactly what this system is - so "we use an
     # expert" is not the question, and "our software picked the trade" is.
     if rules.automated_trading_allowed is None:
-        # Reported, not gated, and the tests are what corrected that. The
-        # first version of this blocked on an unread rule, which reads as
-        # caution and is really an inconsistency: every other rule here treats
-        # "nobody entered it" as something to report, and gating it alone
-        # would have blocked ten of the fourteen rulebooks in the catalogue
-        # on a field that had existed for five minutes.
+        # Gated, and this is the second time the decision has moved - so the
+        # argument on both sides is kept rather than replaced.
+        #
+        # It was gated, then changed to reported-only on the reasoning that
+        # every other unread rule here is reported, and that gating this one
+        # would refuse ten of the fourteen catalogued rulebooks over a field
+        # nobody had filled in yet. Both halves of that were true.
+        #
+        # It gates again because the consistency argument does not survive
+        # what this rule actually asks. Every other rule here answers "how
+        # much may be risked", and an unknown one can be honoured by risking
+        # less. This one asks whether software may choose the trades at all,
+        # and there is no smaller version of yes. If a provider forbids it,
+        # the account is closed for the first automated order, and no position
+        # size prevents that - so the direction that costs least when wrong is
+        # to stop.
+        #
+        # Refusing ten of fourteen is the correct reading of ten unconfirmed
+        # rulebooks, not a cost of the gate. It became visible rather than
+        # theoretical when the gate started supplying an R value: before that
+        # an unsizeable risk was blocking these accounts anyway, and this
+        # rule's state changed nothing on screen.
         unverified.append(
             "the rulebook does not say whether this provider permits automated "
             "trading, and this platform chooses its own trades - so the "
             "permission has to be confirmed against the account's own contract"
+        )
+        gates.append(
+            "the automation permission is unread, and it is the one rule that "
+            "cannot be answered by trading smaller"
         )
     elif isinstance(rules.automated_trading_allowed, NotImposed):
         pass
@@ -1090,6 +1120,7 @@ def check(
             breaches=breaches,
             warnings=warnings,
             unverified=unverified,
+            gates=gates,
         )
 
     if not cap_measurable:
@@ -1142,4 +1173,5 @@ def check(
         breaches=breaches,
         warnings=warnings,
         unverified=unverified,
+        gates=gates,
     )

@@ -511,11 +511,30 @@ def _challenge_gate(
     if not verdict.allowed:
         if verdict.breaches:
             return False, "challenge rules: " + "; ".join(verdict.breaches), None
-        # Blocked without a breach means the rulebook was never fully entered.
-        # The engine refuses to approve against a limit nobody told it, which
-        # is the right answer and a useless message unless it says so - the
-        # fix is confirming the rulebook, not finding a trade that passes.
+        # Blocked without a breach has two causes and they call for opposite
+        # responses, so they are no longer reported in one sentence.
+        #
+        # A gate is a rule that IS entered and could not be cleared right now
+        # - leverage that cannot be measured, a permission nobody confirmed.
+        # An unverified entry is a rule nobody wrote down. This used to
+        # announce "the registered rulebook is incomplete" for both, which
+        # sent a reader to their provider's page to fix a number that was
+        # already there, or to re-transcribe a rulebook that was fine.
+        # Both are reported when both exist. Naming only the gate would hide
+        # every unentered rule behind whichever gate happened to fire, and
+        # since the automation permission gates on all ten catalogued
+        # rulebooks that would be all of them, always.
+        gates = "; ".join(getattr(verdict, "gates", []) or [])
         unverified = "; ".join(getattr(verdict, "unverified", []) or [])
+        if gates and unverified:
+            return (
+                False,
+                f"the challenge gate is shut: {gates}. The rulebook is also "
+                f"incomplete: {unverified}",
+                None,
+            )
+        if gates:
+            return False, f"the challenge gate is shut: {gates}", None
         return (
             False,
             "the registered rulebook is incomplete, so no trade can be checked "
