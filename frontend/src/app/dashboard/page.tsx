@@ -10,7 +10,7 @@ export const dynamic = "force-dynamic";
 export default async function HomePage() {
   const { t } = await getT();
   const locale = await getLocale();
-  const [health, instruments, clocks, accounts, equity, challenges] =
+  const [health, instruments, clocks, accounts, equity, challenges, brokers] =
     await Promise.all([
       api.health(),
       api.instruments(),
@@ -22,6 +22,11 @@ export default async function HomePage() {
       // "whose rules are we being measured against" - and a deployment can
       // easily have one without the other.
       api.challengeAccounts(),
+      // The connected terminals, straight from what each one publishes. On
+      // the front page because "did my account connect" is the first
+      // question after the form, and sending somebody to a second page to
+      // answer it is how the question got asked in chat instead.
+      api.brokers(),
     ]);
 
   const primary = instruments.ok ? instruments.data[0] : undefined;
@@ -116,6 +121,65 @@ export default async function HomePage() {
           reads as a feature that does not exist rather than as one nobody has
           used. The one question somebody opening this page has is "what am I
           trading with", and no answer is a worse answer than none. */}
+      {/* The terminals actually signed in, before the recorded prop
+          accounts: the live fact before the paperwork. Silent spare
+          terminals are left out - a row of "not publishing" for machines
+          holding nothing answers no question anybody asked here. */}
+      {brokers.ok &&
+        Object.values(brokers.data.metatrader.terminals ?? {}).some(
+          (term) => term.available,
+        ) && (
+          <Panel
+            title={t("home.connected")}
+            subtitle={t("home.connectedSubtitle")}
+            actions={
+              <a className="pill" href="/brokers">
+                {t("home.manage")}
+              </a>
+            }
+          >
+            <div className="scroll-x">
+              <table className="data">
+                <thead>
+                  <tr>
+                    <th>{t("brokers.terminal")}</th>
+                    <th>{t("brokers.account")}</th>
+                    <th>{t("brokers.server")}</th>
+                    <th className="num">{t("brokers.balance")}</th>
+                    <th>{t("brokers.connection")}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {Object.entries(brokers.data.metatrader.terminals ?? {})
+                    .filter(([, term]) => term.available)
+                    .map(([key, term]) => (
+                      <tr key={key}>
+                        <td className="font-semibold" dir="ltr">{key}</td>
+                        <td dir="ltr">{term.login}</td>
+                        <td dir="ltr">{term.server ?? "—"}</td>
+                        <td className="num" dir="ltr">
+                          {term.balance !== undefined
+                            ? `${term.balance} ${term.currency ?? ""}`
+                            : "—"}
+                        </td>
+                        <td>
+                          <StatusBadge
+                            status={term.state?.connected ? "good" : "warning"}
+                            label={
+                              term.state?.connected
+                                ? t("brokers.connected")
+                                : t("brokers.disconnected")
+                            }
+                          />
+                        </td>
+                      </tr>
+                    ))}
+                </tbody>
+              </table>
+            </div>
+          </Panel>
+        )}
+
       <Panel
         title={t("home.accounts")}
         subtitle={t("home.accountsSubtitle")}
