@@ -33,6 +33,8 @@ export default async function JournalPage() {
     comparison,
     by_source,
     paired_by_source,
+    paired_by_timeframe,
+    why_one_timeframe,
     edge_lost_to_real_prices,
     why_two_series,
     note,
@@ -218,6 +220,51 @@ export default async function JournalPage() {
               {t("journal.pairedCoarse")}
             </p>
           </div>
+        </Panel>
+      )}
+
+      {paired_by_timeframe && Object.keys(paired_by_timeframe).length > 0 && (
+        <Panel
+          title={t("journal.byTimeframe")}
+          subtitle={t("journal.byTimeframeSubtitle")}
+        >
+          <div className="scroll-x">
+            <table className="data">
+              <thead>
+                <tr>
+                  <th>{t("journal.timeframe")}</th>
+                  <th>{t("journal.pairedInstants")}</th>
+                  <th>{t("journal.pairedMean")}</th>
+                  <th>t</th>
+                  <th>{t("journal.needs")}</th>
+                  <th>{t("journal.scope")}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {Object.entries(paired_by_timeframe).map(([tf, card]) => (
+                  <tr key={tf}>
+                    <td className="font-medium">{tf}</td>
+                    <td className="num">{card.instants}</td>
+                    <td className="num">
+                      {card.mean_difference_r != null
+                        ? `${card.mean_difference_r} R`
+                        : "—"}
+                    </td>
+                    <td className="num">{card.t_statistic ?? "—"}</td>
+                    <td className="num">{card.required_t}</td>
+                    <td className="ink-3">
+                      {card.pre_registered
+                        ? t("journal.preRegistered")
+                        : t("journal.exploratory")}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="p-4 pt-3 text-xs ink-3 leading-relaxed">
+            {why_one_timeframe}
+          </p>
         </Panel>
       )}
 

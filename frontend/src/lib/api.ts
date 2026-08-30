@@ -971,6 +971,17 @@ export interface JournalView {
    * flatter the rule.
    */
   paired_by_source: Record<string, JournalPaired>;
+  /**
+   * Every timeframe read on its own, each with the threshold its own question
+   * earned. The worker records on five and reading them together hid a
+   * negative H1 behind three positive fast series, so the split is published
+   * rather than left to whoever remembers the constant.
+   */
+  paired_by_timeframe: Record<string, JournalPaired>;
+  /** Resolved instants per timeframe per series. */
+  by_timeframe: Record<string, Record<string, number>>;
+  why_one_timeframe: string;
+  why_a_wider_bar: string;
   why_paired: string;
   /** Broker result minus public result. Null until both have resolved. */
   edge_lost_to_real_prices: number | null;
@@ -979,6 +990,13 @@ export interface JournalView {
 }
 
 export interface JournalPaired {
+  /**
+   * True for the timeframe the live rule decides on, which was named before
+   * this data existed. False for a look taken because the data was there -
+   * and those carry a threshold widened for how many were taken.
+   */
+  pre_registered?: boolean;
+
   /** The sample the t rests on: one per bar, however many symbols ranked. */
   instants: number;
   /** How many decisions went into those instants. Always >= instants. */
