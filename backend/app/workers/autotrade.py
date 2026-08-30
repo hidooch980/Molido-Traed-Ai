@@ -432,7 +432,7 @@ def _challenge_gate(
             for a in challenge_accounts.listing(
                 session, tenant_id=challenge_accounts.default_tenant(session)
             )
-            if getattr(a, "is_active", True)
+            if getattr(getattr(a, "account", a), "is_active", True)
         ]
     except Exception as problem:  # noqa: BLE001 - reported, never fatal
         return False, f"the challenge registry could not be read: {type(problem).__name__}", None
