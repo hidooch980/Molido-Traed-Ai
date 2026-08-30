@@ -26,7 +26,7 @@ from app.brain import rulebooks as rulebook_module
 from app.core.config import get_settings
 from app.core.enums import Permission
 from app.execution import broker as broker_module
-from app.providers.metatrader import MetaTraderBridge
+from app.providers.metatrader import MetaTraderBridge, bridge_dirs
 from app.services import mt5_link
 
 router = APIRouter(prefix="/brokers", tags=["brokers"])
@@ -94,20 +94,7 @@ def read_brokers(_: Principal = READ) -> dict[str, Any]:
                 "will"
             ),
         },
-        "metatrader": {
-            "name": "MetaTrader 5",
-            "installed_on_host": True,
-            "reachable_from_application": False,
-            "terminal_path": MT5_TERMINAL_PATH,
-            "role": "prices, symbol specifications and order placement",
-            "blocked_by": [
-                "no account is logged in to the terminal, and MetaTrader "
-                "returns no price and accepts no order until one is",
-                "the MetaTrader Python package is Windows-only, so the "
-                "application reaches the terminal through a bridge process "
-                "rather than by importing it, and that bridge is not built yet",
-            ],
-        },
+        "metatrader": _metatrader_summary(),
         "challenge_providers": rulebook_module.providers(),
         "no_broker_catalogue_here": True,
         "why": (
@@ -115,6 +102,44 @@ def read_brokers(_: Principal = READ) -> dict[str, Any]:
             "provider, in writing. Publishing a guessed one produces a "
             "connection that never establishes and a search for the reason "
             "that goes everywhere except the list that looked authoritative"
+        ),
+    }
+
+
+def _metatrader_summary() -> dict[str, Any]:
+    """Every terminal's live state, read from what its expert publishes.
+
+    This block was once a hardcoded "no account, bridge not built yet" - true
+    on the day it was written and false ever after, which meant the site's own
+    brokers page denied eight running terminals. Everything here is now read
+    from the bridge files at request time; when a terminal stops publishing,
+    its row says so instead of the page saying nothing exists.
+    """
+    terminals: dict[str, Any] = {}
+    connected = 0
+    for key, path in sorted(bridge_dirs().items()):
+        each = MetaTraderBridge(directory=path)
+        account = each.account()
+        terminals[key] = account
+        # `connected` lives inside the bridge state, not beside the balance.
+        if account.get("available") and account.get("state", {}).get("connected"):
+            connected += 1
+
+    return {
+        "name": "MetaTrader 5",
+        "installed_on_host": True,
+        "reachable_from_application": connected > 0,
+        "terminal_path": MT5_TERMINAL_PATH,
+        "role": "prices, symbol specifications and order placement",
+        "terminals": terminals,
+        "connected_terminals": connected,
+        "blocked_by": (
+            []
+            if connected
+            else [
+                "no terminal is currently publishing a connected account - "
+                "add one on this page and the host agent applies it"
+            ]
         ),
     }
 
@@ -205,6 +230,23 @@ def read_metatrader(_: Principal = READ) -> dict[str, Any]:
     bridge = MetaTraderBridge()
     state = bridge.state()
     payload: dict[str, Any] = {"state": state.as_dict()}
+
+    # Every terminal, not just the built-in one. The bridge map grew to eight
+    # directories while this endpoint kept reporting the first, which read on
+    # the site as seven connected accounts not existing.
+    terminals: dict[str, Any] = {}
+    for key, path in sorted(bridge_dirs().items()):
+        each = MetaTraderBridge(directory=path)
+        each_state = each.state()
+        terminals[key] = {
+            "state": each_state.as_dict(),
+            "account": (
+                each.account()
+                if each_state.usable
+                else {"available": False, "reason": each_state.reason}
+            ),
+        }
+    payload["terminals"] = terminals
 
     if not state.usable:
         payload["account"] = {"available": False, "reason": state.reason}

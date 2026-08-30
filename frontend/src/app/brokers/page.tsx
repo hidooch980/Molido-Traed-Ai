@@ -126,6 +126,46 @@ export default async function BrokersPage() {
             </tbody>
           </table>
         </div>
+        {/* Every terminal, one row each. This answers the question the page
+            used to leave open - "I connected my accounts, where are they?" -
+            with figures read from what each terminal publishes right now. */}
+        <div className="scroll-x">
+          <table className="data">
+            <thead>
+              <tr>
+                <th>{t("brokers.terminal")}</th>
+                <th>{t("brokers.account")}</th>
+                <th>{t("brokers.server")}</th>
+                <th className="num">{t("brokers.balance")}</th>
+                <th>{t("brokers.connection")}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {Object.entries(b.metatrader.terminals).map(([key, term]) => (
+                <tr key={key}>
+                  <td className="font-semibold" dir="ltr">{key}</td>
+                  <td dir="ltr">{term.available ? term.login : "—"}</td>
+                  <td dir="ltr">{term.available ? (term.server ?? "—") : "—"}</td>
+                  <td className="num" dir="ltr">
+                    {term.available && term.balance !== undefined
+                      ? `${term.balance} ${term.currency ?? ""}`
+                      : "—"}
+                  </td>
+                  <td>
+                    {term.available && term.state?.connected ? (
+                      <StatusBadge status="good" label={t("brokers.connected")} />
+                    ) : (
+                      <StatusBadge
+                        status="warning"
+                        label={term.available ? t("brokers.disconnected") : t("brokers.silent")}
+                      />
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
         <ul className="p-4 space-y-1.5 text-xs ink-3 leading-relaxed">
           {b.metatrader.blocked_by.map((reason) => (
             <li key={reason}>— {reason}</li>

@@ -395,6 +395,22 @@ export interface BrokerView {
     terminal_path: string;
     role: string;
     blocked_by: string[];
+    /** One row per terminal, straight from what each expert publishes.
+     *  `available: false` rows carry a `reason` instead of figures. */
+    terminals: Record<
+      string,
+      {
+        available: boolean;
+        reason?: string;
+        login?: number;
+        server?: string | null;
+        currency?: string | null;
+        balance?: number;
+        equity?: number;
+        state?: { connected?: boolean };
+      }
+    >;
+    connected_terminals: number;
   };
   challenge_providers: string[];
   no_broker_catalogue_here: boolean;
