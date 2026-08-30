@@ -164,6 +164,23 @@ class Comparison:
             return None
         return (p1 - p2) / variance**0.5
 
+    def verdict(self, *, required: float = 1.96) -> str:
+        """The reading with its sign, which `significant` throws away.
+
+        Same four outcomes as the paired comparison, for the same reason: a
+        result significantly worse than the control is a finding, and calling
+        it "distinguishable" without saying which way lets a loss be read as
+        a win by anybody skimming.
+        """
+        z = self.z_score
+        if z is None:
+            return "not measured"
+        if z >= required:
+            return "distinguishable from the control"
+        if z <= -required:
+            return "distinguishably worse than the control"
+        return "not distinguishable from the control"
+
     def trials_needed(self, *, for_edge: float = 0.02) -> int:
         """Roughly how many trials it would take to detect an edge this size.
 
@@ -194,7 +211,13 @@ class Comparison:
             },
             "edge_over_control": round(self.edge, 4) if self.edge is not None else None,
             "z_score": round(self.z_score, 2) if self.z_score is not None else None,
+            # Kept, because callers read it - but it is `abs(z)`, so it is
+            # true for a rule losing to its own coin flip as loudly as for one
+            # beating it. On its own it made a page paint a z of -2.57 green
+            # and label it "distinguishable from a coin flip", which reads as
+            # success. `verdict` below carries the sign; prefer it.
             "significant": bool(self.z_score is not None and abs(self.z_score) >= 1.96),
+            "verdict": self.verdict(),
             "trials_needed_for_2pp": self.trials_needed(for_edge=0.02),
             "note": (
                 "the edge is measured against the control, never against 50%. "
@@ -293,14 +316,24 @@ class PairedComparison:
     def verdict(self, *, required: float = 1.96) -> str:
         """What the number is allowed to claim.
 
-        Three outcomes, never two. "Not distinguishable" is not "no edge" -
-        an interval that contains both zero and the effect being looked for
-        says the measurement was too coarse, and calling that a refutation is
-        the same error as calling an overfit backtest a confirmation.
+        Four outcomes, and the sign is one of them. The first version tested
+        `t >= required` alone, so a t of -2.7 - a rule losing to its own coin
+        flip by more than the threshold demands - was reported as "not
+        distinguishable", which reads as "no signal found". That is the
+        flattering direction, and it is the one this package is built to
+        never take: a result significantly worse than the control is a
+        finding, not an absence of one.
+
+        "Not distinguishable" is still not "no edge" either. An interval
+        holding both zero and the effect being looked for says the
+        measurement was too coarse, and calling that a refutation is the same
+        error as calling an overfit backtest a confirmation.
         """
         t = self.t_statistic
         if t is None:
             return "not measured"
         if t >= required:
             return "distinguishable from the control"
+        if t <= -required:
+            return "distinguishably worse than the control"
         return "not distinguishable from the control"

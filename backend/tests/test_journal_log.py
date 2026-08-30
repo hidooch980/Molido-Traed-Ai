@@ -786,5 +786,77 @@ class TestAnExploratoryLookCarriesAWiderBar:
             t, bar = card["t_statistic"], card["required_t"]
             if t is None:
                 continue
-            cleared = card["verdict"] == "distinguishable from the control"
-            assert cleared == (abs(t) >= bar or t >= bar), tf
+            verdict = card["verdict"]
+            if t >= bar:
+                assert verdict == "distinguishable from the control", tf
+            elif t <= -bar:
+                assert verdict == "distinguishably worse than the control", tf
+            else:
+                assert verdict == "not distinguishable from the control", tf
+
+
+class TestLosingIsAFindingAndNotAnAbsence:
+    """A rule beaten by its own coin flip by more than the threshold demands
+    is a result. Reported as "not distinguishable" it reads as "nothing found
+    yet", which is the flattering direction and the one this package must
+    never take.
+
+    Live H1 was at t = -2.71 against a bar of 1.96 when this was written, and
+    the verdict string called it not distinguishable.
+    """
+
+    def pair(self, session, *, at, rule_r, control_r):
+        for arm, r in ((ARM_RULE, rule_r), (ARM_CONTROL, control_r)):
+            e = journal_log.record_decision(
+                session, symbol="EURUSD", decision="long", at=at, arm=arm
+            )
+            journal_log.close(
+                session, e.entry_id,
+                outcome="win" if r > 0 else "loss", r_multiple=r,
+            )
+
+    def losing_series(self, session, n=12):
+        base = journal_log.MEASUREMENT_STARTS_AT + timedelta(days=1)
+        for i in range(n):
+            # The rule loses to the control on every bar, by a margin that
+            # wobbles just enough to have a spread.
+            wobble = 0.1 if i % 3 else -0.1
+            self.pair(
+                session, at=base + timedelta(hours=i),
+                rule_r=-1.0 + wobble, control_r=1.0,
+            )
+
+    def test_a_significantly_worse_rule_says_so(self, session):
+        self.losing_series(session)
+
+        paired = journal_log.paired_comparison(
+            session, since=NOW - timedelta(days=365)
+        )
+
+        assert paired.t_statistic is not None and paired.t_statistic < -1.96
+        assert paired.verdict() == "distinguishably worse than the control"
+
+    def test_it_is_not_reported_as_nothing_found(self, session):
+        """The exact wording that hid it: a losing rule must not borrow the
+        sentence a coarse measurement uses."""
+        self.losing_series(session)
+
+        paired = journal_log.paired_comparison(
+            session, since=NOW - timedelta(days=365)
+        )
+
+        assert paired.verdict() != "not distinguishable from the control"
+
+    def test_a_widened_bar_still_applies_to_the_losing_side(self, session):
+        """Symmetric, or an exploratory look could claim a loss on a bar it
+        never had to clear."""
+        self.losing_series(session)
+
+        paired = journal_log.paired_comparison(
+            session, since=NOW - timedelta(days=365)
+        )
+        t = paired.t_statistic
+
+        assert paired.verdict(required=abs(t) + 1.0) == (
+            "not distinguishable from the control"
+        )
