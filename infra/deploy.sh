@@ -34,6 +34,8 @@ export APP_VERSION
 #
 # --ff-only rather than a merge: an unexpected divergence must stop the deploy
 # rather than resolve itself into something nobody wrote.
+# Hashed before the pull so the comparison after it is meaningful.
+BEFORE_HASH="$(sha256sum "$0" | cut -d" " -f1)"
 echo "-> at ${BEFORE:=$(git rev-parse --short HEAD)}, pulling"
 git pull --ff-only --quiet origin main
 AFTER="$(git rev-parse --short HEAD)"
@@ -45,6 +47,26 @@ else
   echo "-> ${BEFORE} -> ${AFTER}"
 fi
 git --no-pager log --oneline -1
+
+# The pull can replace this script, and bash is already running the old one.
+#
+# That is not hypothetical: the deploy that first carried the IP-overlay fix
+# pulled it and then went on composing with the overlay, because the running
+# process was the previous version of this file. The fix landed on disk and
+# had no effect on the run that delivered it - and the failure it was written
+# to prevent happened anyway, one last time.
+#
+# So: if the pull changed this file, start again from the new one. `exec`
+# replaces the process rather than nesting, and the guard variable means the
+# restart happens once and cannot loop even if the hashes somehow keep
+# differing.
+AFTER_HASH="$(sha256sum "$0" | cut -d" " -f1)"
+if [ "${BEFORE_HASH}" != "${AFTER_HASH}" ] && [ -z "${MOLIDO_DEPLOY_REEXECED:-}" ]; then
+  echo "-> the deploy script changed in that pull; restarting it from the new one"
+  export MOLIDO_DEPLOY_REEXECED=1
+  exec "$0" "$@"
+fi
+
 
 # A function, not a string variable. The stamp contains a space, so an unquoted
 # "$COMPOSE" expansion would split it into two arguments; and `sudo -E` is
