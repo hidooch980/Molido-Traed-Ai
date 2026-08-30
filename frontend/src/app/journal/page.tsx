@@ -43,6 +43,18 @@ export default async function JournalPage() {
   const label = (source: string) =>
     source === "metatrader" ? t("journal.broker") : t("journal.public");
 
+  /* The API returns its verdicts in English because they are the module's own
+     words. Both panels render them, and only one of them was translating -
+     so a Persian reader got a localised sentence above an English one saying
+     the same thing. One mapping, used by both. */
+  const verdictLabel = (verdict: string | undefined, fallbackWorse = false) => {
+    const worse = verdict?.includes("worse") ?? fallbackWorse;
+    if (worse) return t("journal.worseThanControl");
+    if (verdict?.startsWith("distinguishable")) return t("journal.distinguishable");
+    if (verdict === "not measured") return t("journal.pairedNotMeasured");
+    return t("journal.notDistinguishable");
+  };
+
   const rows = SOURCES.map((source) => ({
     source,
     name: label(source),
@@ -176,11 +188,9 @@ export default async function JournalPage() {
                 <StatusBadge
                   status={worse ? "bad" : beat ? "good" : "warning"}
                   label={`${row.name} — ${
-                    worse
-                      ? t("journal.worseThanControl")
-                      : beat
-                        ? t("journal.distinguishable")
-                        : t("journal.notDistinguishable")
+                    beat
+                      ? t("journal.distinguishable")
+                      : verdictLabel(row.result.verdict, worse)
                   }`}
                 />
                 <p className="text-xs ink-3 leading-relaxed">
@@ -206,7 +216,7 @@ export default async function JournalPage() {
                           ? "good"
                           : "warning"
                       }
-                      label={`${row.name} — ${row.paired.verdict}`}
+                      label={`${row.name} — ${verdictLabel(row.paired.verdict)}`}
                     />
                     <p className="text-xs ink-3 leading-relaxed">
                       t = {row.paired.t_statistic} · {t("journal.needs")}{" "}
