@@ -1025,7 +1025,13 @@ class TestThePropRulebookGovernsWhenThereIsOne:
 
     @staticmethod
     def account(**over):
+        """Wrapped, because `listing` returns AccountView and never a bare
+        account. A stand-in of the wrong shape is how the gate came to read
+        `rulebook_key` off a wrapper that has none, answer "?", and refuse
+        every trade against a rulebook it knew perfectly well."""
         from types import SimpleNamespace
+
+        from app.services.challenge_accounts import AccountView
 
         base = dict(
             is_active=True,
@@ -1034,7 +1040,7 @@ class TestThePropRulebookGovernsWhenThereIsOne:
             label="test",
         )
         base.update(over)
-        return SimpleNamespace(**base)
+        return AccountView(account=SimpleNamespace(**base), rulebook=None)
 
     def registry(self, monkeypatch, rows):
         from app.services import challenge_accounts
@@ -1112,6 +1118,103 @@ class TestThePropRulebookGovernsWhenThereIsOne:
 
         assert allowed is False
         assert "could not be read" in why
+
+
+class TestTheGateReadsTheAccountAndNotItsWrapper:
+    """The two tests above this line all hand the gate a stand-in. These hand
+    it the registry itself, because the bug they exist for lived exactly in
+    the gap between the two: `listing` returns `AccountView`, every read in
+    the gate was aimed at the wrapper, and `getattr(view, ..., default)`
+    answered the default every time instead of raising.
+
+    The result was silent and total. A correctly registered account reported
+    `rulebook '?' is not one this build knows` and refused every trade, so the
+    ten transcribed rulebooks in `brain/challenge.py` had a caller that could
+    never reach them. It fails closed, which is why nothing screamed."""
+
+    KEY = "ftmo-challenge-2step-phase1"
+
+    def register(self, session, **over):
+        from decimal import Decimal
+
+        from app.services import challenge_accounts
+
+        return challenge_accounts.create(
+            session,
+            tenant_id=challenge_accounts.default_tenant(session),
+            label=over.pop("label", "FTMO 10k"),
+            rulebook_key=over.pop("rulebook_key", self.KEY),
+            starting_balance=Decimal("10000"),
+            **over,
+        )
+
+    def gate(self, session):
+        from datetime import date
+
+        return autotrade._challenge_gate(
+            session,
+            {"equity": 10_000.0, "balance": 10_000.0},
+            1,
+            0.002,
+            today=date(2026, 8, 18),
+            moment=NEWS_NOW,
+            in_news_window=False,
+        )
+
+    def test_a_registered_rulebook_is_recognised_as_one(self, session):
+        """Reading the wrapper made the key `'?'`, so a known rulebook was
+        rejected as unknown. Getting as far as "incomplete" is the proof the
+        lookup succeeded: that verdict comes from the rules themselves."""
+        self.register(session)
+
+        allowed, why, _ = self.gate(session)
+
+        assert "not one this build knows" not in why
+        assert "'?'" not in why
+        assert "rulebook is incomplete" in why
+        assert allowed is False
+
+    def test_a_switched_off_account_is_not_a_registration(self, session):
+        """Off is not deleted, but it is not governing either. Filtering the
+        wrapper on a missing `is_active` took the `True` default, so an
+        account the holder had switched off still imposed its rules."""
+        from app.services import challenge_accounts
+
+        account = self.register(session)
+        challenge_accounts.set_active(
+            session,
+            tenant_id=challenge_accounts.default_tenant(session),
+            account_id=account.id,
+            active=False,
+        )
+
+        allowed, why, headroom = self.gate(session)
+
+        assert allowed is True
+        assert why == ""
+        assert headroom is None
+
+    def test_the_second_of_two_is_counted_only_while_it_is_on(self, session):
+        """Two live registrations refuse rather than pick. Switching one off
+        must leave one - the count has to follow the flag it could not read."""
+        from app.services import challenge_accounts
+
+        self.register(session)
+        second = self.register(session, label="FTMO 10k #2")
+
+        allowed, why, _ = self.gate(session)
+        assert allowed is False
+        assert "cannot be known" in why
+
+        challenge_accounts.set_active(
+            session,
+            tenant_id=challenge_accounts.default_tenant(session),
+            account_id=second.id,
+            active=False,
+        )
+
+        allowed, why, _ = self.gate(session)
+        assert "cannot be known" not in why
 
 
 class TestTheOpenBookIsPricedBeforeAddingToIt:

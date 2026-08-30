@@ -411,12 +411,15 @@ def run_fleet(
 
     from app.services import challenge_accounts
 
+    # Unwrapped from their AccountView wrappers, which carry neither
+    # `is_active` nor `label`: filtering the wrapper counts a switched-off
+    # account as active, and labelling it names every account "".
     accounts = [
-        a
-        for a in challenge_accounts.listing(
+        view.account
+        for view in challenge_accounts.listing(
             session, tenant_id=challenge_accounts.default_tenant(session)
         )
-        if getattr(a, "is_active", True)
+        if view.account.is_active
     ]
     if max_accounts is not None:
         accounts = accounts[:max_accounts]
@@ -445,7 +448,7 @@ def run_fleet(
     # ---------------------------------------------------------- per account
     for account in accounts:
         result.accounts_considered += 1
-        label = getattr(account, "label", "") or str(getattr(account, "id", ""))
+        label = account.label or str(account.id)
         acted_here = 0
         intents: list[dict[str, Any]] = []
 

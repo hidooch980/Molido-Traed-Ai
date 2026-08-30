@@ -427,12 +427,18 @@ def _challenge_gate(
     from app.services import challenge_accounts
 
     try:
+        # `listing` hands back AccountView wrappers, not accounts. Unwrapping
+        # once here - rather than reaching through the wrapper at each read
+        # below - is what lets the rest of this function name real fields.
+        # A `getattr(view, "rulebook_key", "?")` answers "?" for every account
+        # ever registered, and then refuses the trade for a reason that is not
+        # true: the rulebook is known, the read was aimed at the wrong object.
         registered = [
-            a
-            for a in challenge_accounts.listing(
+            view.account
+            for view in challenge_accounts.listing(
                 session, tenant_id=challenge_accounts.default_tenant(session)
             )
-            if getattr(getattr(a, "account", a), "is_active", True)
+            if view.account.is_active
         ]
     except Exception as problem:  # noqa: BLE001 - reported, never fatal
         return False, f"the challenge registry could not be read: {type(problem).__name__}", None
@@ -448,20 +454,20 @@ def _challenge_gate(
         )
 
     account = registered[0]
-    book = rulebooks.get(str(getattr(account, "rulebook_key", "") or ""))
+    book = rulebooks.get(str(account.rulebook_key or ""))
     if book is None:
         return (
             False,
-            f"the registered rulebook {getattr(account, 'rulebook_key', '?')!r} is not "
+            f"the registered rulebook {account.rulebook_key!r} is not "
             "one this build knows, so its limits cannot be applied",
             None,
         )
 
     equity = float(published.get("equity") or 0.0)
     state = challenge_brain.ChallengeState(
-        starting_balance=float(getattr(account, "starting_balance", 0.0) or 0.0),
+        starting_balance=float(account.starting_balance or 0.0),
         current_equity=equity,
-        peak_equity=max(equity, float(getattr(account, "starting_balance", 0.0) or 0.0)),
+        peak_equity=max(equity, float(account.starting_balance or 0.0)),
         daily_starting_equity=equity,
         days_traded=0,
         open_positions=open_positions,
