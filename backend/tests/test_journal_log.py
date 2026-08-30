@@ -583,3 +583,94 @@ class TestTheWaitIsSizedOnTheSpreadItCanSee:
 
         assert tight is not None and wide is not None
         assert wide > tight * 3
+
+
+class TestTimeframesAreNotReadTogether:
+    """The worker records on five timeframes and the readers used none of
+    that. Two separate faults sat behind one missing filter.
+    """
+
+    SINCE = NOW - timedelta(days=365)
+
+    def pair(self, session, *, at, timeframe, rule_r, control_r):
+        for arm, r in ((ARM_RULE, rule_r), (ARM_CONTROL, control_r)):
+            entry = journal_log.record_decision(
+                session,
+                symbol="EURUSD",
+                decision="long",
+                at=at,
+                arm=arm,
+                timeframe=timeframe,
+            )
+            journal_log.close(
+                session,
+                entry.entry_id,
+                outcome="win" if r > 0 else "loss",
+                r_multiple=r,
+            )
+
+    def test_one_timestamp_on_two_timeframes_is_two_observations(self, session):
+        """An M15 bar and an H1 bar share a timestamp every hour. Grouped by
+        moment alone they became one instant whose difference was the mean of
+        two regimes - the join invisible afterwards."""
+        moment = journal_log.MEASUREMENT_STARTS_AT + timedelta(hours=3)
+        self.pair(session, at=moment, timeframe="H1", rule_r=1.0, control_r=-1.0)
+        self.pair(session, at=moment, timeframe="M15", rule_r=-1.0, control_r=1.0)
+
+        h1 = journal_log.paired_comparison(session, since=self.SINCE, timeframe="H1")
+        m15 = journal_log.paired_comparison(session, since=self.SINCE, timeframe="M15")
+
+        assert h1.instants == 1 and h1.pairs == 1
+        assert m15.instants == 1 and m15.pairs == 1
+        # Opposite results, and neither cancels the other into a zero.
+        assert h1.mean_difference == 2.0
+        assert m15.mean_difference == -2.0
+
+    def test_the_headline_is_the_timeframe_the_rule_trades(self, session):
+        """H1, because that is what the live rule decides on. A faster
+        timeframe carrying more instants must not pull the headline toward a
+        series nobody is trading."""
+        moment = journal_log.MEASUREMENT_STARTS_AT + timedelta(hours=5)
+        self.pair(session, at=moment, timeframe="H1", rule_r=1.0, control_r=-1.0)
+        for i in range(6):
+            self.pair(
+                session,
+                at=moment + timedelta(minutes=15 * (i + 1)),
+                timeframe="M15",
+                rule_r=-1.0,
+                control_r=1.0,
+            )
+
+        default = journal_log.paired_comparison(session, since=self.SINCE)
+
+        assert journal_log.TRADED_TIMEFRAME == "H1"
+        assert default.instants == 1
+        assert default.mean_difference == 2.0
+
+    def test_the_unpaired_count_is_scoped_too(self, session):
+        """`comparison` had the same gap, and it is the one on the page."""
+        moment = journal_log.MEASUREMENT_STARTS_AT + timedelta(hours=7)
+        self.pair(session, at=moment, timeframe="H1", rule_r=1.0, control_r=-1.0)
+        self.pair(
+            session,
+            at=moment + timedelta(minutes=15),
+            timeframe="M15",
+            rule_r=1.0,
+            control_r=1.0,
+        )
+
+        h1 = journal_log.comparison(session, since=self.SINCE, timeframe="H1")
+
+        assert h1.rule_trials == 1
+        assert h1.control_trials == 1
+
+    def test_the_breakdown_names_every_timeframe_recorded(self, session):
+        """Published so the headline's scope is visible beside it. Nobody
+        should have to know a constant to see that four other series exist."""
+        moment = journal_log.MEASUREMENT_STARTS_AT + timedelta(hours=9)
+        self.pair(session, at=moment, timeframe="H1", rule_r=1.0, control_r=-1.0)
+        self.pair(session, at=moment, timeframe="M5", rule_r=1.0, control_r=-1.0)
+
+        view = journal_log.summary(session)
+
+        assert set(view["by_timeframe"]) >= {"H1", "M5"}

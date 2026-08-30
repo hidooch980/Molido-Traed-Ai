@@ -55,6 +55,18 @@ from app.models.journal import (
 #: that a reader can check, not an argument somebody chose at reporting time.
 MEASUREMENT_STARTS_AT = datetime(2026, 8, 17, 0, 0, tzinfo=UTC)
 
+#: The timeframe the live rule decides on, and so the one the headline
+#: measurement is taken over.
+#:
+#: The forward worker records on every timeframe in `forward_timeframes`, which
+#: on this deployment is five of them. Reading them together was wrong twice
+#: over: their R distributions are different regimes, and - because an M15 bar
+#: and an H1 bar share a timestamp every hour - grouping instants by moment
+#: alone merged decisions from different timeframes into one observation and
+#: averaged across the join. `journal_entries` grew a `timeframe` column for
+#: exactly this and neither reader had used it.
+TRADED_TIMEFRAME = "H1"
+
 
 @dataclass(frozen=True)
 class Recorded:
@@ -243,6 +255,7 @@ def comparison(
     *,
     since: datetime | None = None,
     price_source: str = SOURCE_PUBLIC,
+    timeframe: str = TRADED_TIMEFRAME,
 ) -> control_module.Comparison:
     """The rule against the control, over resolved entries only.
 
@@ -265,6 +278,7 @@ def comparison(
         ).where(
             JournalEntry.arm == arm,
             JournalEntry.price_source == price_source,
+            JournalEntry.timeframe == timeframe,
             JournalEntry.closed_at.is_not(None),
             JournalEntry.r_multiple.is_not(None),
         )
@@ -289,6 +303,7 @@ def paired_comparison(
     *,
     since: datetime | None = None,
     price_source: str = SOURCE_PUBLIC,
+    timeframe: str = TRADED_TIMEFRAME,
 ) -> control_module.PairedComparison:
     """The rule against its own control, bar by bar, then averaged per instant.
 
@@ -311,6 +326,7 @@ def paired_comparison(
         JournalEntry.r_multiple,
     ).where(
         JournalEntry.price_source == price_source,
+        JournalEntry.timeframe == timeframe,
         JournalEntry.closed_at.is_not(None),
         JournalEntry.r_multiple.is_not(None),
         JournalEntry.arm.in_((ARM_RULE, ARM_CONTROL)),
@@ -336,6 +352,29 @@ def paired_comparison(
         sum(values) / len(values) for _instant, values in sorted(by_instant.items())
     )
     return control_module.PairedComparison(differences=differences, pairs=pairs)
+
+
+def _timeframe_breakdown(session: Session) -> dict[str, Any]:
+    """Resolved instants per timeframe per series, so the headline's scope is
+    visible beside it rather than implied by a constant."""
+    rows = session.execute(
+        select(
+            JournalEntry.timeframe,
+            JournalEntry.price_source,
+            func.count(func.distinct(JournalEntry.opened_at)),
+        )
+        .where(
+            JournalEntry.arm == ARM_RULE,
+            JournalEntry.closed_at.is_not(None),
+            JournalEntry.r_multiple.is_not(None),
+            JournalEntry.opened_at >= MEASUREMENT_STARTS_AT,
+        )
+        .group_by(JournalEntry.timeframe, JournalEntry.price_source)
+    ).all()
+    out: dict[str, Any] = {}
+    for tf, src, count in rows:
+        out.setdefault(str(tf), {})[str(src)] = int(count or 0)
+    return out
 
 
 def _paired_dict(paired: control_module.PairedComparison) -> dict[str, Any]:
@@ -420,6 +459,15 @@ def summary(session: Session) -> dict[str, Any]:
             SOURCE_PUBLIC: _paired_dict(public_paired),
             SOURCE_BROKER: _paired_dict(broker_paired),
         },
+        "by_timeframe": _timeframe_breakdown(session),
+        "why_one_timeframe": (
+            "the worker records on every timeframe in `forward_timeframes`, "
+            "and the headline is H1 alone because that is the one the live "
+            "rule decides on. Read together they are different regimes "
+            "averaged into one number, and an M15 bar shares a timestamp with "
+            "an H1 bar every hour - so grouping by moment alone merged two "
+            "decisions from two timeframes into one observation"
+        ),
         "why_paired": (
             "both arms are written in one call on the same symbol and bar, so "
             "the market's own move is common to them and subtracting it "
@@ -471,10 +519,12 @@ MIN_OBSERVATION = timedelta(days=7)
 MIN_INSTANTS_FOR_SPREAD = 30
 
 
+
 def readiness_of(
     session: Session,
     *,
     price_source: str = SOURCE_PUBLIC,
+    timeframe: str = TRADED_TIMEFRAME,
     now: datetime | None = None,
 ) -> readiness_module.Readiness:
     """How far this series is from being able to answer the question.
@@ -494,6 +544,11 @@ def readiness_of(
         ).where(
             JournalEntry.arm == ARM_RULE,
             JournalEntry.price_source == price_source,
+            # One timeframe, for the reason `TRADED_TIMEFRAME` gives: without
+            # it this counted an M1 instant and an H1 instant as two draws on
+            # the same question, and counted them as one whenever they landed
+            # on the same timestamp.
+            JournalEntry.timeframe == timeframe,
             JournalEntry.closed_at.is_not(None),
             JournalEntry.r_multiple.is_not(None),
             JournalEntry.opened_at >= MEASUREMENT_STARTS_AT,
@@ -510,7 +565,9 @@ def readiness_of(
     # from the historical spread because until the arms were paired there was
     # no forward spread to compute - not because the historical one was
     # thought to be the right number.
-    paired = paired_comparison(session, price_source=price_source)
+    paired = paired_comparison(
+        session, price_source=price_source, timeframe=timeframe
+    )
     measured_spread: float | None = None
     if paired.instants >= MIN_INSTANTS_FOR_SPREAD:
         measured_spread = paired.observed_spread
