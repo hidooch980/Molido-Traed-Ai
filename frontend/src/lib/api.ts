@@ -385,6 +385,30 @@ export interface Connection {
   note?: string;
 }
 
+/** The third brain's verdict, from `/brain/context/{id}`. */
+export interface BrainContextView {
+  symbol: string;
+  timeframe: string;
+  as_of: string;
+  proposal: { decision: string; conviction: number };
+  verdict: {
+    stance: "clear" | "caution" | "stand_aside";
+    scale: number;
+    reasons: string[];
+    abstained: string[];
+    method: string;
+    version: number;
+  };
+  signals: {
+    crowd_tilt: number | null;
+    rate_differential: number | null;
+    seconds_to_close: number | null;
+    gap_seconds: number | null;
+  };
+  signal_errors: Record<string, string>;
+  binding_at: string;
+}
+
 export interface BrokerView {
   market_data: Connection;
   execution: Connection;
@@ -1119,6 +1143,11 @@ export const api = {
   scanner: (limit = 40) =>
     request<Scanner>(`/api/v1/market-map/scanner?limit=${limit}`),
   posture: () => request<Posture>("/api/v1/decisions/posture"),
+  /** The third brain: slow context, and the right to say "not now". */
+  brainContext: (instrumentId: string, timeframe = "H1") =>
+    request<BrainContextView>(
+      `/api/v1/brain/context/${instrumentId}?timeframe=${timeframe}`,
+    ),
   proposal: (instrumentId: string, timeframe = "H1") =>
     request<Proposal>(`/api/v1/brain/think/${instrumentId}?timeframe=${timeframe}`),
   worldState: (instrumentId: string, timeframe = "H1") =>

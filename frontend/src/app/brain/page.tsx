@@ -37,13 +37,17 @@ export default async function BrainPage({
 
   const selectedId = params.instrument ?? instruments.data[0].id;
   const selectedSymbol = instruments.data.find((x) => x.id === selectedId)?.symbol;
-  const [proposal, state] = await Promise.all([
+  const [proposal, state, slow] = await Promise.all([
     api.proposal(selectedId),
     api.worldState(selectedId),
+    api.brainContext(selectedId),
   ]);
 
   const decisionTone = (decision: string) =>
     decision === "wait" ? "neutral" : ("good" as const);
+
+  const stanceTone = (stance: string) =>
+    stance === "clear" ? "good" : stance === "caution" ? "warning" : "critical";
 
   return (
     <div className="space-y-6">
@@ -80,6 +84,42 @@ export default async function BrainPage({
         <Offline error={proposal.error} />
       ) : (
         <>
+          {/* The third brain, before the reasoning detail: whether the slow
+              context would brake this proposal is the one thing to know
+              before reading why the fast one made it. */}
+          {slow.ok && (
+            <Panel
+              title={t("brain.context")}
+              subtitle={t("brain.contextSubtitle")}
+            >
+              <div className="p-4 space-y-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <StatusBadge
+                    status={stanceTone(slow.data.verdict.stance)}
+                    label={t(`brain.stance.${slow.data.verdict.stance}`)}
+                  />
+                  <span className="text-xs ink-3" dir="ltr">
+                    ×{slow.data.verdict.scale}
+                  </span>
+                </div>
+                {slow.data.verdict.reasons.length > 0 && (
+                  <ul className="space-y-1.5 text-xs ink-2 leading-relaxed">
+                    {slow.data.verdict.reasons.map((reason) => (
+                      <li key={reason}>— {reason}</li>
+                    ))}
+                  </ul>
+                )}
+                {slow.data.verdict.abstained.length > 0 && (
+                  <p className="text-xs ink-3">
+                    {t("brain.abstained")}: {slow.data.verdict.abstained.join("، ")}
+                  </p>
+                )}
+                <p className="text-xs ink-3 leading-relaxed">
+                  {t("brain.contextBinding")}
+                </p>
+              </div>
+            </Panel>
+          )}
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
             <Stat
               label={t("brain.decision")}
