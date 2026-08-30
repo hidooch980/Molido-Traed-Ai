@@ -227,23 +227,43 @@ def session_analyst(state: dict) -> Opinion:
 @analyst("regime")
 def regime_analyst(state: dict) -> Opinion:
     regime = state.get("regime", {})
-    if not regime or regime.get("regime") in (None, Regime.UNCERTAIN.value):
-        return _abstain("regime", regime.get("reason") or "regime is uncertain")
+    name = regime.get("regime")
 
-    name = regime["regime"]
+    if not regime or name in (None, Regime.UNCERTAIN.value):
+        return _abstain(
+            "regime",
+            regime.get("reason") or "regime is uncertain",
+        )
+
     confidence = regime.get("confidence", 0.0)
-    score = {
-        Regime.TREND_UP.value: 0.6,
-        Regime.TREND_DOWN.value: -0.6,
-    }.get(name, 0.0)
+    evidence = regime.get("evidence", [])[:3]
 
-    return Opinion(
+    # Range/volatility are contextual, not directional votes.
+    # Breakout/reversal are also kept neutral here because this analyst
+    # does not determine their direction independently.
+    if name == Regime.TREND_UP.value:
+        return Opinion(
+            "regime",
+            False,
+            0.6,
+            confidence,
+            ["regime_trend_up"],
+            evidence,
+        )
+
+    if name == Regime.TREND_DOWN.value:
+        return Opinion(
+            "regime",
+            False,
+            -0.6,
+            confidence,
+            ["regime_trend_down"],
+            evidence,
+        )
+
+    return _abstain(
         "regime",
-        False,
-        score,
-        confidence,
-        [f"regime_{name}"],
-        regime.get("evidence", [])[:3],
+        f"{name} is contextual rather than directional",
     )
 
 
