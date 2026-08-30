@@ -943,6 +943,12 @@ export interface JournalArm {
 }
 
 export interface JournalComparison {
+  /**
+   * The reading with its sign. `significant` is `abs(z)` and so is true for a
+   * rule losing to its own coin flip as loudly as for one beating it - which
+   * painted a z of -2.57 green. Read this instead.
+   */
+  verdict?: string;
   rule: { trials: number; wins: number; hit_rate: number | null };
   control: { trials: number; wins: number; hit_rate: number | null };
   edge_over_control: number | null;

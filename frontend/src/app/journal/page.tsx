@@ -165,21 +165,30 @@ export default async function JournalPage() {
       {measured && (
         <Panel title={t("journal.verdict")}>
           <div className="p-4 space-y-3">
-            {rows.map((row) => (
+            {rows.map((row) => {
+              /* `significant` is abs(z): true whether the rule beat the coin
+                 flip or lost to it. Painting that green labelled a losing
+                 series a success. The verdict string carries the sign. */
+              const worse = row.result.verdict?.includes("worse") ?? false;
+              const beat = (row.result.significant ?? false) && !worse;
+              return (
               <div key={row.source} className="space-y-1">
                 <StatusBadge
-                  status={row.result.significant ? "good" : "warning"}
+                  status={worse ? "bad" : beat ? "good" : "warning"}
                   label={`${row.name} — ${
-                    row.result.significant
-                      ? t("journal.distinguishable")
-                      : t("journal.notDistinguishable")
+                    worse
+                      ? t("journal.worseThanControl")
+                      : beat
+                        ? t("journal.distinguishable")
+                        : t("journal.notDistinguishable")
                   }`}
                 />
                 <p className="text-xs ink-3 leading-relaxed">
                   z = {row.result.z_score ?? "—"} · {t("journal.needs")} 1.96
                 </p>
               </div>
-            ))}
+              );
+            })}
           </div>
         </Panel>
       )}
