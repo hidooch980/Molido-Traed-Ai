@@ -48,6 +48,16 @@ class LinkPayload(BaseModel):
     server: str = Field(min_length=3, max_length=64, description="Broker server name")
     # No example, and never echoed back in a response or a log line.
     password: str = Field(min_length=1, max_length=256, repr=False)
+    #: Which terminal to apply it to. Blank lets the agent pick the first one
+    #: that has never held an account, which is what "add my next account"
+    #: almost always means.
+    terminal: str | None = Field(default=None, max_length=32)
+
+
+class ClearPayload(BaseModel):
+    """Log one terminal out. Names its terminal, carries no credential."""
+
+    terminal: str = Field(min_length=2, max_length=32)
 
 #: Where MetaTrader lives on the host. The application runs in a container and
 #: cannot see it, which is itself worth reporting rather than hiding: a bridge
@@ -201,6 +211,14 @@ def create_link(
     whatever this endpoint did.
     """
     request = mt5_link.validate(payload.login, payload.server, payload.password)
+    terminal = mt5_link.validate_terminal(payload.terminal)
+    if terminal is not None:
+        request = mt5_link.LinkRequest(
+            login=request.login,
+            server=request.server,
+            password=request.password,
+            terminal=terminal,
+        )
     result = mt5_link.submit(request)
     body = result.as_dict()
     body["applied_by"] = "host agent"
@@ -212,6 +230,38 @@ def create_link(
         request_id=result.request_id,
         login=result.login,
         server=result.server,
+        queued=result.queued,
+        tenant_id=str(principal.tenant_id) if principal.tenant_id else None,
+    )
+    return body
+
+
+@router.post("/unlink")
+def unlink_account(
+    payload: ClearPayload,
+    principal: Principal = BROKER_MANAGE,
+) -> dict[str, Any]:
+    """Log a terminal out and forget its login.
+
+    The startup config is deleted and the terminal restarted with nothing to
+    log into; the saved session inside its prefix goes too, or it would
+    quietly log back in with remembered credentials and report itself cleared
+    while trading the same account. Deactivate and delete are the same
+    mechanical act here - what differs is bookkeeping, and the accounts table
+    on the challenge page owns that.
+
+    `BROKER_MANAGE`, exactly like linking. Disconnecting a terminal mid-trade
+    is as much an act on the account as connecting it was.
+    """
+    request = mt5_link.validate_clear(payload.terminal)
+    result = mt5_link.submit(request)
+    body = result.as_dict()
+    body["applied_by"] = "host agent"
+    body["next"] = f"/api/v1/brokers/link/{result.request_id}"
+    log.info(
+        "broker.unlink_requested",
+        request_id=result.request_id,
+        terminal=payload.terminal,
         queued=result.queued,
         tenant_id=str(principal.tenant_id) if principal.tenant_id else None,
     )

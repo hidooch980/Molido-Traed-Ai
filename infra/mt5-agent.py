@@ -73,7 +73,7 @@ def log(message: str) -> None:
     print(f"{datetime.now(UTC).isoformat(timespec='seconds')} {message}", flush=True)
 
 
-def write_config(login: str, server: str, password: str) -> None:
+def write_config(login: str, server: str, password: str, config: pathlib.Path | None = None) -> None:
     """Rewrite MetaTrader's startup config with these credentials.
 
     UTF-16LE with a BOM, because that is what MetaTrader writes and what it can
@@ -101,16 +101,17 @@ def write_config(login: str, server: str, password: str) -> None:
         "Period=H1\n"
         "ExpertParameters=\n"
     )
-    CONFIG.parent.mkdir(parents=True, exist_ok=True)
-    CONFIG.write_bytes(b"\xff\xfe" + body.replace("\n", "\r\n").encode("utf-16-le"))
+    config = config or CONFIG
+    config.parent.mkdir(parents=True, exist_ok=True)
+    config.write_bytes(b"\xff\xfe" + body.replace("\n", "\r\n").encode("utf-16-le"))
     # Readable by this user and nobody else. The terminal will hold the same
     # secret in its own files, but that is not a reason to publish it twice.
-    CONFIG.chmod(0o600)
+    config.chmod(0o600)
 
 
-def restart_terminal() -> tuple[bool, str]:
+def restart_terminal(unit: str = UNIT) -> tuple[bool, str]:
     result = subprocess.run(
-        ["sudo", "systemctl", "restart", UNIT],
+        ["sudo", "systemctl", "restart", unit],
         capture_output=True,
         text=True,
         timeout=120,
@@ -147,14 +148,14 @@ def _bridge_files() -> pathlib.Path:
 BRIDGE_FILES = _bridge_files()
 
 
-def wait_for_connection(timeout: float = 90.0, interval: float = 3.0) -> dict:
+def wait_for_connection(timeout: float = 90.0, interval: float = 3.0, bridge: pathlib.Path | None = None) -> dict:
     """Watch the bridge until the terminal reports a live account, or give up.
 
     Ninety seconds covers a restart, a handshake and the first publish cycle.
     Past that, saying so is more useful than waiting longer: the failure is
     almost always a server name, and no amount of patience fixes one.
     """
-    account_file = BRIDGE_FILES / "molido_account.json"
+    account_file = (bridge or BRIDGE_FILES) / "molido_account.json"
     deadline = time.monotonic() + timeout
 
     while time.monotonic() < deadline:
@@ -186,6 +187,71 @@ def wait_for_connection(timeout: float = 90.0, interval: float = 3.0) -> dict:
 #: sends somebody to check the one thing that was right.
 TERMINAL_LOGS = PREFIX / "drive_c/Program Files/MetaTrader 5/logs"
 
+
+class Target:
+    """One terminal: its prefix, its unit, and the paths derived from them."""
+
+    def __init__(self, key: str, prefix: pathlib.Path, unit: str) -> None:
+        self.key = key
+        self.prefix = prefix
+        self.unit = unit
+        terminal = prefix / "drive_c/Program Files/MetaTrader 5"
+        cfg_dir = next(
+            (terminal / n for n in ("Config", "config") if (terminal / n).is_dir()),
+            terminal / "Config",
+        )
+        self.config = cfg_dir / "molido-startup.ini"
+        self.logs = terminal / "logs"
+        users = prefix / "drive_c/users"
+        tail = "AppData/Roaming/MetaQuotes/Terminal/Common/Files"
+        candidates = [
+            c
+            for c in sorted(users.glob(f"*/{tail}"))
+            if c.parents[4].name.lower() != "public"
+        ]
+        self.bridge = (
+            candidates[0]
+            if candidates
+            else users / os.environ.get("USER", "root") / tail
+        )
+
+    @property
+    def taken(self) -> bool:
+        return self.config.exists()
+
+
+def targets() -> "list[Target]":
+    """The terminals this agent serves, in preference order.
+
+    `MOLIDO_MT5_TARGETS` is `key=prefix=unit,key=prefix=unit,...`. Unset means
+    the single terminal this agent always had, under the key `main`.
+    """
+    spec = os.environ.get("MOLIDO_MT5_TARGETS", "").strip()
+    if not spec:
+        return [Target("main", PREFIX, UNIT)]
+    out = []
+    for part in spec.split(","):
+        pieces = part.strip().split("=")
+        if len(pieces) == 3 and all(pieces):
+            out.append(Target(pieces[0], pathlib.Path(pieces[1]), pieces[2]))
+    return out or [Target("main", PREFIX, UNIT)]
+
+
+def resolve_target(requested: "str | None") -> "Target | None":
+    """The terminal a request goes to.
+
+    Named explicitly, the name has to exist - a login applied to a fallback
+    terminal because of a typo would connect the right account in a place
+    nobody is looking. Unnamed, the first terminal never given an account
+    wins; when every one is taken, the *last* entry does, because the env
+    var's order is a deliberate ranking and its tail is the deliberate
+    overwrite choice.
+    """
+    known = targets()
+    if requested:
+        return next((x for x in known if x.key == requested), None)
+    return next((x for x in known if not x.taken), known[-1])
+
 #: What MetaTrader says, and what it means to somebody who has to fix it.
 LOGIN_FAILURES = (
     ("invalid account", "the account number or password was not accepted by the broker"),
@@ -196,7 +262,7 @@ LOGIN_FAILURES = (
 )
 
 
-def terminal_verdict(login: str) -> str | None:
+def terminal_verdict(login: str, logs_dir: pathlib.Path | None = None) -> str | None:
     """What the terminal logged about this login, in plain words.
 
     Returns None when it said nothing, which is itself an answer - a terminal
@@ -204,7 +270,7 @@ def terminal_verdict(login: str) -> str | None:
     that is a different problem from being turned away by one.
     """
     try:
-        logs = sorted(TERMINAL_LOGS.glob("*.log"), key=lambda p: p.stat().st_mtime)
+        logs = sorted((logs_dir or TERMINAL_LOGS).glob("*.log"), key=lambda p: p.stat().st_mtime)
     except OSError:
         return None
     if not logs:
@@ -246,18 +312,61 @@ def apply(request: pathlib.Path) -> dict:
     login = str(payload.get("login", "")).strip()
     server = str(payload.get("server", "")).strip()
     password = str(payload.get("password", ""))
+    action = str(payload.get("action", "login")).strip() or "login"
+    requested = str(payload.get("terminal", "")).strip() or None
+
+    target = resolve_target(requested)
+    if target is None:
+        known = ", ".join(x.key for x in targets())
+        return {
+            "applied": False,
+            "terminal": requested,
+            "reason": (
+                f"no terminal is called {requested!r}. Known: {known}. A login "
+                "applied to a fallback because of a typo would connect the "
+                "right account where nobody is looking"
+            ),
+        }
+
+    if action == "clear":
+        # Log the terminal out by removing the startup config and restarting.
+        # The saved session inside the prefix goes too, or the terminal would
+        # quietly log back in with remembered credentials and report itself
+        # cleared while trading the same account.
+        target.config.unlink(missing_ok=True)
+        for stale in target.bridge.glob("molido_*.json"):
+            stale.unlink(missing_ok=True)
+        restarted, detail = restart_terminal(target.unit)
+        return {
+            "applied": restarted,
+            "cleared": restarted,
+            "terminal": target.key,
+            "reason": None if restarted else f"terminal restart failed: {detail}",
+            "applied_at": datetime.now(UTC).isoformat(timespec="seconds"),
+        }
+
+    if action != "login":
+        return {
+            "applied": False,
+            "terminal": target.key,
+            "reason": f"{action!r} is not an action this agent knows. "
+            "Known: login, clear",
+        }
 
     if not login or not server or not password:
         return {
             "applied": False,
+            "terminal": target.key,
             "reason": "login, server and password are all required",
             "login": login or None,
             "server": server or None,
         }
 
-    write_config(login, server, password)
-    restarted, detail = restart_terminal()
-    connection = wait_for_connection() if restarted else {"connected": False}
+    write_config(login, server, password, config=target.config)
+    restarted, detail = restart_terminal(target.unit)
+    connection = (
+        wait_for_connection(bridge=target.bridge) if restarted else {"connected": False}
+    )
 
     return {
         "applied": restarted,
@@ -274,7 +383,7 @@ def apply(request: pathlib.Path) -> dict:
             else f"terminal restart failed: {detail}"
             if not restarted
             else (
-                terminal_verdict(login)
+                terminal_verdict(login, logs_dir=target.logs)
                 or "the terminal restarted and did not connect, and logged no "
                 "authorization attempt - which usually means the server name "
                 "does not exist, so it never reached a broker to be refused by"
@@ -282,7 +391,8 @@ def apply(request: pathlib.Path) -> dict:
         ),
         "login": login,
         "server": server,
-        "config_written": str(CONFIG),
+        "config_written": str(target.config),
+        "terminal": target.key,
         "applied_at": datetime.now(UTC).isoformat(timespec="seconds"),
     }
 

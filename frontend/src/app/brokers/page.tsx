@@ -1,5 +1,6 @@
 import { Offline, Panel, Stat, StatusBadge } from "@/components/ui";
 import { AddBrokerAccount } from "@/components/AddBrokerAccount";
+import { TerminalUnlink } from "@/components/TerminalUnlink";
 import { api } from "@/lib/api";
 import { getT } from "@/lib/locale";
 
@@ -138,6 +139,7 @@ export default async function BrokersPage() {
                 <th>{t("brokers.server")}</th>
                 <th className="num">{t("brokers.balance")}</th>
                 <th>{t("brokers.connection")}</th>
+                <th>{t("brokers.actions")}</th>
               </tr>
             </thead>
             <tbody>
@@ -158,6 +160,23 @@ export default async function BrokersPage() {
                       <StatusBadge
                         status="warning"
                         label={term.available ? t("brokers.disconnected") : t("brokers.silent")}
+                      />
+                    )}
+                  </td>
+                  <td>
+                    {/* Only where there is a login to forget. A log-out
+                        button on an empty terminal would queue a restart
+                        that changes nothing and reads as broken. */}
+                    {term.available && (
+                      <TerminalUnlink
+                        terminal={key}
+                        labels={{
+                          unlink: t("brokers.unlink"),
+                          confirm: t("brokers.unlinkConfirm"),
+                          cancel: t("brokers.unlinkCancel"),
+                          working: t("brokers.unlinkWorking"),
+                          failed: t("brokers.unlinkFailed"),
+                        }}
                       />
                     )}
                   </td>
@@ -232,6 +251,7 @@ export default async function BrokersPage() {
       <Panel title={t("broker.add")} subtitle={t("broker.howTo")}>
         <div className="p-4">
           <AddBrokerAccount
+            terminals={Object.keys(b.metatrader.terminals)}
             labels={{
               add: t("broker.add"),
               login: t("broker.login"),
@@ -248,6 +268,9 @@ export default async function BrokersPage() {
               signInFirst: t("broker.signInFirst"),
               stillWaiting: t("broker.stillWaiting"),
               connected: t("broker.connected"),
+              terminal: t("broker.terminalField"),
+              terminalAuto: t("broker.terminalAuto"),
+              terminalHint: t("broker.terminalHint"),
             }}
           />
         </div>
