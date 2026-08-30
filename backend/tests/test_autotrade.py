@@ -1038,6 +1038,10 @@ class TestThePropRulebookGovernsWhenThereIsOne:
             rulebook_key="ftmo-challenge-2step-phase1",
             starting_balance=10_000.0,
             label="test",
+            # Carried because the real row carries it. A stand-in missing a
+            # column the gate reads is the same defect as a stand-in of the
+            # wrong class, one field smaller.
+            currency_per_r=None,
         )
         base.update(over)
         return AccountView(account=SimpleNamespace(**base), rulebook=None)
@@ -1215,6 +1219,127 @@ class TestTheGateReadsTheAccountAndNotItsWrapper:
 
         allowed, why, _ = self.gate(session)
         assert "cannot be known" not in why
+
+
+class TestTheGateSuppliesWhatItAlreadyKnows:
+    """Two of the gate's refusals were about its own telemetry, not about the
+    provider's rules, and both figures were already to hand.
+
+    The distinction matters because the two kinds of block need opposite
+    responses. "The holder has not confirmed the automation permission" is
+    answered by asking the holder; "one R is not expressed in account
+    currency" was answered by reading a column that was already filled in.
+    A gate that reports the second in the same voice as the first sends
+    somebody to their contract to fix a bug in this file.
+    """
+
+    #: FundedNext rather than FTMO, because only a book that carries a
+    #: leverage cap can gate on an unmeasurable leverage. FTMO's is unread,
+    #: so there is nothing to be unable to measure against.
+    KEY = "fundednext-stellar-2step-phase1"
+
+    def register(self, session, **over):
+        from decimal import Decimal
+
+        from app.services import challenge_accounts
+
+        return challenge_accounts.create(
+            session,
+            tenant_id=challenge_accounts.default_tenant(session),
+            label="FundedNext 10k",
+            rulebook_key=self.KEY,
+            starting_balance=Decimal("10000"),
+            **over,
+        )
+
+    def gate(self, session, published=None):
+        from datetime import date
+
+        return autotrade._challenge_gate(
+            session,
+            published or {"equity": 10_000.0, "balance": 10_000.0, "margin": 0.0},
+            1,
+            0.002,
+            today=date(2026, 8, 18),
+            moment=NEWS_NOW,
+            in_news_window=False,
+        )
+
+    def test_a_registered_r_value_is_used_rather_than_left_unknown(self, session):
+        """The column exists so a drawdown allowance in money can become a
+        risk figure. The gate built its state without it, so every verdict
+        blocked on a number the holder had already entered."""
+        from decimal import Decimal
+
+        self.register(session, currency_per_r=Decimal("50"))
+
+        _allowed, why, _ = self.gate(session)
+
+        assert "one R is not expressed in account currency" not in why
+
+    def test_an_unentered_r_value_still_blocks(self, session):
+        """Reading the column is not the same as inventing one. An account
+        whose holder never entered it is still unsizeable, and must say so."""
+        self.register(session)
+
+        _allowed, why, _ = self.gate(session)
+
+        assert "one R is not expressed in account currency" in why
+
+    def test_a_flat_account_measures_its_leverage_as_zero(self, session):
+        """No margin committed is no exposure. That is a measurement, and it
+        is the state an account is in whenever a position is opened from
+        flat - so refusing to make it blocks the ordinary case."""
+        from decimal import Decimal
+
+        self.register(session, currency_per_r=Decimal("50"))
+
+        allowed, why, headroom = self.gate(session)
+
+        assert "leverage" not in why
+        # Nothing left unmeasurable, so the gate reaches an actual verdict
+        # and sizes it. Before these two figures were supplied it could not.
+        assert allowed is True
+        assert headroom is not None and headroom > 0
+
+    def test_committed_margin_leaves_leverage_unmeasured_rather_than_guessed(
+        self, session
+    ):
+        """Notional is margin times the symbol's own margin rate, and those
+        differ per instrument. Nothing in this payload can close that gap, so
+        the rule reports itself unmeasured instead of picking a direction."""
+        from decimal import Decimal
+
+        self.register(session, currency_per_r=Decimal("50"))
+
+        _allowed, why, _ = self.gate(
+            session,
+            {"equity": 10_000.0, "balance": 10_000.0, "margin": 500.0},
+        )
+
+        assert "leverage" in why
+
+    def test_the_account_leverage_setting_is_never_read_as_usage(self, session):
+        """MetaTrader publishes ACCOUNT_LEVERAGE - what the broker permits.
+        Read as usage it would put a flat account exactly on its own cap and
+        call that a breach."""
+        from decimal import Decimal
+
+        self.register(session, currency_per_r=Decimal("50"))
+
+        _allowed, why, _ = self.gate(
+            session,
+            {
+                "equity": 10_000.0,
+                "balance": 10_000.0,
+                "margin": 0.0,
+                # The broker permits 1:100. Nothing is open.
+                "leverage": 100,
+            },
+        )
+
+        assert "above the" not in why
+        assert "at the" not in why
 
 
 class TestTheOpenBookIsPricedBeforeAddingToIt:

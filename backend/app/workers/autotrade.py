@@ -464,6 +464,24 @@ def _challenge_gate(
         )
 
     equity = float(published.get("equity") or 0.0)
+
+    # Leverage in use, which is not the account's leverage setting.
+    #
+    # The bridge publishes `leverage`, and it is MetaTrader's ACCOUNT_LEVERAGE:
+    # the ratio the broker permits. Handing that to the rule would compare a
+    # permission against a cap and report an untouched account as sitting
+    # exactly on its limit - a breach invented out of a healthy account.
+    #
+    # With no margin committed there is no exposure, so the leverage in use is
+    # zero. That is a measurement and worth making, because it is the state an
+    # account is in whenever a new position is being considered from flat.
+    # With margin committed it cannot be derived from this payload: notional
+    # is margin times the *symbol's* margin rate, and those differ per
+    # instrument - so it stays unknown and the rule reports itself unmeasured
+    # rather than guessing in either direction.
+    margin = published.get("margin")
+    leverage_in_use = 0.0 if margin is not None and float(margin) == 0.0 else None
+
     state = challenge_brain.ChallengeState(
         starting_balance=float(account.starting_balance or 0.0),
         current_equity=equity,
@@ -478,6 +496,16 @@ def _challenge_gate(
         # than being gated by it.
         in_news_window=in_news_window,
         weekend_ahead=_weekend_ahead(moment),
+        current_leverage=leverage_in_use,
+        # Registered by the holder for exactly this, and never read until now.
+        # The column's own comment says an absent one blocks every verdict -
+        # "correct, and useless" - and it was absent here because the gate
+        # built the state without it, not because nobody had entered one.
+        currency_per_r=(
+            float(account.currency_per_r)
+            if account.currency_per_r is not None
+            else None
+        ),
     )
     verdict = challenge_brain.check(book.rules, state, proposed_risk_r)
     if not verdict.allowed:
