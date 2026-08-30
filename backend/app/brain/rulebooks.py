@@ -37,7 +37,9 @@ from app.brain.challenge import (
     AllowanceBasis,
     ChallengeRules,
     DrawdownBasis,
+    LeverageCaps,
 )
+from app.core.enums import AssetClass
 
 #: When the FundedNext pages below were read.
 FUNDEDNEXT_RETRIEVED = date(2026, 8, 30)
@@ -136,6 +138,46 @@ def _publish(value: Any) -> Any:
 #       and binds nothing here.
 #     - leverage: now published, but per asset class - see `max_leverage`.
 
+# Leverage as the Symbols & Conditions tab publishes it, read 30 Aug 2026.
+# Gold, silver and oil are filed under "Commodities" by that page, so METAL
+# takes the commodity cap rather than one of its own - the enum splits them
+# and the provider does not.
+#
+# These are the challenge-phase figures. The funded phase tightens indices
+# and commodities on both programmes, and there is no funded FundedNext
+# rulebook here to hold that; Instant is funded from day one and has its own.
+_CRYPTO_ONE_TO_ONE = {AssetClass.CRYPTO: 1.0}
+
+_LEVERAGE_1STEP = LeverageCaps(
+    {
+        AssetClass.FOREX: 30.0,
+        AssetClass.INDEX: 10.0,
+        AssetClass.COMMODITY: 15.0,
+        AssetClass.METAL: 15.0,
+        **_CRYPTO_ONE_TO_ONE,
+    }
+)
+
+_LEVERAGE_2STEP_AND_LITE = LeverageCaps(
+    {
+        AssetClass.FOREX: 100.0,
+        AssetClass.INDEX: 25.0,
+        AssetClass.COMMODITY: 25.0,
+        AssetClass.METAL: 25.0,
+        **_CRYPTO_ONE_TO_ONE,
+    }
+)
+
+_LEVERAGE_INSTANT = LeverageCaps(
+    {
+        AssetClass.FOREX: 30.0,
+        AssetClass.INDEX: 5.0,
+        AssetClass.COMMODITY: 7.5,
+        AssetClass.METAL: 7.5,
+        **_CRYPTO_ONE_TO_ONE,
+    }
+)
+
 _COMMON: dict[str, Any] = {
     # Left unread on purpose, which is not the same as an omission.
     #
@@ -159,19 +201,10 @@ _COMMON: dict[str, Any] = {
     # at every stage." Swap applies; triple swap Wednesday on forex and
     # commodities, Friday on indices and crypto.
     "weekend_holding_allowed": True,
-    # Published on 30 Aug, and one float cannot hold it: the cap is set per
-    # asset class, and this watchlist spans three of them at once.
-    #
-    #   Stellar 1-Step        forex 1:30   indices 1:10  commodities 1:15
-    #   Stellar 2-Step, Lite  forex 1:100  indices and commodities 1:25
-    #   Stellar Instant       forex 1:30   indices 1:5   commodities 1:7.5
-    #   every model           crypto 1:1
-    #
-    # Writing 100.0 would claim 100x is permitted on BTCUSD, where the
-    # provider allows 1x; writing 1.0 would claim forex is capped at 1x. Both
-    # are false, and a false cap is worse than an unread one - so it stays
-    # `None` until the field can express an asset class.
-    "max_leverage": None,
+    # `max_leverage` is not here: it is the one rule that differs by programme
+    # as well as by asset class, so each book names its own `LeverageCaps`
+    # above. It was `None` until 30 Aug for want of a type that could hold
+    # "forex 1:100 and crypto 1:1 on the same account".
     # "Challenge / FundedNext: no hard cap, no fixed limit." Stated, not
     # inferred - which is what separates this NOT_IMPOSED from the consistency
     # one that had to be withdrawn.
@@ -343,6 +376,7 @@ RULEBOOKS: tuple[Rulebook, ...] = (
             max_total_drawdown_pct=0.06,
             min_trading_days=2,
             **_COMMON,
+            max_leverage=_LEVERAGE_1STEP,
         ),
         source=FUNDEDNEXT_SOURCE,
         retrieved=FUNDEDNEXT_RETRIEVED,
@@ -359,6 +393,7 @@ RULEBOOKS: tuple[Rulebook, ...] = (
             max_total_drawdown_pct=0.10,
             min_trading_days=5,
             **_COMMON,
+            max_leverage=_LEVERAGE_2STEP_AND_LITE,
         ),
         source=FUNDEDNEXT_SOURCE,
         retrieved=FUNDEDNEXT_RETRIEVED,
@@ -375,6 +410,7 @@ RULEBOOKS: tuple[Rulebook, ...] = (
             max_total_drawdown_pct=0.10,
             min_trading_days=5,
             **_COMMON,
+            max_leverage=_LEVERAGE_2STEP_AND_LITE,
         ),
         source=FUNDEDNEXT_SOURCE,
         retrieved=FUNDEDNEXT_RETRIEVED,
@@ -391,6 +427,7 @@ RULEBOOKS: tuple[Rulebook, ...] = (
             max_total_drawdown_pct=0.08,
             min_trading_days=5,
             **_COMMON,
+            max_leverage=_LEVERAGE_2STEP_AND_LITE,
         ),
         source=FUNDEDNEXT_SOURCE,
         retrieved=FUNDEDNEXT_RETRIEVED,
@@ -407,6 +444,7 @@ RULEBOOKS: tuple[Rulebook, ...] = (
             max_total_drawdown_pct=0.08,
             min_trading_days=5,
             **_COMMON,
+            max_leverage=_LEVERAGE_2STEP_AND_LITE,
         ),
         source=FUNDEDNEXT_SOURCE,
         retrieved=FUNDEDNEXT_RETRIEVED,
@@ -424,6 +462,7 @@ RULEBOOKS: tuple[Rulebook, ...] = (
             min_trading_days=NOT_IMPOSED,
             **{
                 **_COMMON,
+                "max_leverage": _LEVERAGE_INSTANT,
                 "total_drawdown_trailing": True,
                 # "The Stellar Instant Account has no consistency rules." A
                 # sentence that states the absence, so this one may assert it

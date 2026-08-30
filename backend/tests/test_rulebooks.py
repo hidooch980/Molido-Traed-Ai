@@ -18,6 +18,7 @@ import pytest
 
 from app.brain import challenge as ch
 from app.brain import rulebooks as rb
+from app.core.enums import AssetClass
 
 
 class TestEveryRulebookCarriesItsProvenance:
@@ -248,15 +249,34 @@ class TestWhatThePageDoesNotSayStaysUnknown:
         its provider never wrote."""
         assert book.rules.weekend_holding_allowed is None
 
-    @pytest.mark.parametrize("book", rb.RULEBOOKS, ids=lambda b: b.key)
-    def test_leverage_is_not_guessed(self, book):
-        """Still `None`, but for a different reason since 30 Aug: FundedNext
-        now publishes it, per asset class - forex 1:100 where crypto is 1:1
-        on the same account. The field holds one float, so any single value
-        is false for some instrument this watchlist trades, and a false cap
-        is worse than an unread one. It stays unentered until the field can
-        name an asset class."""
+    @pytest.mark.parametrize(
+        "book",
+        [b for b in rb.RULEBOOKS if b.provider == "FTMO"],
+        ids=lambda b: b.key,
+    )
+    def test_ftmo_leverage_stays_unknown(self, book):
+        """FTMO's objectives page does not publish it. FundedNext's numbers
+        are FundedNext's."""
         assert book.rules.max_leverage is None
+
+    @pytest.mark.parametrize(
+        "book",
+        [b for b in rb.RULEBOOKS if b.provider == "FundedNext"],
+        ids=lambda b: b.key,
+    )
+    def test_fundednext_leverage_is_read_per_asset_class(self, book):
+        """One float could not hold this and so it stayed unread until 30 Aug:
+        the same account is capped at 1:100 on forex and 1:1 on crypto. The
+        cap for an unnamed asset is the tightest published, never the
+        loosest."""
+        caps = book.rules.max_leverage
+
+        assert isinstance(caps, ch.LeverageCaps)
+        assert caps.binding(AssetClass.CRYPTO) == 1.0
+        assert caps.binding(AssetClass.FOREX) > caps.binding(AssetClass.CRYPTO)
+        assert caps.binding(None) == caps.most_restrictive
+        # An asset class the page never listed is not a licence.
+        assert caps.binding(AssetClass.BOND) == caps.most_restrictive
 
     @pytest.mark.parametrize(
         "book",
@@ -315,4 +335,9 @@ def _fresh() -> ch.ChallengeState:
         open_positions=0,
         current_date=date(2026, 8, 13),
         currency_per_r=200.0,
+        # Nothing is open, so leverage is zero - a measurement, not a default.
+        # Left unset while every cap was unread, which cost nothing; once a
+        # book carries a real cap, an unstated leverage gates the trade as
+        # unmeasurable, and this account can state it.
+        current_leverage=0.0,
     )

@@ -14,6 +14,7 @@ from datetime import date
 import pytest
 
 from app.brain import challenge as ch
+from app.core.enums import AssetClass
 
 TODAY = date(2026, 3, 12)
 
@@ -920,3 +921,83 @@ class TestAutomatedTrading:
                     f"{book.key} forbids automation in its rules but says "
                     "nothing about it in its notes"
                 )
+
+
+class TestLeverageIsCappedPerAssetClass:
+    """A single float could not say what providers publish. FundedNext caps
+    forex at 1:100 and crypto at 1:1 on one account, so any one number is
+    false for some instrument that account can trade - too high permits what
+    the provider's server rejects, too low refuses what it allows. Neither is
+    a cap. The type exists so the rule can be transcribed instead of rounded
+    to whichever lie is more comfortable.
+    """
+
+    @staticmethod
+    def caps():
+        return ch.LeverageCaps(
+            {
+                AssetClass.FOREX: 100.0,
+                AssetClass.INDEX: 25.0,
+                AssetClass.CRYPTO: 1.0,
+            }
+        )
+
+    def test_a_named_asset_gets_its_own_cap(self):
+        caps = self.caps()
+
+        assert caps.binding(AssetClass.FOREX) == 100.0
+        assert caps.binding(AssetClass.CRYPTO) == 1.0
+
+    def test_an_unnamed_asset_gets_the_tightest_cap(self):
+        """The whole invariant of this package in one line: not knowing may
+        reduce exposure and may never grant it. Resolving an unnamed trade to
+        the forex cap would hand 100x to a position nobody identified."""
+        assert self.caps().binding(None) == 1.0
+
+    def test_an_asset_the_page_never_listed_gets_the_tightest_cap(self):
+        """Absent from the table is not permission. A provider that lists no
+        bond cap has not published a bond cap, and the safe reading of a gap
+        is the strictest number it did publish."""
+        assert self.caps().binding(AssetClass.BOND) == 1.0
+
+    def test_empty_caps_are_refused_rather_than_meaning_no_limit(self):
+        """An empty mapping would be a `LeverageCaps` that caps nothing while
+        looking like a transcribed rule. `NOT_IMPOSED` says that on purpose."""
+        with pytest.raises(ValueError):
+            ch.LeverageCaps({})
+
+    def test_a_zero_cap_is_refused(self):
+        """1:1 is 1.0. A 0.0 forbids every position, and a page saying 1:1
+        never means that - it is a transcription slip, not a rule."""
+        with pytest.raises(ValueError):
+            ch.LeverageCaps({AssetClass.FOREX: 0.0})
+
+    def test_the_cap_that_binds_is_the_one_enforced(self):
+        """Leverage of 8x is fine on forex here and a breach on crypto, and
+        the difference is the asset class the state names."""
+        rules = ch.ChallengeRules(max_leverage=self.caps())
+
+        forex = ch.check(
+            rules,
+            state(current_leverage=8.0, asset_class=AssetClass.FOREX),
+            0.01,
+        )
+        crypto = ch.check(
+            rules,
+            state(current_leverage=8.0, asset_class=AssetClass.CRYPTO),
+            0.01,
+        )
+
+        assert not any("leverage" in b for b in forex.breaches)
+        assert any("leverage" in b for b in crypto.breaches)
+
+    def test_an_unnamed_asset_is_judged_and_says_so(self):
+        """It must not pass silently on the loosest cap, and it must not
+        refuse either - the tightest cap is a real answer, and the warning is
+        what stops it being mistaken for the instrument's own."""
+        rules = ch.ChallengeRules(max_leverage=self.caps())
+
+        verdict = ch.check(rules, state(current_leverage=8.0), 0.01)
+
+        assert any("leverage" in b for b in verdict.breaches)
+        assert any("no asset class" in w for w in verdict.warnings)

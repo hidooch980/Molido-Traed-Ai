@@ -39,10 +39,13 @@ verdict and a headroom. Execution is phase 25 and does not exist yet.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import date
 from enum import StrEnum
 from typing import Any, Final
+
+from app.core.enums import AssetClass
 
 # Below this many days there is no distribution to speak of. One profitable day
 # is trivially 100% of the profit, so judging consistency that early would fail
@@ -127,6 +130,51 @@ IntRule = int | NotImposed | None
 FlagRule = bool | NotImposed | None
 
 
+@dataclass(frozen=True)
+class LeverageCaps:
+    """Leverage the way providers actually publish it: one cap per asset class.
+
+    `max_leverage` was a single float, and that cannot hold what FundedNext
+    prints on one page: forex 1:100 and crypto 1:1 on the same account. Any
+    one number is false for some instrument that account can trade, and the
+    two ways of being wrong are both bad - too high permits what the
+    provider's server will reject, too low refuses what it would have
+    allowed. Neither is a cap; both are a guess wearing one.
+
+    A cap for an asset class that is not listed falls back to the most
+    restrictive one that is. That is the same rule the rest of this module
+    follows: not knowing may only reduce exposure, never grant it.
+    """
+
+    by_asset: Mapping[AssetClass, float]
+
+    def __post_init__(self) -> None:
+        if not self.by_asset:
+            raise ValueError(
+                "leverage caps with no asset class say nothing - use None for "
+                "unread and NOT_IMPOSED for a provider that caps nothing"
+            )
+        for asset, cap in self.by_asset.items():
+            if not isinstance(cap, float | int) or isinstance(cap, bool):
+                raise ValueError(f"the {asset} leverage cap must be a number")
+            if not cap > 0:
+                raise ValueError(
+                    f"the {asset} leverage cap must be above zero; a cap of "
+                    f"{cap} forbids every position and is not what a page "
+                    "saying 1:1 means"
+                )
+
+    @property
+    def most_restrictive(self) -> float:
+        return float(min(self.by_asset.values()))
+
+    def binding(self, asset: AssetClass | None) -> float:
+        """The cap governing a trade in `asset`; the tightest when unnamed."""
+        if asset is None:
+            return self.most_restrictive
+        return float(self.by_asset.get(asset, self.most_restrictive))
+
+
 @dataclass
 class ChallengeRules:
     """One provider's rulebook, per account.
@@ -149,7 +197,8 @@ class ChallengeRules:
     max_total_drawdown_pct: Rule = None
     min_trading_days: IntRule = None
     max_trading_days: IntRule = None
-    max_leverage: Rule = None
+    #: A figure, per-asset `LeverageCaps`, NOT_IMPOSED, or None for unread.
+    max_leverage: Rule | LeverageCaps = None
     # No single day may be more than this share of total profit.
     max_single_day_profit_share: Rule = None
     news_trading_allowed: FlagRule = None
@@ -213,6 +262,10 @@ class ChallengeState:
     # floor below the provider's whenever the day opened with a floating loss.
     daily_starting_balance: float | None = None
     current_leverage: float | None = None
+    #: What the proposed trade is in, so a per-asset cap can be resolved.
+    #: `None` is honest and costs exposure rather than granting it: the
+    #: tightest published cap applies to a trade nobody identified.
+    asset_class: AssetClass | None = None
     # What one R is worth in account currency. Without it a risk expressed in R
     # cannot be turned into a loss in money, and the loss projection — the only
     # part of this module that can refuse a trade before it exists — cannot be
@@ -767,26 +820,42 @@ def check(
             gates.append(f"{headroom.limit} drawdown could not be measured")
 
     # ------------------------------------------------------------- leverage
+    # Resolved to the one figure that governs this trade before it is used.
+    # A per-asset rulebook with no asset named resolves to its tightest cap
+    # rather than refusing: the answer is knowable and conservative, and
+    # blocking on it would stop every trade on a rulebook that is complete.
+    cap: float | None = None
     if rules.max_leverage is None:
         unverified.append(
             "the leverage cap was never entered, so it was not checked"
         )
-    if isinstance(rules.max_leverage, float | int):
+    elif isinstance(rules.max_leverage, LeverageCaps):
+        cap = rules.max_leverage.binding(state.asset_class)
+        if state.asset_class is None:
+            warnings.append(
+                f"no asset class was named, so the tightest published leverage "
+                f"cap ({cap:.2f}x) was applied rather than the one for the "
+                "instrument actually traded"
+            )
+    elif isinstance(rules.max_leverage, float | int):
+        cap = float(rules.max_leverage)
+
+    if cap is not None:
         if state.current_leverage is None:
             unverified.append("leverage rule not checked: no leverage in the account state")
             gates.append("leverage could not be measured")
-        elif state.current_leverage > rules.max_leverage:
+        elif state.current_leverage > cap:
             breaches.append(
                 f"leverage {state.current_leverage:.2f}x is above the "
-                f"{rules.max_leverage:.2f}x cap"
+                f"{cap:.2f}x cap"
             )
         else:
-            if state.current_leverage >= rules.max_leverage:
-                gates.append(f"leverage is at the {rules.max_leverage:.2f}x cap")
-            elif state.current_leverage >= rules.max_leverage * LEVERAGE_WARNING_SHARE:
+            if state.current_leverage >= cap:
+                gates.append(f"leverage is at the {cap:.2f}x cap")
+            elif state.current_leverage >= cap * LEVERAGE_WARNING_SHARE:
                 warnings.append(
                     f"leverage {state.current_leverage:.2f}x is near the "
-                    f"{rules.max_leverage:.2f}x cap"
+                    f"{cap:.2f}x cap"
                 )
 
     # ------------------------------------------------------------ positions
