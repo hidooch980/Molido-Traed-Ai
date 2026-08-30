@@ -40,7 +40,7 @@ from app.brain.challenge import (
 )
 
 #: When the FundedNext pages below were read.
-FUNDEDNEXT_RETRIEVED = date(2026, 8, 13)
+FUNDEDNEXT_RETRIEVED = date(2026, 8, 30)
 FUNDEDNEXT_SOURCE = "https://fundednext.com/general-rules"
 
 
@@ -113,13 +113,28 @@ def _publish(value: Any) -> Any:
 #   News trading is "allowed, with no restrictions on when or how you trade",
 #   and the 40% news profit split explicitly excludes the challenge phases.
 #
-#   No consistency rule appears anywhere in the published Trading Objectives.
-#   That is recorded as NOT_IMPOSED on the strength of the page's own claim to
-#   list "every rule, every condition" - an inference, and named as one.
+#   The consistency inference above was WRONG, and was withdrawn on 30 Aug.
+#   It read NOT_IMPOSED out of the Trading Objectives page's claim to list
+#   "every rule, every condition". A 40% consistency rule does exist - best
+#   day's profit no more than 40% of total - it simply lives in the help
+#   centre rather than that page, attached to reward eligibility on the
+#   FundedNext account. Whether it binds a Stellar *challenge* phase is not
+#   stated either way, so the field is now `None` and blocks.
 #
-#   Weekend holding is left unknown. It is not mentioned on any tab, and the
-#   exhaustiveness claim is a weaker basis for a rule about when positions may
-#   be held than for one about how they are scored.
+#   The lesson is about direction. Every other unknown in this file blocks;
+#   a NOT_IMPOSED asserts a rule's absence and therefore permits, so it is
+#   the one value an inference must never produce. Only a sentence that says
+#   the rule does not exist can write it - Instant has such a sentence and
+#   keeps NOT_IMPOSED; the challenge phases never did.
+#
+#   Three facts were published between 13 and 30 Aug that were absent before,
+#   and are now read rather than inferred:
+#     - weekend holding: "allowed across every CFDs account, at every stage"
+#     - position cap: "Challenge / FundedNext: no hard cap, no fixed limit"
+#       (help centre, "What is the maximum lot size in FundedNext?", 24 Feb
+#       2026). The 5-position cap on the same page is the monthly competition
+#       and binds nothing here.
+#     - leverage: now published, but per asset class - see `max_leverage`.
 
 _COMMON: dict[str, Any] = {
     # Left unread on purpose, which is not the same as an omission.
@@ -135,11 +150,32 @@ _COMMON: dict[str, Any] = {
     "allowance_basis": AllowanceBasis.STARTING_BALANCE,
     "total_drawdown_trailing": False,
     "max_trading_days": NOT_IMPOSED,       # "No deadline to pass the Challenge."
-    "max_single_day_profit_share": NOT_IMPOSED,
+    # Was NOT_IMPOSED by inference until 30 Aug; the 40% consistency rule is
+    # real and the inference was withdrawn. Unknown for a challenge phase, so
+    # it blocks. Instant overrides this - its own page says it has none.
+    "max_single_day_profit_share": None,
     "news_trading_allowed": True,
-    "weekend_holding_allowed": None,       # not stated anywhere
-    "max_leverage": None,                  # varies per symbol, not published here
-    "max_concurrent_positions": None,      # not stated
+    # "Overnight and weekend holding are allowed across every CFDs account,
+    # at every stage." Swap applies; triple swap Wednesday on forex and
+    # commodities, Friday on indices and crypto.
+    "weekend_holding_allowed": True,
+    # Published on 30 Aug, and one float cannot hold it: the cap is set per
+    # asset class, and this watchlist spans three of them at once.
+    #
+    #   Stellar 1-Step        forex 1:30   indices 1:10  commodities 1:15
+    #   Stellar 2-Step, Lite  forex 1:100  indices and commodities 1:25
+    #   Stellar Instant       forex 1:30   indices 1:5   commodities 1:7.5
+    #   every model           crypto 1:1
+    #
+    # Writing 100.0 would claim 100x is permitted on BTCUSD, where the
+    # provider allows 1x; writing 1.0 would claim forex is capped at 1x. Both
+    # are false, and a false cap is worse than an unread one - so it stays
+    # `None` until the field can express an asset class.
+    "max_leverage": None,
+    # "Challenge / FundedNext: no hard cap, no fixed limit." Stated, not
+    # inferred - which is what separates this NOT_IMPOSED from the consistency
+    # one that had to be withdrawn.
+    "max_concurrent_positions": NOT_IMPOSED,
 }
 
 _INACTIVITY = (
@@ -386,7 +422,14 @@ RULEBOOKS: tuple[Rulebook, ...] = (
             max_daily_drawdown_pct=NOT_IMPOSED,
             max_total_drawdown_pct=0.06,
             min_trading_days=NOT_IMPOSED,
-            **{**_COMMON, "total_drawdown_trailing": True},
+            **{
+                **_COMMON,
+                "total_drawdown_trailing": True,
+                # "The Stellar Instant Account has no consistency rules." A
+                # sentence that states the absence, so this one may assert it
+                # where the challenge phases may not.
+                "max_single_day_profit_share": NOT_IMPOSED,
+            },
         ),
         source=FUNDEDNEXT_SOURCE,
         retrieved=FUNDEDNEXT_RETRIEVED,

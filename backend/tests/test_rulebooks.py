@@ -86,17 +86,36 @@ class TestTheNumbersSurviveTheChallengeBrain:
 
         assert not any("never entered" in note for note in drawdown_notes)
 
+    #: The word each unentered rule must put into `unverified`, by field.
+    UNENTERED_READS_AS = {
+        "max_leverage": "leverage",
+        "max_concurrent_positions": "concurrent-position",
+        "weekend_holding_allowed": "weekend",
+        "news_trading_allowed": "news",
+        "max_single_day_profit_share": "consistency",
+        "automated_trading_allowed": "automated",
+        "min_trading_days": "minimum trading days",
+        "max_trading_days": "maximum trading days",
+    }
+
     @pytest.mark.parametrize("book", rb.RULEBOOKS, ids=lambda b: b.key)
-    def test_the_unknown_rules_are_named_rather_than_silently_skipped(self, book):
-        """The three this file could not source have to show up somewhere. A
-        rule nobody checked and nobody mentioned is indistinguishable from a
-        rule that passed."""
+    def test_every_unentered_rule_is_named_rather_than_silently_skipped(self, book):
+        """A rule nobody checked and nobody mentioned is indistinguishable
+        from a rule that passed.
+
+        Asked of whatever is actually unentered rather than of three
+        hard-coded names. The previous version named leverage, the position
+        cap and weekend holding, and had to be rewritten by hand the day
+        FundedNext published two of them - a test that breaks when a rulebook
+        gets *better* sourced is testing the transcription, not the property.
+        This asks the property: whatever is `None`, say so.
+        """
         verdict = ch.check(book.rules, _fresh(), 1.0)
         notes = " ".join(verdict.unverified)
 
-        assert "leverage" in notes
-        assert "concurrent-position" in notes
-        assert "weekend" in notes
+        for field, word in self.UNENTERED_READS_AS.items():
+            if getattr(book.rules, field) is None:
+                assert word in notes, f"{field} is unentered but unnamed in {book.key}"
 
 
 class TestTheFundedNextFiguresAreWhatThePagePublishes:
@@ -207,15 +226,36 @@ class TestTheRulersAreTranscribedNotAssumed:
 
 
 class TestWhatThePageDoesNotSayStaysUnknown:
-    @pytest.mark.parametrize("book", rb.RULEBOOKS, ids=lambda b: b.key)
-    def test_weekend_holding_is_not_guessed(self, book):
-        """It appears on no tab. Inferring it from silence is how a rulebook
-        acquires a rule its provider never wrote."""
+    @pytest.mark.parametrize(
+        "book",
+        [b for b in rb.RULEBOOKS if b.provider == "FundedNext"],
+        ids=lambda b: b.key,
+    )
+    def test_fundednext_weekend_holding_is_allowed_because_it_is_stated(self, book):
+        """Unknown until 30 Aug, when the Symbols & Conditions tab gained
+        "overnight and weekend holding are allowed across every CFDs account,
+        at every stage". Read now, where before there was nothing to read."""
+        assert book.rules.weekend_holding_allowed is True
+
+    @pytest.mark.parametrize(
+        "book",
+        [b for b in rb.RULEBOOKS if b.provider == "FTMO"],
+        ids=lambda b: b.key,
+    )
+    def test_ftmo_weekend_holding_stays_unknown(self, book):
+        """FundedNext publishing it says nothing about FTMO. Copying it
+        across because both are prop firms is how a rulebook acquires a rule
+        its provider never wrote."""
         assert book.rules.weekend_holding_allowed is None
 
     @pytest.mark.parametrize("book", rb.RULEBOOKS, ids=lambda b: b.key)
     def test_leverage_is_not_guessed(self, book):
-        """Published per symbol, not on the rules page."""
+        """Still `None`, but for a different reason since 30 Aug: FundedNext
+        now publishes it, per asset class - forex 1:100 where crypto is 1:1
+        on the same account. The field holds one float, so any single value
+        is false for some instrument this watchlist trades, and a false cap
+        is worse than an unread one. It stays unentered until the field can
+        name an asset class."""
         assert book.rules.max_leverage is None
 
     @pytest.mark.parametrize(

@@ -918,7 +918,16 @@ def check(
 
     consistency = evaluate_consistency(rules.max_single_day_profit_share, state.daily_profits)
     consistency_ok: bool | None = None
-    if isinstance(rules.max_single_day_profit_share, float | int):
+    if rules.max_single_day_profit_share is None:
+        # Named, like every other unentered rule in this function. Until now
+        # the whole block below was gated on the rule being a number, so
+        # `evaluate_consistency` composed "the consistency rule was never
+        # entered" and the caller threw it away - the one unknown here that
+        # was silently skipped, which is the exact shape of failure this
+        # module exists to prevent. `NOT_IMPOSED` still says nothing, because
+        # a stated absence is an answer.
+        unverified.append(f"consistency rule not judged: {consistency.reason}")
+    elif isinstance(rules.max_single_day_profit_share, float | int):
         if consistency.available:
             consistency_ok = consistency.within_limit
             if consistency_ok is False and consistency.best_day_share is not None:
