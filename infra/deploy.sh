@@ -51,13 +51,39 @@ git --no-pager log --oneline -1
 # silently ignored under a sudoers policy that does not keep the environment,
 # which bakes an empty stamp into the image without failing. Passing the one
 # variable through `sudo env` is explicit and cannot be dropped.
+# The IP overlay is opt-in, and the default is the domain.
+#
+# `docker-compose.ip.yml` rebinds Caddy to port 80 alone and swaps in
+# `Caddyfile.ip`, which is right for a host reached by bare IP and wrong for
+# one reached by name: on the domain host it takes 443 down and every https
+# request returns 502. This script composed it in unconditionally, so running
+# it on trade.molido.shop broke HTTPS - which it did, on 26 Aug, for several
+# minutes until Caddy was recreated from prod.yml alone. Production has been
+# deployed by hand ever since, and that is the real cost: the one command
+# meant to make deploying safe became the one nobody could run.
+#
+# The default is the domain because the two mistakes are not equal. Wrong
+# here, HTTPS goes down on the live host; wrong the other way, an IP-only
+# host asks for a certificate it cannot get and serves plain HTTP - visible
+# at once, and it breaks nothing that was already working.
+#
+#   ./infra/deploy.sh                    # domain host (trade.molido.shop)
+#   MOLIDO_IP_ONLY=1 ./infra/deploy.sh   # host reached by bare IP
+IP_OVERLAY=()
+if [ "${MOLIDO_IP_ONLY:-0}" = "1" ]; then
+  echo "-> IP-only host: adding docker-compose.ip.yml, so no HTTPS"
+  IP_OVERLAY=(-f infra/docker-compose.ip.yml)
+else
+  echo "-> domain host: prod.yml alone, HTTPS left to Caddy"
+fi
+
 compose() {
   sudo env "BUILD_STAMP=${BUILD_STAMP}" \
     "APP_VERSION=${APP_VERSION}" \
     "GIT_COMMIT=${GIT_COMMIT}" \
     docker compose \
     -f infra/docker-compose.prod.yml \
-    -f infra/docker-compose.ip.yml \
+    "${IP_OVERLAY[@]}" \
     --env-file infra/.env.prod \
     "$@"
 }
