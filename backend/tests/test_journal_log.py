@@ -674,3 +674,42 @@ class TestTimeframesAreNotReadTogether:
         view = journal_log.summary(session)
 
         assert set(view["by_timeframe"]) >= {"H1", "M5"}
+
+
+class TestTheRateIsMeasuredOverTheTimeItWasRecording:
+    """`MEASUREMENT_STARTS_AT` is the date bad entries stop counting, not the
+    date recording began. Dividing by the whole window divides a real
+    numerator by an idle denominator, and the answer travels straight into
+    the projected date.
+    """
+
+    def entries(self, session, *, start_offset_days, n):
+        base = journal_log.MEASUREMENT_STARTS_AT + timedelta(days=start_offset_days)
+        for i in range(n):
+            e = journal_log.record_decision(
+                session, symbol="EURUSD", decision="long",
+                at=base + timedelta(hours=i), arm=ARM_RULE,
+            )
+            journal_log.close(session, e.entry_id, outcome="win", r_multiple=1.0)
+
+    def test_idle_days_before_the_first_entry_do_not_dilute_the_rate(self, session):
+        """Recording that began nine days into the window is a nine-day-
+        shorter measurement, not a slower one."""
+        self.entries(session, start_offset_days=9, n=20)
+        now = journal_log.MEASUREMENT_STARTS_AT + timedelta(days=19)
+
+        card = journal_log.readiness_of(session, now=now)
+
+        # Ten days of recording, not nineteen: 20 instants over ~10 days is
+        # about 14 a week, and over nineteen it would read as about 7.
+        assert card.instants_per_week is not None
+        assert 12.0 < card.instants_per_week < 16.0
+
+    def test_a_series_that_never_recorded_has_no_rate(self, session):
+        """No entries is not a rate of zero - it is nothing to divide."""
+        now = journal_log.MEASUREMENT_STARTS_AT + timedelta(days=30)
+
+        card = journal_log.readiness_of(session, now=now)
+
+        assert card.instants_per_week is None
+        assert card.answerable_on is None

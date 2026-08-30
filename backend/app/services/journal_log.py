@@ -555,7 +555,26 @@ def readiness_of(
         )
     ).one()
 
-    elapsed = moment - MEASUREMENT_STARTS_AT
+    # Measured over the period this series was actually recording, which is
+    # not the same as the period since the measurement window opened.
+    #
+    # `MEASUREMENT_STARTS_AT` is the date bad entries stop being counted; it
+    # is not the date recording began. On this deployment the H1 series
+    # starts nine days after it, so dividing by the whole window divided a
+    # real numerator by an idle denominator and understated the rate several
+    # times over - which then travelled straight into the projected date, the
+    # one number this function exists to publish.
+    first_at = session.execute(
+        select(func.min(JournalEntry.opened_at)).where(
+            JournalEntry.arm == ARM_RULE,
+            JournalEntry.price_source == price_source,
+            JournalEntry.timeframe == timeframe,
+            JournalEntry.opened_at >= MEASUREMENT_STARTS_AT,
+        )
+    ).scalar()
+    recording_since = max(first_at, MEASUREMENT_STARTS_AT) if first_at else None
+
+    elapsed = moment - recording_since if recording_since else timedelta(0)
     rate: float | None = None
     if elapsed >= MIN_OBSERVATION and instants:
         rate = int(instants) / (elapsed.total_seconds() / 604800.0)
