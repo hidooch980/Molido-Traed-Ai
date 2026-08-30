@@ -395,3 +395,119 @@ class TestTheControlCarriesWhateverTheRuleIsGroupedBy:
             .one()
         )
         assert "timeframe" not in control.before
+
+
+class TestThePairedReadingUsesTheBarBothArmsShare:
+    """`comparison` counts each arm on its own. Both arms are written in one
+    call on the same symbol and bar, so that reading throws away the pairing
+    the table was built to carry - and it is the pairing that the registered
+    claim's own z = 3.69 came from.
+    """
+
+    SINCE = NOW - timedelta(days=365)
+
+    def pair(self, session, *, symbol, at, rule_r, control_r):
+        """One bar, both arms, both closed - what `record_with_control` writes."""
+        for arm, r in ((ARM_RULE, rule_r), (ARM_CONTROL, control_r)):
+            entry = journal_log.record_decision(
+                session, symbol=symbol, decision="long", at=at, arm=arm
+            )
+            journal_log.close(
+                session,
+                entry.entry_id,
+                outcome="win" if r > 0 else "loss",
+                r_multiple=r,
+            )
+
+    def test_it_pairs_the_two_arms_on_one_bar(self, session):
+        self.pair(session, symbol="EURUSD", at=bar(1), rule_r=1.0, control_r=-1.0)
+        self.pair(session, symbol="EURUSD", at=bar(2), rule_r=1.0, control_r=-1.0)
+
+        paired = journal_log.paired_comparison(session, since=self.SINCE)
+
+        assert paired.pairs == 2
+        assert paired.instants == 2
+        assert paired.mean_difference == 2.0
+
+    def test_two_symbols_on_one_bar_are_one_instant(self, session):
+        """One market move ranked across two symbols is one piece of evidence
+        about that move, not two. Counting them apart is the clustering the
+        registered claim corrected for, and it cost 1.1x of significance."""
+        self.pair(session, symbol="EURUSD", at=bar(1), rule_r=1.0, control_r=-1.0)
+        self.pair(session, symbol="GBPUSD", at=bar(1), rule_r=1.0, control_r=-1.0)
+
+        paired = journal_log.paired_comparison(session, since=self.SINCE)
+
+        assert paired.pairs == 2
+        assert paired.instants == 1
+
+    def test_a_half_resolved_pair_is_not_evidence(self, session):
+        """A closed rule entry whose control is still open says nothing about
+        the difference between them, and counting it lets the two arms drift
+        apart whenever they resolve at different rates."""
+        self.pair(session, symbol="EURUSD", at=bar(1), rule_r=1.0, control_r=-1.0)
+        lonely = journal_log.record_decision(
+            session, symbol="AUDUSD", decision="long", at=bar(2), arm=ARM_RULE
+        )
+        journal_log.close(session, lonely.entry_id, outcome="win", r_multiple=1.0)
+
+        paired = journal_log.paired_comparison(session, since=self.SINCE)
+
+        assert paired.pairs == 1
+
+    def test_pairing_sees_a_consistent_edge_the_unpaired_test_misses(self, session):
+        """The point of the whole change, on data where the answer is known.
+
+        The rule beats the control by a steady 0.2R on every one of thirty
+        bars while both arms swing far more than that from bar to bar. Paired,
+        the swing cancels and the edge is unmistakable. Unpaired, each arm
+        carries its own variance and the difference in *hit rate* is zero,
+        because the rule and the control win on exactly the same bars.
+        """
+        for n in range(30):
+            # A market swing far larger than the edge, common to both arms.
+            swing = 3.0 if n % 2 else -3.0
+            # The edge itself wobbles, so the difference has real spread and
+            # the t below is a measurement rather than a division by zero.
+            edge = 0.2 + (0.02 if n % 3 == 0 else -0.01)
+            self.pair(
+                session,
+                symbol="EURUSD",
+                at=bar(n),
+                rule_r=swing + edge,
+                control_r=swing,
+            )
+
+        paired = journal_log.paired_comparison(session, since=self.SINCE)
+        unpaired = journal_log.comparison(session, since=self.SINCE)
+
+        assert paired.mean_difference is not None
+        assert 0.19 < paired.mean_difference < 0.21
+        # The swing cancels, so what is left is the edge against its own
+        # small wobble - a t far above the threshold on thirty bars.
+        assert paired.t_statistic is not None
+        assert paired.t_statistic > 1.96
+        assert paired.verdict() == "distinguishable from the control"
+        # The unpaired reading sees two arms that won on exactly the same
+        # bars, so their hit rates are identical and the edge reads as zero.
+        assert unpaired.edge == 0.0
+
+    def test_it_does_not_call_a_coarse_measurement_a_refutation(self, session):
+        """Below the threshold the verdict says "not distinguishable", never
+        "no edge". An interval holding both zero and the effect being looked
+        for means the instrument was too coarse - and calling that a
+        refutation is the same mistake as calling an overfit backtest a
+        confirmation, pointed the other way."""
+        for n in range(10):
+            self.pair(
+                session,
+                symbol="EURUSD",
+                at=bar(n),
+                rule_r=1.0 if n % 2 else -1.0,
+                control_r=-1.0 if n % 2 else 1.0,
+            )
+
+        paired = journal_log.paired_comparison(session, since=self.SINCE)
+
+        assert paired.verdict() == "not distinguishable from the control"
+        assert "no edge" not in paired.verdict()

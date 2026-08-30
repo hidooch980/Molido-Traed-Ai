@@ -28,8 +28,15 @@ export default async function JournalPage() {
   const view = await api.journal();
   if (!view.ok) return <Offline error={view.error} />;
 
-  const { arms, comparison, by_source, edge_lost_to_real_prices, why_two_series, note } =
-    view.data;
+  const {
+    arms,
+    comparison,
+    by_source,
+    paired_by_source,
+    edge_lost_to_real_prices,
+    why_two_series,
+    note,
+  } = view.data;
 
   const label = (source: string) =>
     source === "metatrader" ? t("journal.broker") : t("journal.public");
@@ -39,6 +46,7 @@ export default async function JournalPage() {
     name: label(source),
     counts: arms?.[source] ?? {},
     result: by_source?.[source],
+    paired: paired_by_source?.[source],
   })).filter((r) => (r.result?.rule?.trials ?? 0) > 0);
 
   const measured = rows.length > 0;
@@ -170,6 +178,45 @@ export default async function JournalPage() {
                 </p>
               </div>
             ))}
+          </div>
+        </Panel>
+      )}
+
+      {measured && (
+        <Panel title={t("journal.paired")} subtitle={t("journal.pairedSubtitle")}>
+          <div className="p-4 space-y-3">
+            {rows.map((row) => (
+              <div key={row.source} className="space-y-1">
+                {row.paired && row.paired.t_statistic != null ? (
+                  <>
+                    <StatusBadge
+                      status={
+                        row.paired.t_statistic >= row.paired.required_t
+                          ? "good"
+                          : "warning"
+                      }
+                      label={`${row.name} — ${row.paired.verdict}`}
+                    />
+                    <p className="text-xs ink-3 leading-relaxed">
+                      t = {row.paired.t_statistic} · {t("journal.needs")}{" "}
+                      {row.paired.required_t} ·{" "}
+                      {t("journal.pairedMean")}{" "}
+                      {row.paired.mean_difference_r ?? "—"} R ·{" "}
+                      {row.paired.instants} {t("journal.pairedInstants")} (
+                      {row.paired.pairs} {t("journal.pairedPairs")})
+                    </p>
+                  </>
+                ) : (
+                  <StatusBadge
+                    status="info"
+                    label={`${row.name} — ${t("journal.pairedNotMeasured")}`}
+                  />
+                )}
+              </div>
+            ))}
+            <p className="text-xs ink-3 leading-relaxed">
+              {t("journal.pairedCoarse")}
+            </p>
           </div>
         </Panel>
       )}

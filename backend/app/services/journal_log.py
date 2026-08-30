@@ -284,6 +284,80 @@ def comparison(
     )
 
 
+def paired_comparison(
+    session: Session,
+    *,
+    since: datetime | None = None,
+    price_source: str = SOURCE_PUBLIC,
+) -> control_module.PairedComparison:
+    """The rule against its own control, bar by bar, then averaged per instant.
+
+    `comparison` above tallies each arm separately, which is the weaker of the
+    two readings available here and the one that disagrees with how the
+    registered claim was measured. Both arms are written in one call on the
+    same symbol and bar, so the pairing exists in the table and only the query
+    had to be taught to use it.
+
+    Only pairs where both arms closed are counted. A resolved rule entry whose
+    control is still open is not evidence about the difference between them.
+    """
+    if since is None:
+        since = MEASUREMENT_STARTS_AT
+
+    query = select(
+        JournalEntry.opened_at,
+        JournalEntry.symbol,
+        JournalEntry.arm,
+        JournalEntry.r_multiple,
+    ).where(
+        JournalEntry.price_source == price_source,
+        JournalEntry.closed_at.is_not(None),
+        JournalEntry.r_multiple.is_not(None),
+        JournalEntry.arm.in_((ARM_RULE, ARM_CONTROL)),
+    )
+    if since is not None:
+        query = query.where(JournalEntry.opened_at >= since)
+
+    # (instant, symbol) -> {arm: R}. The symbol is part of the key because two
+    # instruments ranked on the same bar are two decisions, not one.
+    legs: dict[tuple[datetime, str], dict[str, float]] = {}
+    for opened_at, symbol, arm, r_multiple in session.execute(query):
+        legs.setdefault((opened_at, symbol), {})[str(arm)] = float(r_multiple)
+
+    by_instant: dict[datetime, list[float]] = {}
+    pairs = 0
+    for (opened_at, _symbol), arms in legs.items():
+        if ARM_RULE not in arms or ARM_CONTROL not in arms:
+            continue
+        pairs += 1
+        by_instant.setdefault(opened_at, []).append(arms[ARM_RULE] - arms[ARM_CONTROL])
+
+    differences = tuple(
+        sum(values) / len(values) for _instant, values in sorted(by_instant.items())
+    )
+    return control_module.PairedComparison(differences=differences, pairs=pairs)
+
+
+def _paired_dict(paired: control_module.PairedComparison) -> dict[str, Any]:
+    """Rounded for publication, with the two counts kept apart.
+
+    `instants` is the sample the t-statistic actually rests on; `pairs` is how
+    many decisions went into it. They differ whenever more than one symbol is
+    ranked on a bar, and a reader shown only the larger would think the
+    measurement is better powered than it is.
+    """
+    mean = paired.mean_difference
+    t = paired.t_statistic
+    return {
+        "instants": paired.instants,
+        "pairs": paired.pairs,
+        "mean_difference_r": round(mean, 5) if mean is not None else None,
+        "t_statistic": round(t, 3) if t is not None else None,
+        "required_t": 1.96,
+        "verdict": paired.verdict(),
+    }
+
+
 def summary(session: Session) -> dict[str, Any]:
     """What the journal holds, on both price series.
 
@@ -321,6 +395,13 @@ def summary(session: Session) -> dict[str, Any]:
 
     public = comparison(session, price_source=SOURCE_PUBLIC)
     broker = comparison(session, price_source=SOURCE_BROKER)
+    # Both readings are published, never one. The unpaired figures answer
+    # "do these two hit rates differ"; the paired ones answer the question
+    # the registered claim was measured against, on the same rows. Showing
+    # only the stronger would flatter the rule, and showing only the weaker
+    # would compare this forward window to a backtest computed differently.
+    public_paired = paired_comparison(session, price_source=SOURCE_PUBLIC)
+    broker_paired = paired_comparison(session, price_source=SOURCE_BROKER)
 
     slippage = None
     if public.edge is not None and broker.edge is not None:
@@ -335,6 +416,18 @@ def summary(session: Session) -> dict[str, Any]:
             SOURCE_PUBLIC: public.as_dict(),
             SOURCE_BROKER: broker.as_dict(),
         },
+        "paired_by_source": {
+            SOURCE_PUBLIC: _paired_dict(public_paired),
+            SOURCE_BROKER: _paired_dict(broker_paired),
+        },
+        "why_paired": (
+            "both arms are written in one call on the same symbol and bar, so "
+            "the market's own move is common to them and subtracting it "
+            "removes variance the unpaired test carries as noise. It is also "
+            "the statistic the registered claim was measured with, and a "
+            "forward result computed the other way compares methods as much "
+            "as periods"
+        ),
         "edge_lost_to_real_prices": slippage,
         "why_two_series": (
             "the broker's prices and the public feed's differ by 33-39% of the "

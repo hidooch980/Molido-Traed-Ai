@@ -963,10 +963,31 @@ export interface JournalView {
   /** The public series, kept at the top level so older readers still work. */
   comparison: JournalComparison;
   by_source: Record<string, JournalComparison>;
+  /**
+   * The same rows read the way the registered claim was measured: rule minus
+   * control on the bar they share, averaged per instant. `by_source` counts
+   * each arm on its own and so carries the market's move as noise; this
+   * subtracts it. Both are published because showing only the stronger would
+   * flatter the rule.
+   */
+  paired_by_source: Record<string, JournalPaired>;
+  why_paired: string;
   /** Broker result minus public result. Null until both have resolved. */
   edge_lost_to_real_prices: number | null;
   why_two_series: string;
   note: string;
+}
+
+export interface JournalPaired {
+  /** The sample the t rests on: one per bar, however many symbols ranked. */
+  instants: number;
+  /** How many decisions went into those instants. Always >= instants. */
+  pairs: number;
+  mean_difference_r: number | null;
+  t_statistic: number | null;
+  required_t: number;
+  /** "not measured" | "not distinguishable..." | "distinguishable..." */
+  verdict: string;
 }
 
 export interface EvidenceSeries {
