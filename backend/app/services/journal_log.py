@@ -377,6 +377,58 @@ def _timeframe_breakdown(session: Session) -> dict[str, Any]:
     return out
 
 
+def paired_by_timeframe(
+    session: Session, *, price_source: str = SOURCE_PUBLIC
+) -> dict[str, Any]:
+    """Every timeframe read separately, each beside the bar it has to clear.
+
+    The bar is not the same for all of them and pretending otherwise is how
+    today's mistake was made. `TRADED_TIMEFRAME` is the one the live rule
+    decides on and was named before any of this data existed, so it is a
+    single pre-registered question and 1.96 is its threshold. The others are
+    looks taken because the data happened to be there, and four extra looks
+    at noise produce a t of 2 often enough to matter - so they carry a
+    Bonferroni bar widened by how many of them there are.
+
+    Published per timeframe rather than as one verdict because the pooled
+    reading hid a negative H1 behind three positive fast series, and a reader
+    given one number could not have seen it.
+    """
+    from app.learning import scorecard as scorecard_module
+
+    present = sorted(
+        tf
+        for tf in (
+            session.execute(
+                select(JournalEntry.timeframe)
+                .where(
+                    JournalEntry.arm == ARM_RULE,
+                    JournalEntry.price_source == price_source,
+                    JournalEntry.closed_at.is_not(None),
+                    JournalEntry.opened_at >= MEASUREMENT_STARTS_AT,
+                )
+                .distinct()
+            )
+            .scalars()
+            .all()
+        )
+    )
+    exploratory = [tf for tf in present if tf != TRADED_TIMEFRAME]
+    widened = scorecard_module._bonferroni_z(max(1, len(exploratory)))
+
+    out: dict[str, Any] = {}
+    for tf in present:
+        paired = paired_comparison(session, price_source=price_source, timeframe=tf)
+        pre_registered = tf == TRADED_TIMEFRAME
+        required = 1.96 if pre_registered else widened
+        entry = _paired_dict(paired)
+        entry["required_t"] = round(required, 3)
+        entry["pre_registered"] = pre_registered
+        entry["verdict"] = paired.verdict(required=required)
+        out[str(tf)] = entry
+    return out
+
+
 def _paired_dict(paired: control_module.PairedComparison) -> dict[str, Any]:
     """Rounded for publication, with the two counts kept apart.
 
@@ -460,6 +512,17 @@ def summary(session: Session) -> dict[str, Any]:
             SOURCE_BROKER: _paired_dict(broker_paired),
         },
         "by_timeframe": _timeframe_breakdown(session),
+        "paired_by_timeframe": paired_by_timeframe(session),
+        "why_a_wider_bar": (
+            "H1 is the timeframe the live rule decides on and was named "
+            "before this data existed, so it is one pre-registered question "
+            "and its bar is 1.96. The faster series are looks taken because "
+            "the data was there; four extra looks at noise turn up a t near "
+            "two often enough to matter, so theirs is widened for how many "
+            "were taken. Reading an exploratory t against the pre-registered "
+            "bar is how a pooled positive number came to be reported from a "
+            "series whose traded timeframe was negative"
+        ),
         "why_one_timeframe": (
             "the worker records on every timeframe in `forward_timeframes`, "
             "and the headline is H1 alone because that is the one the live "

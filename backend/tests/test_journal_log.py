@@ -713,3 +713,78 @@ class TestTheRateIsMeasuredOverTheTimeItWasRecording:
 
         assert card.instants_per_week is None
         assert card.answerable_on is None
+
+
+class TestAnExploratoryLookCarriesAWiderBar:
+    """Today's mistake, encoded so it cannot be repeated silently: four extra
+    timeframes were read and their results treated like the one that was
+    pre-registered.
+    """
+
+    def pair(self, session, *, at, timeframe, rule_r, control_r):
+        for arm, r in ((ARM_RULE, rule_r), (ARM_CONTROL, control_r)):
+            e = journal_log.record_decision(
+                session, symbol="EURUSD", decision="long",
+                at=at, arm=arm, timeframe=timeframe,
+            )
+            journal_log.close(
+                session, e.entry_id,
+                outcome="win" if r > 0 else "loss", r_multiple=r,
+            )
+
+    def populate(self, session, timeframe, n, *, rule_r, control_r):
+        base = journal_log.MEASUREMENT_STARTS_AT + timedelta(days=1)
+        for i in range(n):
+            self.pair(
+                session, at=base + timedelta(hours=i), timeframe=timeframe,
+                rule_r=rule_r + (0.1 if i % 2 else -0.1), control_r=control_r,
+            )
+
+    def test_the_traded_timeframe_keeps_the_plain_bar(self, session):
+        self.populate(session, "H1", 8, rule_r=1.0, control_r=-1.0)
+
+        cards = journal_log.paired_by_timeframe(session)
+
+        assert cards["H1"]["pre_registered"] is True
+        assert cards["H1"]["required_t"] == 1.96
+
+    def test_a_faster_series_must_clear_more(self, session):
+        """Not because M15 is less real, but because it is one of several
+        looks nobody committed to in advance."""
+        self.populate(session, "H1", 8, rule_r=1.0, control_r=-1.0)
+        self.populate(session, "M15", 8, rule_r=1.0, control_r=-1.0)
+        self.populate(session, "M5", 8, rule_r=1.0, control_r=-1.0)
+
+        cards = journal_log.paired_by_timeframe(session)
+
+        assert cards["M15"]["pre_registered"] is False
+        assert cards["M15"]["required_t"] > 1.96
+        assert cards["M15"]["required_t"] == cards["M5"]["required_t"]
+
+    def test_the_bar_widens_with_the_number_of_looks(self, session):
+        self.populate(session, "H1", 6, rule_r=1.0, control_r=-1.0)
+        self.populate(session, "M15", 6, rule_r=1.0, control_r=-1.0)
+        one_look = journal_log.paired_by_timeframe(session)["M15"]["required_t"]
+
+        self.populate(session, "M5", 6, rule_r=1.0, control_r=-1.0)
+        self.populate(session, "M1", 6, rule_r=1.0, control_r=-1.0)
+        three_looks = journal_log.paired_by_timeframe(session)["M15"]["required_t"]
+
+        assert three_looks > one_look
+
+    def test_each_timeframe_is_judged_against_its_own_bar(self, session):
+        """The verdict string has to follow the widened threshold, or the bar
+        is decoration."""
+        self.populate(session, "H1", 6, rule_r=1.0, control_r=-1.0)
+        self.populate(session, "M15", 6, rule_r=1.0, control_r=-1.0)
+        self.populate(session, "M5", 6, rule_r=1.0, control_r=-1.0)
+        self.populate(session, "M1", 6, rule_r=1.0, control_r=-1.0)
+
+        cards = journal_log.paired_by_timeframe(session)
+
+        for tf, card in cards.items():
+            t, bar = card["t_statistic"], card["required_t"]
+            if t is None:
+                continue
+            cleared = card["verdict"] == "distinguishable from the control"
+            assert cleared == (abs(t) >= bar or t >= bar), tf
