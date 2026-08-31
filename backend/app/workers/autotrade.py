@@ -1048,7 +1048,7 @@ def run_cycle(
         str(s.get("name")): s for s in (feed.symbols().get("symbols") or [])
     }
 
-    candidates = _pending(session, moment)
+    candidates = _pending(session, moment, login=login)
     sent: list[dict[str, Any]] = []
     skipped: list[str] = []
 
@@ -1202,13 +1202,20 @@ def run_cycle(
         # between the two, the next cycle sees a decision that already has an
         # order and leaves it alone - which loses an order rather than
         # duplicating one. That is the direction to fail in.
+        # Keyed by account, because the fleet shares one journal. The old
+        # single "order" key made every decision spendable exactly once
+        # across all accounts, so whichever account ran first starved the
+        # rest - once-ever is a per-account promise, not a fleet-wide one.
         entry.during = {
             **(entry.during or {}),
-            "order": {
-                "intent_id": str(intent.intent_id),
-                "lots": lots,
-                "state": "submitting",
-                "at": moment.isoformat(),
+            "orders": {
+                **((entry.during or {}).get("orders") or {}),
+                login: {
+                    "intent_id": str(intent.intent_id),
+                    "lots": lots,
+                    "state": "submitting",
+                    "at": moment.isoformat(),
+                },
             },
         }
         session.commit()
@@ -1216,14 +1223,17 @@ def run_cycle(
         report = sender.submit(intent)
         entry.during = {
             **(entry.during or {}),
-            "order": {
-                "intent_id": str(intent.intent_id),
-                "lots": lots,
-                "state": str(report.state),
-                "ticket": report.broker_order_id,
-                "fill": report.average_price,
-                "reason": report.reason,
-                "at": moment.isoformat(),
+            "orders": {
+                **((entry.during or {}).get("orders") or {}),
+                login: {
+                    "intent_id": str(intent.intent_id),
+                    "lots": lots,
+                    "state": str(report.state),
+                    "ticket": report.broker_order_id,
+                    "fill": report.average_price,
+                    "reason": report.reason,
+                    "at": moment.isoformat(),
+                },
             },
         }
         session.commit()
@@ -1260,7 +1270,7 @@ def run_cycle(
     )
 
 
-def _pending(session: Session, moment: datetime) -> list[JournalEntry]:
+def _pending(session: Session, moment: datetime, *, login: str) -> list[JournalEntry]:
     """Fresh rule decisions on the broker series that have no order yet.
 
     The arm and the series are filters rather than options: the control is a
@@ -1304,7 +1314,7 @@ def _pending(session: Session, moment: datetime) -> list[JournalEntry]:
         if row.opened_at
         >= moment - timedelta(minutes=MAX_DECISION_AGE_MINUTES + _bar_minutes(row))
     ]
-    return [row for row in fresh if _needs_an_order(row)]
+    return [row for row in fresh if _needs_an_order(row, login)]
 
 
 #: The one rejection reason that proves nothing reached the broker.
@@ -1316,20 +1326,30 @@ def _pending(session: Session, moment: datetime) -> list[JournalEntry]:
 NEVER_SENT = "the request could not be written"
 
 
-def _needs_an_order(entry: JournalEntry) -> bool:
-    """Whether this decision still has an order owing.
+def _needs_an_order(entry: JournalEntry, login: str) -> bool:
+    """Whether this decision still owes *this account* an order.
 
-    A decision that already carries one is left alone, including a rejected
-    one: a rejection from the broker means it saw the request and said no, and
-    resending it is how one refusal becomes two positions when the refusal was
-    transient.
+    A decision that already carries one for this account is left alone,
+    including a rejected one: a rejection from the broker means it saw the
+    request and said no, and resending it is how one refusal becomes two
+    positions when the refusal was transient.
+
+    Per account, because the fleet shares one journal. Under the old
+    fleet-wide reading, whichever account ran first spent the decision and
+    the rest never traded at all - which looked exactly like the rule
+    declining, for every account but one.
 
     The single exception is a request that was never written at all. Four
     orders were lost that way on the first live cycle, to a read-only mount,
     and re-deriving them from the decisions that are still sitting there is
     exactly what a decision-first design is for.
     """
-    order = (entry.during or {}).get("order")
+    during = entry.during or {}
+    order = (during.get("orders") or {}).get(login)
+    if order is None:
+        # The pre-fleet shape: one unkeyed order, account unknown. Claimed
+        # for everyone, because guessing whose it was risks doubling it.
+        order = during.get("order")
     if not order:
         return True
     if order.get("state") != str(OrderState.REJECTED):

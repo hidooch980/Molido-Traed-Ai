@@ -255,13 +255,35 @@ class TestItNeverTradesTheSameDecisionTwice:
 
         autotrade.run_cycle(session, now=NOW, broker=FakeBroker(), bridge=FakeBridge())
 
-        assert row.during["order"]["ticket"] == "2373018703"
-        assert row.during["order"]["state"] == str(OrderState.FILLED)
+        assert row.during["orders"]["68345601"]["ticket"] == "2373018703"
+        assert row.during["orders"]["68345601"]["state"] == str(OrderState.FILLED)
+
+    def test_the_mark_is_per_account_so_the_fleet_is_not_starved(
+        self, session, live
+    ):
+        """One journal serves every account. A fleet-wide mark let whichever
+        account ran first spend the decision, and the rest never traded -
+        which looked exactly like the rule declining, for all but one."""
+        row = decide(
+            session, during={"orders": {"11111111": {"state": "filled"}}}
+        )
+        broker = FakeBroker()
+
+        report = autotrade.run_cycle(
+            session, now=NOW, broker=broker, bridge=FakeBridge()
+        )
+
+        assert report["orders"] == 1
+        assert row.during["orders"]["68345601"]["ticket"] == "2373018703"
+        assert row.during["orders"]["11111111"] == {"state": "filled"}
 
     def test_a_decision_already_marked_is_left_alone(self, session, live):
         """The mark is written before the order is sent, so a process that
         dies between the two loses an order rather than duplicating one."""
-        decide(session, during={"order": {"state": "submitting"}})
+        decide(
+            session,
+            during={"orders": {"68345601": {"state": "submitting"}}},
+        )
         broker = FakeBroker()
 
         report = autotrade.run_cycle(
