@@ -19,6 +19,9 @@ x-backend-env: &backend-env
   # bridges sit unread - which is exactly what happened on the first deploy
   # of the mounts.
   MOLIDO_MT5_BRIDGE_DIRS: ${MOLIDO_MT5_BRIDGE_DIRS:-}
+  # Which brain each account trades, "login=strategy,...". Unset means every
+  # account trades the incumbent, exactly as before brains were separable.
+  MOLIDO_ACCOUNT_STRATEGIES: ${MOLIDO_ACCOUNT_STRATEGIES:-}
   MOLIDO_ENV: production
   MOLIDO_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
   MOLIDO_REDIS_URL: redis://redis:6379/0
