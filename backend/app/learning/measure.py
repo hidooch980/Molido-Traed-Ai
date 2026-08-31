@@ -187,12 +187,28 @@ def _resolve(
     return None if verdict is None else verdict[1]
 
 
+@dataclass(frozen=True)
+class _Pick:
+    """What the loop below needs from a chosen symbol.
+
+    The incumbent's ranker produces a richer object; a candidate rule produces
+    only a name. This is the shape they meet at, so the geometry, the control
+    and the resolution downstream are identical whichever chose.
+    """
+
+    symbol: str
+    price: float
+    atr: float
+
+
 def measure(
     series: dict[str, list[Bar]],
     *,
     bar_interval: timedelta,
     min_history: int = 80,
     universe: frozenset[str] | None = crosssection.RANKED_UNIVERSE,
+    only: frozenset[str] | None = None,
+    rule: Any = None,
 ) -> Measurement:
     """Walk every instant in a stored series and score both arms.
 
@@ -200,6 +216,14 @@ def measure(
     the instant being decided on, never at the end of the series - the same
     point-in-time rule the live recorder follows, and the one whose absence
     would flatter every result here silently.
+
+    `universe` says what the rule may *rank*; `only` says what is *counted*.
+    They are separate because narrowing the ranking to one instrument does not
+    measure that instrument under the rule - it measures a cross-section of
+    one, which `rank` refuses as too thin, so every instant is skipped and the
+    answer is a confident zero. To ask what one instrument contributed, rank
+    over the real universe and count that instrument's trades: `universe` wide,
+    `only` narrow. Omitted, everything the rule picks is counted.
     """
     index_of: dict[str, dict[datetime, int]] = {
         symbol: {bar.at: i for i, bar in enumerate(bars)}
@@ -233,20 +257,48 @@ def measure(
         if len(snapshot) < crosssection.MIN_CROSS_SECTION:
             continue
 
-        ranked = crosssection.rank(
-            snapshot, at=moment, bar_interval=bar_interval, universe=universe
-        )
-        if not ranked.available:
-            continue
+        if rule is None:
+            ranked = crosssection.rank(
+                snapshot, at=moment, bar_interval=bar_interval, universe=universe
+            )
+            if not ranked.available:
+                continue
+            wanted = (
+                tuple(pick.symbol for pick in ranked.longs),
+                tuple(pick.symbol for pick in ranked.shorts),
+            )
+        else:
+            # A candidate rule names symbols; the geometry that turns a symbol
+            # into a trade stays here. Letting each rule size its own stop
+            # would make the comparison between them a comparison of stops.
+            picked = rule(snapshot, universe=universe)
+            if picked.empty:
+                continue
+            wanted = (picked.longs, picked.shorts)
 
         rule_here: list[float] = []
         control_here: list[float] = []
 
-        for picks, side_name in ((ranked.longs, "long"), (ranked.shorts, "short")):
+        for symbols, side_name in ((wanted[0], "long"), (wanted[1], "short")):
             side = 1 if side_name == "long" else -1
-            for pick in picks:
-                position = index_of[pick.symbol][moment]
-                bars = series[pick.symbol]
+            for symbol in symbols:
+                if only is not None and symbol not in only:
+                    # Ranked against everything, counted for one. Skipped here
+                    # rather than at the ranking, so the picks are the picks
+                    # the rule really made.
+                    continue
+                if symbol not in index_of or moment not in index_of[symbol]:
+                    continue
+                position = index_of[symbol][moment]
+                bars = series[symbol]
+                window = bars[max(0, position - min_history + 1) : position + 1]
+                atr_here = crosssection.average_true_range(
+                    [(b.high, b.low, b.close) for b in window]
+                )
+                if not atr_here:
+                    continue
+                price_here = bars[position].close
+                pick = _Pick(symbol=symbol, price=price_here, atr=atr_here)
                 distance = pick.atr * STOP_MULTIPLE
 
                 outcome = _resolve(

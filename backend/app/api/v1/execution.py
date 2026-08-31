@@ -29,11 +29,13 @@ from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, Query
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.api.deps import Principal, require
 from app.core.config import get_settings
 from app.core.enums import Permission
+from app.core.errors import ValidationFailedError
 from app.db.session import get_db
 from app.execution import broker as broker_module
 from app.execution import engine as engine_module
@@ -51,6 +53,7 @@ from app.execution.contracts import OrderState as State
 router = APIRouter(prefix="/execution", tags=["execution"])
 
 READ = Depends(require(Permission.READ))
+SIMULATE = Depends(require(Permission.SIMULATE))
 
 
 def _policy() -> safety_module.ExecutionPolicy:
@@ -515,4 +518,75 @@ def read_control(_: Principal = READ) -> dict[str, Any]:
             ).trials_needed(for_edge=0.005),
             "note": "per arm, at z = 1.96",
         },
+    }
+
+
+class AccountStatePayload(BaseModel):
+    """Pausing or resuming one account."""
+
+    active: bool
+    by: str = Field(min_length=1, max_length=80)
+    reason: str = Field(default="", max_length=400)
+
+
+@router.get("/accounts/state")
+def account_states(
+    _: Principal = READ,
+) -> dict[str, Any]:
+    """Which accounts may trade, and why not when they may not."""
+    from app.execution import account_switch
+    from app.providers.metatrader import bridge_dirs
+
+    return {"accounts": account_switch.listing(list(bridge_dirs()))}
+
+
+@router.post("/accounts/{account_key}/state")
+def set_account_state(
+    account_key: str,
+    payload: AccountStatePayload,
+    _: Principal = SIMULATE,
+) -> dict[str, Any]:
+    """Pause or resume one account.
+
+    Behind SIMULATE, the tier the rest of the risk configuration sits at -
+    registering a challenge account and its drawdown limits is already here.
+
+    Resuming does not place an order and cannot cause one on its own. Every
+    gate still runs afterwards: the global kill switch, the autopilot mode,
+    the risk brain, the rulebook, the news window, the spread ceiling. What
+    this grants is permission for those gates to be *asked*, not permission
+    to pass them.
+
+    It does not touch the global kill switch, and cannot. A control that could
+    quietly release a fleet-wide halt by resuming the last account would make
+    the halt mean less than it says.
+    """
+    from app.execution import account_switch
+    from app.providers.metatrader import bridge_dirs
+
+    known = bridge_dirs()
+    if account_key not in known:
+        # Named rather than created. Writing a state file for an account that
+        # does not exist leaves a control nothing reads, which is worse than
+        # refusing: somebody would set it and believe it took.
+        raise ValidationFailedError(
+            f"no account {account_key!r} is configured. Known: "
+            f"{', '.join(sorted(known)) or '(none)'}"
+        )
+
+    account_switch.write(
+        account_key,
+        active=payload.active,
+        by=payload.by,
+        reason=payload.reason,
+    )
+    allowed, why = account_switch.state(account_key)
+    return {
+        "account": account_key,
+        "active": allowed,
+        "reason": why,
+        "note": (
+            "the global kill switch is separate and is not affected by this. "
+            "While it is engaged no account trades, however this reads"
+        ),
     }

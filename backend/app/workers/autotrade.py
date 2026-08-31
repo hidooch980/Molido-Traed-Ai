@@ -47,7 +47,7 @@ import uuid
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.core.errors import ValidationFailedError
@@ -423,18 +423,18 @@ def _challenge_gate(
     and applying the wrong one is applying limits from another account.
     """
     from app.brain import challenge as challenge_brain
-    from app.brain import rulebooks
     from app.services import challenge_accounts
 
     try:
-        # `listing` hands back AccountView wrappers, not accounts. Unwrapping
-        # once here - rather than reaching through the wrapper at each read
-        # below - is what lets the rest of this function name real fields.
-        # A `getattr(view, "rulebook_key", "?")` answers "?" for every account
-        # ever registered, and then refuses the trade for a reason that is not
-        # true: the rulebook is known, the read was aimed at the wrong object.
+        # `listing` hands back AccountView wrappers, not accounts. Keeping the
+        # wrapper - rather than unwrapping to the row - is what lets the
+        # rulebook below come from the one resolution the service already did.
+        # Reading a row's field off the wrapper answers nothing, which is how
+        # "the registered rulebook '?' is not one this build knows" appeared
+        # for an account whose rulebook was perfectly well known: the read was
+        # aimed at the wrong object.
         registered = [
-            view.account
+            view
             for view in challenge_accounts.listing(
                 session, tenant_id=challenge_accounts.default_tenant(session)
             )
@@ -453,13 +453,16 @@ def _challenge_gate(
             None,
         )
 
-    account = registered[0]
-    book = rulebooks.get(str(account.rulebook_key or ""))
+    view = registered[0]
+    account = view.account
+    # Already resolved by the service. Looking it up again would be a second
+    # resolution that can disagree with the one the API reports.
+    book = view.rulebook
     if book is None:
         return (
             False,
-            f"the registered rulebook {account.rulebook_key!r} is not "
-            "one this build knows, so its limits cannot be applied",
+            f"the registered rulebook {account.rulebook_key!r} is not one this "
+            "build knows, so its limits cannot be applied",
             None,
         )
 
@@ -604,6 +607,148 @@ def _account_state(
     )
 
 
+#: Sources whose decisions may be sent, and how their levels are read.
+#:
+#: The terminal's own series is sent as recorded: its prices are the prices the
+#: order will meet. Any other series has to be re-anchored, because a level
+#: from a different feed is a different number for the same moment - the public
+#: feed and the broker sit about four pips apart on EURUSD here.
+#:
+#: The reasoning that admitted the daily series was that a 2.5x ATR stop on D1
+#: is around eighty-five pips, so four pips of feed difference is under five
+#: percent of it. Measured against the live book, the actual gap on the one
+#: recorded D1 decision was 146.7 pips - not feed difference at all, but a
+#: series that stops last December. Re-anchoring held the stop at exactly the
+#: 84.9 pips the decision asked for, where sending it as recorded would have
+#: placed it 232 pips away, nearly three times the intended risk.
+#:
+#: So the mechanism works and the admission was wrong. Both are kept: the
+#: function, because a current series will need it, and the empty set, because
+#: this one is not current.
+#: Empty, and the reason is measured rather than cautious. The daily series
+#: this was written for ends on 2025-12-31 - two hundred and thirty days stale
+#: - because the backfill loaded 2005 to 2025 and never reached this year. A
+#: decision taken on it is not a stale price, it is a stale *market*, and
+#: re-anchoring would carry last December's signal onto today's quote, which
+#: is worse than not trading it at all.
+#:
+#: The check that would have caught this on its own is decision *age*, and it
+#: does not: these entries were opened minutes ago on data from December. Age
+#: of the row is not age of the evidence.
+#:
+#: Put "dukascopy" back when the series reaches the current day, and not
+#: before. Everything below is written and tested against it.
+REANCHORED_SOURCES: frozenset[str] = frozenset({"aggregated"})
+
+#: Analysis symbols admitted from any stored series, whatever its provider.
+#:
+#: The source-level rule above exists because a decision taken on one feed's
+#: prices is a decision about a slightly different reality: the public EURUSD
+#: and the broker's sit about four pips apart, which is a fifth of an hourly
+#: stop and enough to matter.
+#:
+#: Gold is the case where that reasoning does not apply. The analysis series
+#: is the futures contract and the order is spot, so the two never had the
+#: same price and were never going to - the difference is a carry basis, which
+#: is large, stable and completely absent from a *stretch*, because a stretch
+#: is a distance measured in the instrument's own volatility. Re-anchoring
+#: then takes the level from the venue that fills.
+#:
+#: It is also the cheapest instrument the account can trade: 0.029 R to cross
+#: at hourly geometry against 0.062 for EURUSD, measured off the terminal's
+#: own book.
+REANCHORED_SYMBOLS: frozenset[str] = frozenset({"GCFUT", "SIFUT"})
+
+
+#: Analysis symbol to the symbol the order is actually placed in.
+#:
+#: The rule ranks a series; the broker fills an instrument. Usually they are
+#: the same name. For gold they are not: the public feed carries the futures
+#: contract (GC=F, stored as GCFUT) and has fifteen-minute history for it,
+#: while the terminal trades spot XAUUSD and publishes only hourly bars.
+#:
+#: They are not the same instrument, and the mapping is only defensible
+#: because of what is done with it. The *shape* crosses over - gold futures
+#: and gold spot move together closely enough that a stretch in one is a
+#: stretch in the other - and the *price* does not, which is exactly what
+#: re-anchoring already fixes: distances from the analysis series, absolute
+#: level from the venue the order will meet.
+#:
+#: Silver the same way, for the same reason.
+EXECUTION_SYMBOL: dict[str, str] = {
+    "GCFUT": "XAUUSD",
+    "SIFUT": "XAGUSD",
+}
+
+
+def _tradeable_symbol(symbol: str) -> str:
+    """The instrument an order for this analysis symbol is placed in."""
+    return EXECUTION_SYMBOL.get(symbol, symbol)
+
+
+def _levels_from_broker(
+    geometry: dict[str, Any], specification: dict[str, Any], side: str
+) -> tuple[float, float, float | None] | None:
+    """Re-anchor a decision's shape onto the broker's own price.
+
+    The *distances* are what the analysis produced - they are volatility, and
+    volatility transfers between feeds. The *price* has to come from the venue
+    the order will actually meet, or the stop sits at a level that meant
+    something on another chart.
+
+    Distances are taken from the recorded levels rather than recomputed from
+    the multiples, so a decision keeps whatever geometry it was actually
+    written with. Re-deriving them from today's constants would silently
+    re-shape an old decision if a multiple ever moved.
+
+    Returns None when the terminal has published no usable quote, because a
+    re-anchoring without a price is a guess about where the market is.
+    """
+    try:
+        recorded_entry = float(geometry["entry"])
+        recorded_stop = float(geometry["stop"])
+    except (KeyError, TypeError, ValueError):
+        return None
+
+    stop_distance = abs(recorded_entry - recorded_stop)
+    if stop_distance <= 0:
+        return None
+
+    target_distance: float | None = None
+    raw_target = geometry.get("target")
+    if raw_target is not None:
+        try:
+            target_distance = abs(float(raw_target) - recorded_entry)
+        except (TypeError, ValueError):
+            target_distance = None
+        if target_distance is not None and target_distance <= 0:
+            target_distance = None
+
+    bid, ask = specification.get("bid"), specification.get("ask")
+    # Entered at the side of the book the order will actually cross, not at a
+    # mid nobody trades: a buy lifts the ask.
+    crossed = ask if side == "long" else bid
+    if crossed is None:
+        return None
+    try:
+        entry = float(crossed)
+    except (TypeError, ValueError):
+        return None
+    if entry <= 0:
+        return None
+
+    if side == "long":
+        stop = entry - stop_distance
+        target = entry + target_distance if target_distance is not None else None
+    else:
+        stop = entry + stop_distance
+        target = entry - target_distance if target_distance is not None else None
+
+    if stop <= 0 or (target is not None and target <= 0):
+        return None
+    return entry, stop, target
+
+
 def _spread_cost_r(
     specification: dict[str, Any], stop_distance: float
 ) -> tuple[float | None, str]:
@@ -704,6 +849,77 @@ def _lots(
     if lots <= 0:
         return None, "the computed size rounds to zero lots at this risk"
     return lots, ""
+
+
+def run_all_accounts(
+    session: Session,
+    *,
+    now: datetime | None = None,
+    kill_switch: Any = None,
+) -> dict[str, Any]:
+    """Run one cycle per configured account, and let each fail alone.
+
+    Every account gets its own bridge, its own broker and its own pass through
+    every gate. Nothing is shared but the kill switch, which is deliberate: a
+    halt is a halt across the fleet, and a per-account halt that leaves the
+    others trading is not the thing anybody reaches for it to do.
+
+    **One account's failure must not stop the others.** That is the whole
+    reason this exists rather than a loop at the call site. A terminal that is
+    logged out, a bridge that is not mounted, a rulebook that no longer
+    resolves - each of those is a fact about one account, and a fleet that
+    stops on the first of them is a fleet that stops on its weakest member.
+
+    So every account is caught individually and its failure is reported beside
+    the others' results rather than raised. What is *not* caught is a kill
+    switch refusal, because that is not a failure - it is the answer.
+    """
+    from app.providers.metatrader import MetaTraderBridge, bridge_dirs
+
+    moment = (now or datetime.now(UTC)).astimezone(UTC)
+    accounts = bridge_dirs()
+
+    from app.execution import account_switch
+
+    reports: dict[str, Any] = {}
+    sent = 0
+    for key, directory in sorted(accounts.items()):
+        allowed, why = account_switch.state(key)
+        if not allowed:
+            # Skipped, not failed. A paused account and a broken one look the
+            # same in a count of zero orders, and only one of them wants
+            # somebody to go and look at it.
+            reports[key] = {"orders": 0, "skipped": why}
+            continue
+        try:
+            report = run_cycle(
+                session,
+                now=moment,
+                broker=MetaTraderBroker(directory=directory),
+                bridge=MetaTraderBridge(directory=directory),
+                kill_switch=kill_switch,
+            )
+        except Exception as problem:  # noqa: BLE001 - one account, not the fleet
+            reports[key] = {
+                "orders": 0,
+                "refused": (
+                    f"{type(problem).__name__} while trading this account. The "
+                    "others were unaffected"
+                ),
+            }
+            continue
+        reports[key] = report
+        sent += int(report.get("orders") or 0)
+
+    return {
+        "accounts": len(accounts),
+        "orders": sent,
+        "by_account": reports,
+        "note": (
+            "each account ran its own gates against its own terminal. A "
+            "failure here is about one account and says which"
+        ),
+    }
 
 
 def run_cycle(
@@ -837,7 +1053,11 @@ def run_cycle(
     skipped: list[str] = []
 
     for entry in candidates:
-        if entry.symbol in held:
+        # Resolved before the per-symbol cap, because the cap is about the
+        # instrument the account will actually carry: a GCFUT decision and
+        # an XAUUSD position are the same exposure under two names.
+        traded_as = _tradeable_symbol(entry.symbol)
+        if traded_as in held:
             skipped.append(
                 f"{entry.symbol}: the account already holds a position in it, "
                 "and a second one doubles an exposure that was sized for one"
@@ -857,13 +1077,27 @@ def run_cycle(
             skipped.append(f"{entry.symbol}: the decision recorded no levels")
             continue
 
-        specification = specifications.get(entry.symbol)
+        specification = specifications.get(traded_as)
         if not specification:
             skipped.append(
                 f"{entry.symbol}: the terminal publishes no contract "
                 "specification, so the size cannot be computed from it"
             )
             continue
+
+        # A decision from another feed carries that feed's prices, and the
+        # public series sits about four pips from the broker on EURUSD here.
+        # Its *shape* is volatility and transfers; its absolute levels do not.
+        if entry.price_source != SOURCE_BROKER:
+            reanchored = _levels_from_broker(geometry, specification, entry.decision)
+            if reanchored is None:
+                skipped.append(
+                    f"{entry.symbol}: recorded on {entry.price_source} and the "
+                    "terminal publishes no quote to re-anchor it onto, so its "
+                    "levels would be another feed's prices"
+                )
+                continue
+            price, stop, target = reanchored
 
         clear, news_reason = _news_gate(entry.symbol, moment, releases)
         if not clear:
@@ -922,7 +1156,9 @@ def run_cycle(
 
         try:
             intent = OrderIntent(
-                symbol=entry.symbol,
+                # The instrument the broker fills, which is not always the
+                # one the rule ranked. See EXECUTION_SYMBOL.
+                symbol=traded_as,
                 side=OrderSide.BUY if entry.decision == "long" else OrderSide.SELL,
                 order_type=OrderType.MARKET,
                 risk_r=_risk_percent() / 100.0,
@@ -1046,7 +1282,16 @@ def _pending(session: Session, moment: datetime) -> list[JournalEntry]:
         select(JournalEntry)
         .where(
             JournalEntry.arm == ARM_RULE,
-            JournalEntry.price_source == SOURCE_BROKER,
+            # The terminal's own series, plus any series wide enough to be
+            # re-anchored onto the broker's price. See REANCHORED_SOURCES.
+            or_(
+                JournalEntry.price_source.in_(
+                    [SOURCE_BROKER, *sorted(REANCHORED_SOURCES)]
+                ),
+                # Admitted on the instrument rather than on the feed. See
+                # REANCHORED_SYMBOLS for why gold is the exception.
+                JournalEntry.symbol.in_(sorted(REANCHORED_SYMBOLS)),
+            ),
             JournalEntry.closed_at.is_(None),
             JournalEntry.opened_at >= cutoff,
         )

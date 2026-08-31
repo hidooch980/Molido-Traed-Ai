@@ -1026,16 +1026,24 @@ class TestThePropRulebookGovernsWhenThereIsOne:
     @staticmethod
     def account(**over):
         """Wrapped, because `listing` returns AccountView and never a bare
-        account. A stand-in of the wrong shape is how the gate came to read
-        `rulebook_key` off a wrapper that has none, answer "?", and refuse
-        every trade against a rulebook it knew perfectly well."""
+        account - and the real class rather than a look-alike, because a
+        stand-in of the wrong shape is how the gate came to read `rulebook_key`
+        off a wrapper that has none, answer "?", and refuse every trade against
+        a rulebook it knew perfectly well.
+
+        The rulebook is resolved here for the same reason `listing` resolves
+        it: the gate now reads the book off the view, so a view carrying None
+        would make every test below measure a missing rulebook rather than the
+        rule it was written for."""
         from types import SimpleNamespace
 
+        from app.brain import rulebooks
         from app.services.challenge_accounts import AccountView
 
+        key = over.pop("rulebook_key", "ftmo-challenge-2step-phase1")
         base = dict(
             is_active=True,
-            rulebook_key="ftmo-challenge-2step-phase1",
+            rulebook_key=key,
             starting_balance=10_000.0,
             label="test",
             # Carried because the real row carries it. A stand-in missing a
@@ -1044,7 +1052,7 @@ class TestThePropRulebookGovernsWhenThereIsOne:
             currency_per_r=None,
         )
         base.update(over)
-        return AccountView(account=SimpleNamespace(**base), rulebook=None)
+        return AccountView(account=SimpleNamespace(**base), rulebook=rulebooks.get(key))
 
     def registry(self, monkeypatch, rows):
         from app.services import challenge_accounts
@@ -1580,3 +1588,331 @@ class TestTheAccountWideNewsAnswer:
         """The engine gates on an unknown restriction, which is the same
         position the per-symbol check takes and for the same reason."""
         assert autotrade._any_high_impact_now(NEWS_NOW, None) is None
+
+
+class TestADecisionFromAnotherFeedIsReanchored:
+    """The daily series is measured on dukascopy and the order meets the
+    broker. Those two disagree by about four pips on EURUSD here, so a level
+    taken from one and sent to the other is a stop at a price that meant
+    something on a different chart."""
+
+    GEOMETRY = {"entry": 1.37241, "stop": 1.36392, "target": 1.38090}
+    SPEC = {"bid": 1.37500, "ask": 1.37514}
+
+    def test_a_long_enters_at_the_ask(self):
+        """A buy lifts the ask. Entering at a mid nobody trades understates
+        the cost by half the spread on every decision."""
+        entry, _, _ = autotrade._levels_from_broker(self.GEOMETRY, self.SPEC, "long")
+
+        assert entry == 1.37514
+
+    def test_a_short_enters_at_the_bid(self):
+        entry, _, _ = autotrade._levels_from_broker(self.GEOMETRY, self.SPEC, "short")
+
+        assert entry == 1.37500
+
+    def test_the_stop_distance_survives_the_move(self):
+        """The distance is what the analysis produced - it is volatility, and
+        volatility transfers between feeds. Only the anchor changes."""
+        recorded = abs(self.GEOMETRY["entry"] - self.GEOMETRY["stop"])
+
+        entry, stop, _ = autotrade._levels_from_broker(self.GEOMETRY, self.SPEC, "long")
+
+        assert abs(entry - stop) == pytest.approx(recorded)
+
+    def test_the_target_distance_survives_too(self):
+        recorded = abs(self.GEOMETRY["target"] - self.GEOMETRY["entry"])
+
+        entry, _, target = autotrade._levels_from_broker(
+            self.GEOMETRY, self.SPEC, "long"
+        )
+
+        assert abs(target - entry) == pytest.approx(recorded)
+
+    def test_the_stop_sits_below_a_long_and_above_a_short(self):
+        _, long_stop, _ = autotrade._levels_from_broker(
+            self.GEOMETRY, self.SPEC, "long"
+        )
+        short_entry, short_stop, _ = autotrade._levels_from_broker(
+            self.GEOMETRY, self.SPEC, "short"
+        )
+
+        assert long_stop < self.SPEC["ask"]
+        assert short_stop > short_entry
+
+    def test_distances_come_from_the_recorded_levels_not_the_constants(self):
+        """A decision keeps whatever geometry it was written with. Re-deriving
+        from today's multiples would silently re-shape an old decision if one
+        ever moved."""
+        odd = {"entry": 100.0, "stop": 97.0, "target": 106.0}
+
+        entry, stop, target = autotrade._levels_from_broker(
+            odd, {"bid": 200.0, "ask": 200.0}, "long"
+        )
+
+        assert entry - stop == pytest.approx(3.0)
+        assert target - entry == pytest.approx(6.0)
+
+    def test_no_quote_refuses_rather_than_guessing_where_the_market_is(self):
+        assert autotrade._levels_from_broker(self.GEOMETRY, {}, "long") is None
+        assert autotrade._levels_from_broker(self.GEOMETRY, {"bid": None}, "long") is None
+
+    def test_a_zero_stop_distance_refuses(self):
+        flat = {"entry": 1.1, "stop": 1.1}
+
+        assert autotrade._levels_from_broker(flat, self.SPEC, "long") is None
+
+    def test_a_missing_target_is_carried_as_missing(self):
+        """Not invented. A decision written without one is a decision without
+        one, and a target conjured here is a level nobody chose."""
+        _, _, target = autotrade._levels_from_broker(
+            {"entry": 1.37241, "stop": 1.36392}, self.SPEC, "long"
+        )
+
+        assert target is None
+
+    def test_a_broker_decision_is_left_alone(self):
+        """Its prices are the prices the order will meet, so re-anchoring
+        would move a level that was already correct."""
+        from app.models.journal import SOURCE_BROKER
+
+        assert SOURCE_BROKER not in autotrade.REANCHORED_SOURCES
+
+    def test_the_daily_fold_is_admitted(self):
+        """Withdrawn once on a -0.0201 R reading, then re-admitted when that
+        reading turned out not to be significant at t = -0.48 - it was silence
+        rather than a verdict, and silence is not evidence against.
+
+        What decided it: the held-out half of the twenty-one years, 2017-2025,
+        which selection never saw. The rule measures +0.0613 R at t = +4.06
+        there, stronger than the half it was fitted on."""
+        assert autotrade.REANCHORED_SOURCES == frozenset({"aggregated"})
+
+    def test_the_stale_provider_is_not_admitted(self):
+        """It still holds the twenty-one years the edge was measured on, and
+        it still cannot say anything about today."""
+        assert "dukascopy" not in autotrade.REANCHORED_SOURCES
+
+    def test_the_mechanism_is_kept_for_a_series_that_is_current(self):
+        """The admission was wrong; the arithmetic was not. Sending the one
+        recorded decision as-is would have placed its stop 232 pips away
+        instead of the 84.9 it asked for."""
+        entry, stop, _ = autotrade._levels_from_broker(
+            self.GEOMETRY, {"bid": 1.38691, "ask": 1.38708}, "long"
+        )
+
+        assert (entry - stop) * 10000 == pytest.approx(84.9, abs=0.1)
+
+
+class TestTheDailySeriesIsAdmittedAndReAnchored:
+    """The daily series is the one timeframe with a measured edge, and it
+    comes from a fold of hourly bars rather than from the terminal. Its levels
+    are another feed's numbers, so they are re-anchored onto the broker's own
+    price before anything is sent."""
+
+    def test_the_folded_series_reaches_today_and_is_admitted(self):
+        """Reaching today was the blocker the fold was built to clear, and
+        the measurement that withdrew it was not significant."""
+        assert "aggregated" in autotrade.REANCHORED_SOURCES
+
+    def test_the_terminal_series_is_not_in_the_re_anchored_set(self):
+        """Its prices are the prices the order will meet, so re-anchoring them
+        onto themselves would be a rounding error looking for a purpose."""
+        from app.models.journal import SOURCE_BROKER
+
+        assert SOURCE_BROKER not in autotrade.REANCHORED_SOURCES
+
+    def test_the_hourly_public_series_is_still_refused(self):
+        """A 2.5x ATR stop on H1 is around twenty pips and the feeds sit four
+        apart - a fifth of the stop. The same reasoning that admits D1
+        excludes this."""
+        assert "yfinance" not in autotrade.REANCHORED_SOURCES
+
+    def test_a_daily_decision_keeps_its_distances(self):
+        """Volatility transfers between feeds; absolute price does not."""
+        geometry = {"entry": 1.37241, "stop": 1.36392, "target": 1.38090}
+        quote = {"bid": 1.37500, "ask": 1.37514}
+
+        entry, stop, target = autotrade._levels_from_broker(geometry, quote, "long")
+
+        assert entry == quote["ask"]
+        assert round(entry - stop, 5) == round(
+            geometry["entry"] - geometry["stop"], 5
+        )
+        assert round(target - entry, 5) == round(
+            geometry["target"] - geometry["entry"], 5
+        )
+
+
+class TestTheFleetLetsEachAccountFailAlone:
+    """A terminal that is logged out, a bridge that is not mounted, a rulebook
+    that no longer resolves - each is a fact about one account, and a fleet
+    that stops on the first of them stops on its weakest member."""
+
+    def dirs(self, monkeypatch, mapping):
+        from app.providers import metatrader
+
+        monkeypatch.setattr(metatrader, "bridge_dirs", lambda *a, **k: mapping)
+
+    def test_every_configured_account_gets_a_cycle(self, session, monkeypatch, live):
+        import pathlib
+
+        from app.workers import autotrade as mod
+
+        self.dirs(monkeypatch, {"one": pathlib.Path("/a"), "two": pathlib.Path("/b")})
+        seen: list[str] = []
+
+        def fake_cycle(_session, **kwargs):
+            seen.append(str(kwargs["bridge"].directory))
+            return {"orders": 1}
+
+        monkeypatch.setattr(mod, "run_cycle", fake_cycle)
+        report = mod.run_all_accounts(session)
+
+        assert report["accounts"] == 2
+        assert report["orders"] == 2
+        assert len(seen) == 2
+
+    def test_one_account_raising_does_not_stop_the_others(
+        self, session, monkeypatch, live
+    ):
+        import pathlib
+
+        from app.workers import autotrade as mod
+
+        self.dirs(monkeypatch, {"broken": pathlib.Path("/a"), "fine": pathlib.Path("/b")})
+
+        def fake_cycle(_session, **kwargs):
+            if str(kwargs["bridge"].directory).endswith("a"):
+                raise RuntimeError("terminal logged out")
+            return {"orders": 3}
+
+        monkeypatch.setattr(mod, "run_cycle", fake_cycle)
+        report = mod.run_all_accounts(session)
+
+        assert report["orders"] == 3
+        assert "RuntimeError" in report["by_account"]["broken"]["refused"]
+        assert report["by_account"]["fine"]["orders"] == 3
+
+    def test_the_failure_says_the_others_were_unaffected(
+        self, session, monkeypatch, live
+    ):
+        import pathlib
+
+        from app.workers import autotrade as mod
+
+        self.dirs(monkeypatch, {"broken": pathlib.Path("/a")})
+        monkeypatch.setattr(
+            mod, "run_cycle", lambda *a, **k: (_ for _ in ()).throw(OSError("no mount"))
+        )
+
+        report = mod.run_all_accounts(session)
+
+        assert "others were unaffected" in report["by_account"]["broken"]["refused"]
+
+    def test_each_account_gets_its_own_broker_and_bridge(
+        self, session, monkeypatch, live
+    ):
+        """Sharing either would send one account's orders to another's
+        terminal, which every file involved would make look correct."""
+        import pathlib
+
+        from app.workers import autotrade as mod
+
+        self.dirs(monkeypatch, {"one": pathlib.Path("/a"), "two": pathlib.Path("/b")})
+        pairs: list[tuple[str, str]] = []
+
+        def fake_cycle(_session, **kwargs):
+            pairs.append(
+                (str(kwargs["bridge"].directory), str(kwargs["broker"].directory))
+            )
+            return {"orders": 0}
+
+        monkeypatch.setattr(mod, "run_cycle", fake_cycle)
+        mod.run_all_accounts(session)
+
+        assert len({p[0] for p in pairs}) == 2
+        assert all(bridge == broker for bridge, broker in pairs)
+
+
+class TestOneAccountCanBePausedWithoutTheOthers:
+    """The global kill switch is a fleet-wide halt. This is the other thing:
+    one account paused while the rest carry on, because a terminal is being
+    reconnected or a challenge has been failed."""
+
+    def dirs(self, monkeypatch, mapping):
+        from app.providers import metatrader
+
+        monkeypatch.setattr(metatrader, "bridge_dirs", lambda *a, **k: mapping)
+
+    def test_a_paused_account_is_skipped_and_the_others_run(
+        self, session, monkeypatch, live, tmp_path
+    ):
+        import pathlib
+
+        from app.execution import account_switch
+        from app.workers import autotrade as mod
+
+        self.dirs(monkeypatch, {"one": pathlib.Path("/a"), "two": pathlib.Path("/b")})
+        account_switch.write("one", active=False, by="aziz", directory=tmp_path)
+        original = account_switch.state
+        monkeypatch.setattr(
+            account_switch, "state", lambda key: original(key, tmp_path)
+        )
+        monkeypatch.setattr(mod, "run_cycle", lambda *a, **k: {"orders": 2})
+
+        report = mod.run_all_accounts(session)
+
+        assert report["by_account"]["one"]["orders"] == 0
+        assert "paused" in report["by_account"]["one"]["skipped"]
+        assert report["by_account"]["two"]["orders"] == 2
+
+    def test_a_pause_is_told_apart_from_a_failure(
+        self, session, monkeypatch, live, tmp_path
+    ):
+        """Both are zero orders, and only one of them wants somebody to go
+        and look at it."""
+        import pathlib
+
+        from app.execution import account_switch
+        from app.workers import autotrade as mod
+
+        self.dirs(monkeypatch, {"one": pathlib.Path("/a")})
+        account_switch.write("one", active=False, by="aziz", directory=tmp_path)
+        original = account_switch.state
+        monkeypatch.setattr(
+            account_switch, "state", lambda key: original(key, tmp_path)
+        )
+
+        report = mod.run_all_accounts(session)
+
+        assert "skipped" in report["by_account"]["one"]
+        assert "refused" not in report["by_account"]["one"]
+
+
+class TestGoldIsAdmittedOnTheInstrumentNotTheFeed:
+    """The source rule exists because a decision on one feed's prices is a
+    decision about a slightly different reality. Gold is where that reasoning
+    does not apply: the analysis series is the futures contract and the order
+    is spot, so the two never had the same price and were never going to."""
+
+    def test_the_futures_symbol_is_admitted(self):
+        assert "GCFUT" in autotrade.REANCHORED_SYMBOLS
+
+    def test_it_is_placed_in_the_instrument_the_broker_fills(self):
+        assert autotrade._tradeable_symbol("GCFUT") == "XAUUSD"
+        assert autotrade._tradeable_symbol("SIFUT") == "XAGUSD"
+
+    def test_an_ordinary_symbol_is_unchanged(self):
+        assert autotrade._tradeable_symbol("EURUSD") == "EURUSD"
+
+    def test_no_currency_pair_is_admitted_by_symbol(self):
+        """The exception is about an instrument whose two series were never
+        the same price, not a way around the feed rule."""
+        for pair in ("EURUSD", "GBPUSD", "USDJPY"):
+            assert pair not in autotrade.REANCHORED_SYMBOLS
+
+    def test_the_position_cap_counts_the_traded_name(self):
+        """A GCFUT decision and an XAUUSD position are the same exposure under
+        two names, and a cap that misses that opens both."""
+        assert autotrade._tradeable_symbol("GCFUT") in {"XAUUSD"}

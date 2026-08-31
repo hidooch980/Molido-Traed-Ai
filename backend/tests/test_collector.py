@@ -635,3 +635,101 @@ class TestWhichTimeframesTheRuleDecidesOn:
         monkeypatch.setattr(get_settings(), "forward_timeframes", "", raising=False)
 
         assert _forward_timeframes() == (Timeframe.H1,)
+
+
+class TestEachTimeframeAsksAProviderThatCarriesIt:
+    """Asking a provider for a timeframe it does not hold costs a query and
+    returns "considered: none", which reads in the report exactly like a
+    cross-section too small to rank - a real and different condition."""
+
+    def test_the_daily_series_comes_from_one_provider_not_every_feed(self):
+        """The public feed carries no D1 here and the terminal publishes only
+        what the expert was compiled to write, so asking them costs a query
+        and returns nothing. Which provider it is is settled below."""
+        from app.core.enums import Timeframe
+        from app.workers.collector import _sources_for
+
+        assert len(_sources_for(Timeframe.D1)) == 1
+
+    def test_the_intraday_timeframes_ask_both_live_feeds(self):
+        from app.core.enums import Timeframe
+        from app.models.journal import SOURCE_BROKER, SOURCE_PUBLIC
+        from app.workers.collector import _sources_for
+
+        for timeframe in (Timeframe.H1, Timeframe.M15, Timeframe.M5):
+            assert _sources_for(timeframe) == (SOURCE_PUBLIC, SOURCE_BROKER)
+
+    def test_the_daily_series_never_asks_the_terminal(self):
+        """A broker D1 decision would be tradeable, and the expert publishes
+        no D1 - so it would be a decision on a series nobody is watching."""
+        from app.core.enums import Timeframe
+        from app.models.journal import SOURCE_BROKER
+        from app.workers.collector import _sources_for
+
+        assert SOURCE_BROKER not in _sources_for(Timeframe.D1)
+
+
+class TestTheDailySeriesComesFromWhatCanReachToday:
+    """The deep-history provider carries the twenty-one years the historical
+    result was measured on and stops at the end of 2025. A series that cannot
+    reach today cannot carry forward evidence, whatever it proved about the
+    past."""
+
+    def test_daily_recording_reads_the_live_fold(self):
+        from app.core.enums import Timeframe
+        from app.workers.collector import LIVE_DAILY_SOURCE, _sources_for
+
+        assert _sources_for(Timeframe.D1) == (LIVE_DAILY_SOURCE,)
+
+    def test_it_no_longer_reads_the_stale_provider(self):
+        from app.core.enums import Timeframe
+        from app.workers.collector import DEEP_HISTORY_SOURCE, _sources_for
+
+        assert DEEP_HISTORY_SOURCE not in _sources_for(Timeframe.D1)
+
+    def test_the_two_are_different_providers(self):
+        """Recorded separately on purpose. The rule is cross-sectional and
+        should not care whose ticks built the bar, but 'should not' is a claim
+        about the rule rather than a measurement of it - so the forward series
+        can be compared against the historical one instead of assumed to
+        continue it."""
+        from app.workers.collector import DEEP_HISTORY_SOURCE, LIVE_DAILY_SOURCE
+
+        assert DEEP_HISTORY_SOURCE != LIVE_DAILY_SOURCE
+
+    def test_the_fold_is_scheduled_nightly(self):
+        from app.workers.collector import WorkerSettings
+
+        names = [
+            getattr(job.coroutine, "__name__", "") for job in WorkerSettings.cron_jobs
+        ]
+
+        assert "aggregate_daily_job" in names
+
+    def test_it_folds_just_after_the_day_it_folds_has_ended(self):
+        """The window matters more than the tidiness. At 23:10 the current day
+        is unfinished, so the fold reaches only the previous one - whose bar
+        closed twenty-three hours earlier, outside the freshness window, so
+        the decision could never be traded. A UTC day ending at 00:00 UTC is
+        complete by definition: the session spanning midnight belongs to the
+        next one."""
+        from app.workers.collector import AGGREGATE_HOUR
+
+        assert AGGREGATE_HOUR == 0
+
+    def test_the_fold_lands_inside_the_freshness_window(self):
+        """The property the hour exists for, checked rather than asserted."""
+        from datetime import UTC, datetime, timedelta
+
+        from app.workers.autotrade import MAX_DECISION_AGE_MINUTES
+        from app.workers.collector import AGGREGATE_HOUR
+
+        run = datetime(2026, 8, 18, AGGREGATE_HOUR, 10, tzinfo=UTC)
+        # daily_from_hourly drops any day at or after `today`, so the newest
+        # bar it can build opened the day before the run.
+        newest = run.date() - timedelta(days=1)
+        closed = datetime(newest.year, newest.month, newest.day, tzinfo=UTC) + timedelta(
+            days=1
+        )
+
+        assert run <= closed + timedelta(minutes=MAX_DECISION_AGE_MINUTES)

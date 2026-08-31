@@ -1,3 +1,4 @@
+import { LiveTrading } from "@/components/LiveTrading";
 import { Offline, Panel, Stat, StatusBadge } from "@/components/ui";
 import { api } from "@/lib/api";
 import { getT } from "@/lib/locale";
@@ -17,6 +18,16 @@ export default async function PositionsPage() {
   const { t } = await getT();
   const [view, realised] = await Promise.all([api.positions(), api.realised(30)]);
   if (!view.ok) return <Offline error={view.error} />;
+
+  // Handed to the live view as its first reading, so the page does not open
+  // empty and fill in a second later - on a page about open risk, a moment of
+  // "no positions" is the wrong thing to show even briefly.
+  const firstReading = {
+    stamped_at: new Date().toISOString(),
+    positions: view.data,
+    realised: realised.ok ? realised.data : null,
+    unreachable: realised.ok ? [] : ["realised"],
+  };
 
   const { available, reason, positions, account, note } = view.data;
 
@@ -57,6 +68,11 @@ export default async function PositionsPage() {
         <p className="text-xs ink-3 mt-0.5 max-w-3xl">{t("positions.subtitle")}</p>
       </div>
       </header>
+
+      {/* Refreshes itself while the tab is open. Everything below is correct
+          as of the request; this is correct as of five seconds ago and says
+          which. */}
+      <LiveTrading initial={firstReading as never} />
 
       {!available ? (
         /* Not an empty table. "No positions" and "we cannot see the account"
