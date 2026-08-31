@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { translator, type Locale } from "@/lib/i18n";
 import type { Theme } from "@/lib/locale";
@@ -103,6 +103,46 @@ export default function Shell({
   // nothing about the second visit.
   const [query, setQuery] = useState("");
   const t = translator(locale);
+  // The live execution posture, read from the engine rather than asserted.
+  // This strip used to be a hardcoded "no execution path built" from the era
+  // when that was true - which made the site lie about itself the day the
+  // path existed. Null means "could not read", and the strip then says the
+  // old sentence rather than inventing a mode.
+  const [posture, setPosture] = useState<{ mode: string; live: boolean } | null>(null);
+  useEffect(() => {
+    let stop = false;
+    const read = async () => {
+      try {
+        const r = await fetch("/api/v1/execution/autopilot", {
+          credentials: "include",
+          headers: { accept: "application/json" },
+        });
+        if (!r.ok) return;
+        const body = await r.json();
+        if (!stop && typeof body.mode === "string") {
+          setPosture({ mode: body.mode, live: body.would_send_live_orders === true });
+        }
+      } catch {
+        /* unreadable is shown as the old static sentence, not a guess */
+      }
+    };
+    read();
+    const timer = setInterval(read, 60_000);
+    return () => {
+      stop = true;
+      clearInterval(timer);
+    };
+  }, []);
+  const postureText =
+    posture === null
+      ? t("app.noExecution")
+      : posture.mode === "live"
+        ? posture.live
+          ? t("app.postureLiveSending")
+          : t("app.postureLive")
+        : posture.mode === "paper"
+          ? t("app.posturePaper")
+          : t("app.postureHalted");
   // Counted from the nav table on every render rather than typed into the
   // translation file, so the badge cannot claim a page that was never wired.
   const { linked, total } = reachable();
@@ -193,9 +233,9 @@ export default function Shell({
           </span>
         </div>
 
-        <div className="posture-strip" title={t("app.noExecution")}>
+        <div className="posture-strip" title={postureText}>
           <span className="posture-dot" />
-          <span className="posture-text">{t("app.noExecution")}</span>
+          <span className="posture-text">{postureText}</span>
         </div>
 
         <div className="flex-1" />
@@ -397,7 +437,7 @@ export default function Shell({
               build {process.env.NEXT_PUBLIC_BUILD || "dev"}
             </span>
             <span className="flex-1" />
-            <span>{t("app.noExecution")}</span>
+            <span>{postureText}</span>
           </footer>
         </div>
       </div>

@@ -555,6 +555,20 @@ export interface AccountsView {
     equity: number | null;
     currency: string | null;
   };
+  /** One row per configured terminal, read from each terminal's own bridge. */
+  fleet?: Array<{
+    terminal: string;
+    connected: boolean;
+    reason?: string | null;
+    login?: string | null;
+    server?: string | null;
+    is_demo?: boolean;
+    balance?: number | null;
+    equity?: number | null;
+    floating_pl?: number | null;
+    margin?: number | null;
+    currency?: string | null;
+  }>;
 }
 
 export interface ChallengeVerdictView {

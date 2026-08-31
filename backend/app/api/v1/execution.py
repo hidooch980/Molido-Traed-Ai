@@ -285,6 +285,42 @@ def read_accounts(_: Principal = READ) -> dict[str, Any]:
         "equity": published.get("equity"),
         "currency": published.get("currency"),
     }
+    # Every configured terminal, not just the built-in one. The single
+    # `live_account` above predates the fleet and stays for the pages that
+    # read it; this is the row-per-account truth the fleet pages want, read
+    # from each terminal's own bridge so a disconnected one is named rather
+    # than shown as zeros.
+    from app.providers.metatrader import bridge_dirs
+
+    fleet: list[dict[str, Any]] = []
+    for key, directory in sorted(bridge_dirs().items()):
+        seen = MetaTraderBridge(directory=directory).account()
+        if not seen.get("available"):
+            fleet.append(
+                {
+                    "terminal": key,
+                    "connected": False,
+                    "reason": seen.get("reason"),
+                }
+            )
+            continue
+        balance = float(seen.get("balance") or 0.0)
+        equity = float(seen.get("equity") or 0.0)
+        fleet.append(
+            {
+                "terminal": key,
+                "connected": True,
+                "login": str(seen.get("login") or "") or None,
+                "server": seen.get("server"),
+                "is_demo": seen.get("trade_mode") == 0,
+                "balance": balance,
+                "equity": equity,
+                "floating_pl": round(equity - balance, 2),
+                "margin": seen.get("margin"),
+                "currency": seen.get("currency"),
+            }
+        )
+    payload["fleet"] = fleet
     payload["global_kill_switch_defaults_engaged"] = True
     payload["note"] = (
         "exposure is tracked per account and never as a single total: 4 R on a "

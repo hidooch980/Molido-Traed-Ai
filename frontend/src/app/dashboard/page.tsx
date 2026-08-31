@@ -194,7 +194,8 @@ export default async function HomePage() {
       >
         {!accounts.ok || !challenges.ok ? (
           <Empty>{t("home.accountsUnavailable")}</Empty>
-        ) : !accounts.data.live_account.login &&
+        ) : !(accounts.data.fleet ?? []).some((row) => row.connected) &&
+          !accounts.data.live_account.login &&
           challenges.data.accounts.length === 0 ? (
           <Empty>{t("home.noAccounts")}</Empty>
         ) : (
@@ -206,45 +207,58 @@ export default async function HomePage() {
                   <th>{t("home.accountType")}</th>
                   <th>{t("home.accountWhere")}</th>
                   <th className="num">{t("home.accountBalance")}</th>
+                  <th className="num">{t("home.accountEquity")}</th>
+                  <th className="num">{t("home.accountPL")}</th>
                   <th>{t("home.accountState")}</th>
                 </tr>
               </thead>
               <tbody>
-                {accounts.data.live_account.login && (
-                  <tr>
-                    <td className="font-semibold" dir="ltr">
-                      {accounts.data.live_account.login}
-                    </td>
-                    <td className="ink-2">
-                      {accounts.data.live_account.is_demo
-                        ? t("home.demo")
-                        : t("home.realMoney")}
-                    </td>
-                    <td className="ink-3" dir="ltr">
-                      {accounts.data.live_account.server ?? "—"}
-                    </td>
-                    <td className="num" dir="ltr">
-                      {accounts.data.live_account.balance != null
-                        ? `${accounts.data.live_account.balance.toLocaleString()} ${
-                            accounts.data.live_account.currency ?? ""
-                          }`
-                        : "—"}
-                    </td>
-                    <td>
-                      {/* Demo is the safe state, so it reads as good. Anything
-                          that is not exactly trade_mode 0 is real money. */}
-                      <Pill
-                        tone={
-                          accounts.data.live_account.is_demo ? "good" : "critical"
-                        }
+                {(accounts.data.fleet ?? [])
+                  .filter((row) => row.connected && row.login)
+                  .map((row) => (
+                    <tr key={row.terminal}>
+                      <td className="font-semibold" dir="ltr">
+                        {row.login}
+                      </td>
+                      <td className="ink-2">
+                        {row.is_demo ? t("home.demo") : t("home.realMoney")}
+                      </td>
+                      <td className="ink-3" dir="ltr">
+                        {row.server ?? "—"} · {row.terminal}
+                      </td>
+                      <td className="num" dir="ltr">
+                        {row.balance != null
+                          ? `${row.balance.toLocaleString()} ${row.currency ?? ""}`
+                          : "—"}
+                      </td>
+                      <td className="num" dir="ltr">
+                        {row.equity != null ? row.equity.toLocaleString() : "—"}
+                      </td>
+                      <td
+                        className="num"
+                        dir="ltr"
+                        style={{
+                          color:
+                            (row.floating_pl ?? 0) > 0
+                              ? "var(--good, #22c55e)"
+                              : (row.floating_pl ?? 0) < 0
+                                ? "var(--critical, #ef4444)"
+                                : undefined,
+                        }}
                       >
-                        {accounts.data.live_account.is_demo
-                          ? t("home.demo")
-                          : t("home.realMoney")}
-                      </Pill>
-                    </td>
-                  </tr>
-                )}
+                        {row.floating_pl != null
+                          ? `${row.floating_pl > 0 ? "+" : ""}${row.floating_pl.toLocaleString()}`
+                          : "—"}
+                      </td>
+                      <td>
+                        {/* Demo is the safe state, so it reads as good. Anything
+                            that is not exactly trade_mode 0 is real money. */}
+                        <Pill tone={row.is_demo ? "good" : "critical"}>
+                          {row.is_demo ? t("home.demo") : t("home.realMoney")}
+                        </Pill>
+                      </td>
+                    </tr>
+                  ))}
 
                 {challenges.data.accounts.map((account) => (
                   <tr key={account.id}>
@@ -264,6 +278,8 @@ export default async function HomePage() {
                         ? `${account.starting_balance} ${account.currency ?? ""}`
                         : "—"}
                     </td>
+                    <td className="num">—</td>
+                    <td className="num">—</td>
                     <td>
                       {/* Confirmed is not decoration. Until the holder has
                           checked the transcribed rules against their own
