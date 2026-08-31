@@ -42,7 +42,7 @@ disappoint in exactly the way the in-sample one did not.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from app.learning.measure import Bar, Measurement, measure
@@ -330,3 +330,112 @@ def select(
             )
 
     return result
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Run the selection over a stored series and print both numbers.
+
+    A command for the same reason `measure` grew one: a selection nobody can
+    re-run is a selection nobody can check. Everything that decides the answer
+    - the split, the stability demand, the keep-rate warning - lives above and
+    is not restated here.
+
+        python -m app.learning.universe_selection --provider dukascopy --timeframe D1
+        python -m app.learning.universe_selection --provider yfinance --timeframe H1 --from 2024
+
+    `--considered ranked` offers only the declared ranking universe for
+    selection; `all` offers every symbol the provider stored. Either way the
+    candidates are restricted to symbols that actually have bars, because an
+    instrument with no history is not a candidate, it is a name.
+    """
+    from app.learning.measure import _yield_to_the_serving_path
+
+    _yield_to_the_serving_path()
+
+    import argparse
+    import json
+
+    from app.brain.crosssection import RANKED_UNIVERSE
+    from app.core.enums import Timeframe
+    from app.db.session import session_scope
+    from app.learning.measure import load_series
+
+    parser = argparse.ArgumentParser(
+        description="Select a universe on the first years, report it on the last."
+    )
+    parser.add_argument("--provider", required=True)
+    parser.add_argument("--timeframe", default="H1", choices=["M1", "M15", "H1", "D1"])
+    parser.add_argument("--from", dest="start_year", type=int, default=None)
+    parser.add_argument("--to", dest="end_year", type=int, default=None)
+    parser.add_argument(
+        "--considered",
+        default="ranked",
+        choices=["ranked", "all"],
+        help="'ranked' offers the declared ranking universe; 'all' every stored symbol",
+    )
+    args = parser.parse_args(argv)
+
+    timeframe = Timeframe(args.timeframe)
+    start = datetime(args.start_year, 1, 1, tzinfo=UTC) if args.start_year else None
+    end = datetime(args.end_year, 1, 1, tzinfo=UTC) if args.end_year else None
+
+    with session_scope() as session:
+        series = load_series(
+            session,
+            provider_code=args.provider,
+            timeframe=timeframe,
+            start=start,
+            end=end,
+        )
+
+    if not series:
+        print(
+            f"no {timeframe.value} bars stored under provider {args.provider!r}. "
+            "Nothing selected - this is not a selection of zero instruments"
+        )
+        return 1
+
+    considered = frozenset(series)
+    if args.considered == "ranked":
+        considered &= RANKED_UNIVERSE
+    if not considered:
+        print(
+            "the stored symbols and the ranking universe do not overlap. "
+            "Nothing was considered, so nothing was selected"
+        )
+        return 1
+
+    bars = sum(len(series[symbol]) for symbol in considered)
+    print(
+        f"considering {len(considered)} instruments, {bars} {timeframe.value} "
+        f"bars, provider {args.provider}"
+    )
+
+    result = select(
+        {symbol: series[symbol] for symbol in considered},
+        bar_interval=timeframe.delta,
+        considered=considered,
+    )
+    print(json.dumps(result.as_dict(), indent=2))
+
+    # Said in words either way it came out, like `measure` does: a selection
+    # reported loudly only when it kept something is how a registry fills up.
+    print()
+    if not result.selected:
+        print("Nothing was selected. The warnings above say why.")
+    elif result.out_of_sample is None:
+        print("A universe was chosen but the held-back years measured nothing.")
+    else:
+        oos = result.out_of_sample
+        verdict = "held up" if oos.edge_r > 0 and oos.significant else "did not hold up"
+        print(
+            f"Selected {len(result.selected)}/{len(considered)}. Out of sample: "
+            f"{oos.edge_r:+.4f} R at t = {oos.t_statistic:.2f} over "
+            f"{oos.instants} instants - the selection {verdict}. "
+            f"Overfit gap: {result.overfit_gap_r:+.4f} R."
+        )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -302,3 +302,76 @@ class TestAnInstrumentIsScoredInsideTheCrossSection:
         )
 
         assert score.blocks_measured > 0
+
+
+class TestTheCommand:
+    """`python -m app.learning.universe_selection` - runnable by anybody,
+    like `measure`, and for the same reason: a selection nobody can re-run
+    is a selection nobody can check."""
+
+    def run(self, argv, session, monkeypatch, series):
+        from contextlib import contextmanager
+
+        from app.learning import measure as measure_module
+        from app.learning import universe_selection
+
+        @contextmanager
+        def fixed_session():
+            yield session
+
+        monkeypatch.setattr(
+            "app.db.session.session_scope", fixed_session, raising=False
+        )
+        monkeypatch.setattr(
+            measure_module, "load_series", lambda *a, **k: series
+        )
+        return universe_selection.main(argv)
+
+    def test_the_provider_is_required(self):
+        import pytest
+
+        from app.learning import universe_selection
+
+        with pytest.raises(SystemExit):
+            universe_selection.main(["--timeframe", "H1"])
+
+    def test_an_empty_source_is_named_not_a_selection_of_zero(
+        self, session, monkeypatch, capsys
+    ):
+        code = self.run(
+            ["--provider", "not-a-provider"], session, monkeypatch, {}
+        )
+
+        assert code == 1
+        assert "not a selection of zero" in capsys.readouterr().out
+
+    def test_symbols_outside_the_ranking_universe_are_not_silently_considered(
+        self, session, monkeypatch, capsys
+    ):
+        stored = {"NOTAPAIR": bars(10)}
+
+        code = self.run(
+            ["--provider", "csv"], session, monkeypatch, stored
+        )
+
+        assert code == 1
+        assert "do not overlap" in capsys.readouterr().out
+
+    def test_a_selection_of_nothing_is_reported_as_a_result(
+        self, session, monkeypatch, capsys
+    ):
+        """Too few instruments to ever rank selects nothing - and that is a
+        result about the rule, printed, exit code zero."""
+        stored = series([f"SYM{i:02d}" for i in range(5)], count=60)
+
+        code = self.run(
+            ["--provider", "csv", "--considered", "all"],
+            session,
+            monkeypatch,
+            stored,
+        )
+
+        out = capsys.readouterr().out
+        assert code == 0
+        assert "Nothing was selected" in out
+        assert "considering 5 instruments" in out
