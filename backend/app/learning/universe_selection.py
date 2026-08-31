@@ -297,11 +297,19 @@ def select(
             "That is a result about the rule rather than about the instruments"
         )
 
+    # Ranked over everything offered, counted for the chosen - the same split
+    # `score_instrument` makes, one level up. Ranking over only the chosen
+    # narrows the cross-section below the minimum whenever the selection is
+    # doing its job, and the basket comes back a confident zero.
     in_sample = (
-        measure(train, bar_interval=bar_interval, universe=chosen) if chosen else None
+        measure(train, bar_interval=bar_interval, universe=considered, only=chosen)
+        if chosen
+        else None
     )
     out_of_sample = (
-        measure(test, bar_interval=bar_interval, universe=chosen) if chosen else None
+        measure(test, bar_interval=bar_interval, universe=considered, only=chosen)
+        if chosen
+        else None
     )
 
     result = SelectionResult(

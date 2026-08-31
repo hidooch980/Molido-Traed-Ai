@@ -375,3 +375,42 @@ class TestTheCommand:
         assert code == 0
         assert "Nothing was selected" in out
         assert "considering 5 instruments" in out
+
+
+class TestTheBasketIsMeasuredInsideTheCrossSection:
+    """The same defect `score_instrument` had, one level up: measuring the
+    chosen basket with the ranking narrowed to the chosen leaves a
+    cross-section below the minimum whenever selection actually selected,
+    and both headline numbers come back a confident zero."""
+
+    def test_a_chosen_minority_still_measures_instants(self, monkeypatch):
+        from app.brain.crosssection import MIN_CROSS_SECTION
+        from app.learning import universe_selection
+
+        symbols = [f"SYM{i:02d}" for i in range(MIN_CROSS_SECTION + 5)]
+        data = series(symbols, count=400)
+        chosen = symbols[: MIN_CROSS_SECTION // 2]
+
+        def always_choose(train, symbol, *, bar_interval, universe, blocks=4):
+            picked = symbol in chosen
+            return InstrumentScore(
+                symbol=symbol,
+                edge_r=0.05 if picked else -0.05,
+                instants=100,
+                blocks_positive=STABILITY_REQUIRED if picked else 0,
+                blocks_measured=STABILITY_BLOCKS,
+            )
+
+        monkeypatch.setattr(universe_selection, "score_instrument", always_choose)
+
+        result = universe_selection.select(
+            data,
+            bar_interval=timedelta(days=1),
+            considered=frozenset(symbols),
+        )
+
+        assert result.selected == frozenset(chosen)
+        assert result.in_sample is not None
+        assert result.out_of_sample is not None
+        assert result.in_sample.instants > 0
+        assert result.out_of_sample.instants > 0
