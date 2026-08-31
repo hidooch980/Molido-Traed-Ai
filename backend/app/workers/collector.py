@@ -1044,6 +1044,12 @@ class WorkerSettings:
     keep_result = 3600
     cron_jobs = _cron_jobs()
     redis_settings = _redis_settings()
+    # Pinned, because arq's default is the *system* timezone and this host
+    # displays Iran time (+03:30). Left unpinned, the :00/:15/:30/:45 marks
+    # slide half an hour off the bar closes and every decision is taken
+    # thirty minutes late - trading the delay rather than the rule. The
+    # cycle's rhythm belongs to the bars, and the bars are UTC.
+    timezone = UTC
 
 
 def main() -> None:

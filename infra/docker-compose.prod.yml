@@ -70,7 +70,13 @@ x-backend-env: &backend-env
   MOLIDO_TELEGRAM_BOT_TOKEN: ${MOLIDO_TELEGRAM_BOT_TOKEN:-}
   MOLIDO_TELEGRAM_CHAT_ID: ${MOLIDO_TELEGRAM_CHAT_ID:-}
 
-  TZ: UTC
+  # Display timezone for logs and shells, at the owner's request. Safe only
+  # because the schedule does not read it: the collector pins its arq cron
+  # timezone to UTC in code, storage is timestamptz, and every datetime in
+  # the app is constructed with an explicit UTC. Iran is +03:30 - if the
+  # cron ever followed this value, the :00/:15/:30/:45 marks would slide
+  # half an hour off the bar closes and every decision would trade the delay.
+  TZ: Asia/Tehran
 
 x-logging: &logging
   driver: json-file
