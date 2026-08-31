@@ -300,27 +300,33 @@ def sample_equity() -> dict[str, Any]:
     normal state of a deployment nobody has linked a broker to yet, and logging
     it as an error every cycle would bury the cycles that matter.
     """
-    from app.providers.metatrader import MetaTraderBridge
+    from app.providers.metatrader import MetaTraderBridge, bridge_dirs
     from app.services import equity as equity_series
 
-    published = MetaTraderBridge().account()
-    if not published.get("available"):
-        return {"recorded": False, "reason": published.get("reason") or "no account"}
-
-    login = str(published.get("login") or "")
-    if not login:
-        return {"recorded": False, "reason": "the account has no login to key on"}
-
+    # Every configured terminal, not just the built-in one. The risk brain
+    # refuses any account whose equity has never been recorded, so an account
+    # sampled by nothing is an account that can never trade - and the sampler
+    # reading only the main bridge produced exactly that for every spare.
+    recorded: dict[str, Any] = {}
     with session_scope() as session:
-        stored = equity_series.record(
-            session,
-            account_key=login,
-            equity=float(published.get("equity") or 0.0),
-            balance=float(published.get("balance") or 0.0),
-            margin=float(published.get("margin") or 0.0),
-            currency=str(published.get("currency") or "USD"),
-        )
-    return {"recorded": stored, "account": login}
+        for _key, directory in sorted(bridge_dirs().items()):
+            published = MetaTraderBridge(directory=directory).account()
+            if not published.get("available"):
+                continue
+            login = str(published.get("login") or "")
+            if not login:
+                continue
+            recorded[login] = equity_series.record(
+                session,
+                account_key=login,
+                equity=float(published.get("equity") or 0.0),
+                balance=float(published.get("balance") or 0.0),
+                margin=float(published.get("margin") or 0.0),
+                currency=str(published.get("currency") or "USD"),
+            )
+    if not recorded:
+        return {"recorded": False, "reason": "no terminal published an account"}
+    return {"recorded": True, "accounts": recorded}
 
 
 #: The provider the twenty-one year daily series was loaded from. It ends on
