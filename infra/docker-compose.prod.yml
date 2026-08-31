@@ -189,6 +189,18 @@ services:
       # The API keeps its read-only mount. Exactly one process can write an
       # order, and it is the one behind the autopilot's gates.
       - ${MOLIDO_MT5_BRIDGE_HOST:-/home/ubuntu/.mt5/drive_c/users/ubuntu/AppData/Roaming/MetaQuotes/Terminal/Common/Files}:/home/ubuntu/.mt5/drive_c/users/ubuntu/AppData/Roaming/MetaQuotes/Terminal/Common/Files
+      # Every further terminal's bridge, writable for the same reason the main
+      # one is: this is the process that places orders, and an order is a file
+      # the expert picks up. `run_all_accounts` walks these by key; a bridge
+      # mounted only into the API is an account the fleet can see and the
+      # trader cannot reach.
+      - ${MOLIDO_MT5_BRIDGE_B:-/root/.mt5b/drive_c/users/root/AppData/Roaming/MetaQuotes/Terminal/Common/Files}:/bridges/b
+      - ${MOLIDO_MT5_BRIDGE_C:-/root/.mt5c/drive_c/users/root/AppData/Roaming/MetaQuotes/Terminal/Common/Files}:/bridges/c
+      - ${MOLIDO_MT5_BRIDGE_D:-/root/.mt5d/drive_c/users/root/AppData/Roaming/MetaQuotes/Terminal/Common/Files}:/bridges/d
+      - ${MOLIDO_MT5_BRIDGE_E:-/root/.mt5e/drive_c/users/root/AppData/Roaming/MetaQuotes/Terminal/Common/Files}:/bridges/e
+      - ${MOLIDO_MT5_BRIDGE_F:-/root/.mt5f/drive_c/users/root/AppData/Roaming/MetaQuotes/Terminal/Common/Files}:/bridges/f
+      - ${MOLIDO_MT5_BRIDGE_G:-/root/.mt5g/drive_c/users/root/AppData/Roaming/MetaQuotes/Terminal/Common/Files}:/bridges/g
+      - ${MOLIDO_MT5_BRIDGE_H:-/root/.mt5h/drive_c/users/root/AppData/Roaming/MetaQuotes/Terminal/Common/Files}:/bridges/h
       # The kill switch, on the host so it survives a redeploy. A halt that a
       # rebuild clears is not a halt, and a rebuild is exactly when somebody is
       # changing things and not thinking about the stop they set yesterday.

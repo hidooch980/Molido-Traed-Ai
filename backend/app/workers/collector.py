@@ -466,10 +466,10 @@ def send_orders() -> dict[str, Any]:
     survives a bad day; orders can be re-derived from them, and are, on the
     next cycle.
     """
-    from app.workers.autotrade import run_cycle
+    from app.workers.autotrade import run_all_accounts
 
     with session_scope() as session:
-        return run_cycle(session)
+        return run_all_accounts(session)
 
 
 def ingest_broker_bars() -> dict[str, Any]:
