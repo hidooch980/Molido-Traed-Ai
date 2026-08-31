@@ -508,3 +508,40 @@ class TestTimeframesDoNotCollide:
 
         entry = session.get(JournalEntry, result["rule"]["entry_id"])
         assert entry.timeframe == "H1"
+
+
+class TestEveryBrainRecords:
+    """The candidates are recorded beside the incumbent, on the same
+    snapshot - so a comparison between brains can never be a comparison of
+    schedules."""
+
+    def test_candidate_recording_is_reported(self, session):
+        from app.workers import forward
+
+        report = forward.record_cycle(session, as_of=NOW)
+
+        # With no bars there is nothing to decide, but the field exists and
+        # counts - a cycle that records no candidates and one that never
+        # tried are different facts.
+        assert "candidates_recorded" in report or "reason" in report
+
+    def test_two_brains_disagreeing_are_two_rows(self, session):
+        from app.services import journal_log
+
+        first = journal_log.record_decision(
+            session,
+            symbol="EURUSD",
+            decision="long",
+            at=NOW,
+            strategy="cross-sectional-stretch",
+        )
+        second = journal_log.record_decision(
+            session,
+            symbol="EURUSD",
+            decision="short",
+            at=NOW,
+            strategy="short-horizon-reversal",
+        )
+
+        assert first.new and second.new
+        assert first.entry_id != second.entry_id

@@ -228,6 +228,69 @@ def _provider_id(session: Session, code: str) -> uuid.UUID | None:
     return session.scalar(select(Provider.id).where(Provider.code == code))
 
 
+def _record_candidates(
+    session: Session,
+    built: dict[str, dict[str, Any]],
+    *,
+    at: datetime,
+    timeframe: Timeframe,
+    price_source: str,
+    account_key: str | None,
+) -> int:
+    """Record every candidate brain's picks on this snapshot.
+
+    Same instant, same bars, same ATR geometry as the incumbent - the brains
+    differ only in what they choose, which is the only difference a
+    comparison between them can be allowed to contain. A candidate that
+    declines, or picks a symbol whose ATR is unusable, records nothing for
+    that pick; the incumbent's rows above are untouched either way.
+    """
+    from app.learning import rules as rules_module
+
+    written = 0
+    for name, rule in rules_module.CANDIDATES.items():
+        if name == rules_module.CrossSectionalStretch().name:
+            continue  # the incumbent is already recorded, with richer fields
+        picks = rule(built, universe=None)
+        if picks.empty:
+            continue
+        for symbols, side in ((picks.longs, "long"), (picks.shorts, "short")):
+            side_sign = 1 if side == "long" else -1
+            for symbol in symbols:
+                bars = built.get(symbol, {}).get("bars") or []
+                atr = crosssection.average_true_range(list(bars))
+                price = (built.get(symbol, {}).get("closes") or [None])[-1]
+                if not atr or price is None:
+                    continue
+                result = journal_log.record_with_control(
+                    session,
+                    symbol=symbol,
+                    decision=side,
+                    at=at,
+                    price=float(price),
+                    stop_distance=atr * STOP_MULTIPLE,
+                    price_source=price_source,
+                    timeframe=timeframe.value,
+                    strategy=name,
+                    account_key=account_key,
+                    before={
+                        "rule": name,
+                        "atr": atr,
+                        "stop_multiple": STOP_MULTIPLE,
+                        "price_source": price_source,
+                        "timeframe": timeframe.value,
+                        "entry": float(price),
+                        "stop": float(price) - atr * STOP_MULTIPLE * side_sign,
+                        "target": float(price)
+                        + atr * STOP_MULTIPLE * TARGET_MULTIPLE * side_sign,
+                        "side": side,
+                    },
+                )
+                if result["rule"]["new"]:
+                    written += 1
+    return written
+
+
 def record_cycle(
     session: Session,
     *,
@@ -307,9 +370,23 @@ def record_cycle(
             else:
                 duplicates += 1
 
+    # The other brains, recorded beside the incumbent in the same pass, on the
+    # same snapshot, with the same geometry. A candidate recorded by its own
+    # job on its own schedule would decide on different bars and the
+    # comparison between brains would be a comparison of schedules.
+    candidate_written = _record_candidates(
+        session,
+        built,
+        at=latest,
+        timeframe=timeframe,
+        price_source=price_source,
+        account_key=account_key,
+    )
+
     session.commit()
     return {
         "price_source": price_source,
+        "candidates_recorded": candidate_written,
         "recorded": written,
         # Published rather than swallowed. A cycle that writes nothing because
         # everything was already recorded and one that writes nothing because

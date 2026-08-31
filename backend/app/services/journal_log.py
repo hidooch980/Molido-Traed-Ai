@@ -33,6 +33,7 @@ from app.models.journal import (
     ARM_CONTROL,
     ARM_RULE,
     SOURCE_PUBLIC,
+    STRATEGY_INCUMBENT,
     JournalEntry,
 )
 
@@ -96,6 +97,7 @@ def record_decision(
     #: writing exactly what it wrote before, rather than silently landing in
     #: an unlabelled bucket.
     timeframe: str = "H1",
+    strategy: str = STRATEGY_INCUMBENT,
     account_key: str | None = None,
     probability: float | None = None,
     before: dict[str, Any] | None = None,
@@ -118,6 +120,10 @@ def record_decision(
             # lookup finds the hourly entry at a shared timestamp and reports
             # the one-minute decision as an already-recorded duplicate.
             JournalEntry.timeframe == timeframe,
+            # Two brains disagreeing about one bar are two rows, and the
+            # lookup has to see it that way or the second brain's decision
+            # reads as an already-recorded duplicate of the first's.
+            JournalEntry.strategy == strategy,
         )
     )
     if existing is not None:
@@ -132,6 +138,7 @@ def record_decision(
         arm=arm,
         price_source=price_source,
         timeframe=timeframe,
+        strategy=strategy,
         before=before or {},
         during=during or {},
     )
@@ -150,6 +157,7 @@ def record_with_control(
     stop_distance: float,
     price_source: str = SOURCE_PUBLIC,
     timeframe: str = "H1",
+    strategy: str = STRATEGY_INCUMBENT,
     account_key: str | None = None,
     probability: float | None = None,
     before: dict[str, Any] | None = None,
@@ -169,6 +177,7 @@ def record_with_control(
         arm=ARM_RULE,
         price_source=price_source,
         timeframe=timeframe,
+        strategy=strategy,
         account_key=account_key,
         probability=probability,
         before=before,
@@ -199,6 +208,10 @@ def record_with_control(
         arm=ARM_CONTROL,
         price_source=price_source,
         timeframe=timeframe,
+        # The control belongs to its rule's brain: it is the benchmark that
+        # brain is measured against, and a control shared across brains would
+        # be claimed by whichever recorded first.
+        strategy=strategy,
         account_key=account_key,
         # The series is stamped on the control's reasoning as well as the
         # rule's. The control is a decision on a price series too, and one

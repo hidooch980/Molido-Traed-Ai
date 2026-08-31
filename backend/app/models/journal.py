@@ -36,6 +36,10 @@ ARM_CONTROL = "control"
 SOURCE_PUBLIC = "yfinance"
 SOURCE_BROKER = "metatrader"
 
+#: The brain that has always recorded here, and what every row written before
+#: the strategy column existed is stamped as - that is what those rows are.
+STRATEGY_INCUMBENT = "cross-sectional-stretch"
+
 
 class JournalEntry(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     """A decision, its reasoning, and how it turned out."""
@@ -53,9 +57,14 @@ class JournalEntry(Base, UUIDPrimaryKeyMixin, TimestampMixin):
             # instants and are discarded as duplicates - a measurement that
             # looks like it is recording four timeframes while recording one.
             "timeframe",
-            name="uq_journal_symbol_bar_arm_source_tf",
+            # Two brains that disagree about one symbol on one bar - which a
+            # reversal rule and a momentum rule do by construction - must not
+            # collide into one row with the loser silently discarded.
+            "strategy",
+            name="uq_journal_symbol_bar_arm_source_tf_strat",
         ),
         Index("ix_journal_arm_time", "arm", "opened_at"),
+        Index("ix_journal_strategy_time", "strategy", "opened_at"),
         Index("ix_journal_source_arm_time", "price_source", "arm", "opened_at"),
         Index("ix_journal_timeframe_time", "timeframe", "opened_at"),
     )
@@ -86,6 +95,14 @@ class JournalEntry(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     )
     price_source: Mapped[str] = mapped_column(
         String(24), default=SOURCE_PUBLIC, nullable=False
+    )
+    #: Which brain decided. An account assigned one brain trades only that
+    #: brain's rows, and two brains disagreeing about one bar are two rows.
+    strategy: Mapped[str] = mapped_column(
+        String(48),
+        default=STRATEGY_INCUMBENT,
+        server_default=STRATEGY_INCUMBENT,
+        nullable=False,
     )
 
     #: Written at different times by different events - a thesis at the open,

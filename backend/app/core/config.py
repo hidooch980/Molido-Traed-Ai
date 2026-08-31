@@ -175,6 +175,12 @@ class Settings(BaseSettings):
     #: account whatever these say.
     autotrade_risk_percent: float = 0.25
     autotrade_max_open_positions: int = 8
+    #: Which brain each account trades, as "login=strategy,login=strategy".
+    #: A login not named here trades the incumbent. A strategy name nothing
+    #: registered is a refusal at cycle time, never a silent fallback - an
+    #: account trading a brain nobody assigned is the mistake this exists
+    #: to prevent.
+    account_strategies: str = ""
 
     #: Which timeframes the rule records decisions on, comma separated.
     #:

@@ -1048,7 +1048,10 @@ def run_cycle(
         str(s.get("name")): s for s in (feed.symbols().get("symbols") or [])
     }
 
-    candidates = _pending(session, moment, login=login)
+    strategy, strategy_refusal = _strategy_for(login)
+    if strategy is None:
+        return _report(mode=mode, refused=strategy_refusal)
+    candidates = _pending(session, moment, login=login, strategy=strategy)
     sent: list[dict[str, Any]] = []
     skipped: list[str] = []
 
@@ -1270,7 +1273,37 @@ def run_cycle(
     )
 
 
-def _pending(session: Session, moment: datetime, *, login: str) -> list[JournalEntry]:
+def _strategy_for(login: str) -> tuple[str | None, str]:
+    """Which brain this account trades, or why it must not trade at all.
+
+    Unassigned means the incumbent - the behaviour every account had before
+    brains were separable. Assigned to a name nothing registered means no
+    trading, stated: an account trading a brain nobody wrote is worse than
+    one that sits out and says why.
+    """
+    from app.core.config import get_settings
+    from app.learning import rules as rules_module
+    from app.models.journal import STRATEGY_INCUMBENT
+
+    raw = str(getattr(get_settings(), "account_strategies", "") or "")
+    assigned: dict[str, str] = {}
+    for piece in raw.split(","):
+        if "=" in piece:
+            key, _, value = piece.partition("=")
+            assigned[key.strip()] = value.strip()
+
+    name = assigned.get(login, STRATEGY_INCUMBENT)
+    if name != STRATEGY_INCUMBENT and rules_module.get(name) is None:
+        return None, (
+            f"account {login} is assigned strategy {name!r}, which is not one "
+            "this build knows - refusing to trade rather than guessing a brain"
+        )
+    return name, ""
+
+
+def _pending(
+    session: Session, moment: datetime, *, login: str, strategy: str
+) -> list[JournalEntry]:
     """Fresh rule decisions on the broker series that have no order yet.
 
     The arm and the series are filters rather than options: the control is a
@@ -1303,6 +1336,9 @@ def _pending(session: Session, moment: datetime, *, login: str) -> list[JournalE
                 JournalEntry.symbol.in_(sorted(REANCHORED_SYMBOLS)),
             ),
             JournalEntry.closed_at.is_(None),
+            # This account's brain only. The whole point of separable brains
+            # is that an account never trades a blend nobody designed.
+            JournalEntry.strategy == strategy,
             JournalEntry.opened_at >= cutoff,
         )
         .order_by(JournalEntry.opened_at)
