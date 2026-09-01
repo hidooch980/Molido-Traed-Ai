@@ -190,6 +190,160 @@ def body_ratio(bars: Sequence[BarView]) -> float | None:
     return abs(bar.close - bar.open) / span
 
 
+# ---------------------------------------------------------- classic indicators
+#
+# The widely-watched set, added as *state descriptors* like everything above:
+# each publishes the number traders quote, not a buy/sell opinion. Signal
+# logic stays in the brains, where it can be measured and refused.
+
+
+def _ema(values: Sequence[float], period: int) -> float:
+    alpha = 2.0 / (period + 1)
+    out = values[0]
+    for value in values[1:]:
+        out = alpha * value + (1 - alpha) * out
+    return out
+
+
+@feature(
+    "macd_hist_12_26_9",
+    lookback=59,
+    description="MACD histogram (12/26 EMA minus its 9-EMA signal).",
+)
+def macd_hist(bars: Sequence[BarView]) -> float | None:
+    closes = _closes(bars[-60:])
+    if len(closes) < 35:
+        return None
+    macd_line = [
+        _ema(closes[: i + 1], 12) - _ema(closes[: i + 1], 26)
+        for i in range(25, len(closes))
+    ]
+    if len(macd_line) < 9:
+        return None
+    return macd_line[-1] - _ema(macd_line, 9)
+
+
+@feature(
+    "bollinger_position_20",
+    lookback=19,
+    description="Close within the 20-bar 2-sigma bands: 0 lower, 0.5 mid, 1 upper.",
+)
+def bollinger_position(bars: Sequence[BarView]) -> float | None:
+    closes = _closes(bars[-20:])
+    mean = statistics.fmean(closes)
+    spread = statistics.pstdev(closes)
+    if spread == 0:
+        return 0.5
+    lower, upper = mean - 2 * spread, mean + 2 * spread
+    return (closes[-1] - lower) / (upper - lower)
+
+
+@feature(
+    "bollinger_width_20",
+    lookback=19,
+    description="20-bar 2-sigma band width as a fraction of the mean (squeeze gauge).",
+)
+def bollinger_width(bars: Sequence[BarView]) -> float | None:
+    closes = _closes(bars[-20:])
+    mean = statistics.fmean(closes)
+    if mean == 0:
+        return None
+    return 4 * statistics.pstdev(closes) / mean
+
+
+@feature(
+    "stochastic_k_14",
+    lookback=13,
+    description="Stochastic %K over 14 bars: close within the high/low range.",
+)
+def stochastic_k(bars: Sequence[BarView]) -> float | None:
+    window = bars[-14:]
+    highest = max(b.high for b in window)
+    lowest = min(b.low for b in window)
+    if highest == lowest:
+        return 50.0
+    return 100 * (window[-1].close - lowest) / (highest - lowest)
+
+
+@feature(
+    "adx_14",
+    lookback=27,
+    description="Wilder's ADX(14): trend strength, direction-blind.",
+)
+def adx_14(bars: Sequence[BarView]) -> float | None:
+    window = bars[-28:]
+    plus_dm, minus_dm = [], []
+    for previous, current in zip(window, window[1:], strict=False):
+        up = current.high - previous.high
+        down = previous.low - current.low
+        plus_dm.append(up if up > down and up > 0 else 0.0)
+        minus_dm.append(down if down > up and down > 0 else 0.0)
+    ranges = _true_ranges(window)
+    dxs = []
+    for i in range(13, len(ranges)):
+        tr = sum(ranges[i - 13 : i + 1])
+        if tr == 0:
+            continue
+        plus = 100 * sum(plus_dm[i - 13 : i + 1]) / tr
+        minus = 100 * sum(minus_dm[i - 13 : i + 1]) / tr
+        if plus + minus == 0:
+            continue
+        dxs.append(100 * abs(plus - minus) / (plus + minus))
+    if not dxs:
+        return None
+    return statistics.fmean(dxs)
+
+
+@feature("sma_50", lookback=49, description="50-bar simple moving average.")
+def sma_50(bars: Sequence[BarView]) -> float | None:
+    return statistics.fmean(_closes(bars[-50:]))
+
+
+@feature("sma_200", lookback=199, description="200-bar simple moving average.")
+def sma_200(bars: Sequence[BarView]) -> float | None:
+    return statistics.fmean(_closes(bars[-200:]))
+
+
+@feature(
+    "sma_50_over_200",
+    lookback=199,
+    description="SMA50/SMA200; >1 is the golden-cross side, <1 the death-cross side.",
+)
+def sma_50_over_200(bars: Sequence[BarView]) -> float | None:
+    closes = _closes(bars[-200:])
+    slow = statistics.fmean(closes)
+    fast = statistics.fmean(closes[-50:])
+    if slow == 0:
+        return None
+    return fast / slow
+
+
+@feature(
+    "roc_20",
+    lookback=20,
+    description="Rate of change over 20 bars, as a fraction.",
+)
+def roc_20(bars: Sequence[BarView]) -> float | None:
+    closes = _closes(bars[-21:])
+    if closes[0] == 0:
+        return None
+    return closes[-1] / closes[0] - 1
+
+
+@feature(
+    "donchian_position_55",
+    lookback=54,
+    description="Close within the 55-bar Donchian channel: 0 low, 1 high.",
+)
+def donchian_position(bars: Sequence[BarView]) -> float | None:
+    window = bars[-55:]
+    highest = max(b.high for b in window)
+    lowest = min(b.low for b in window)
+    if highest == lowest:
+        return 0.5
+    return (window[-1].close - lowest) / (highest - lowest)
+
+
 __all__ = [
     "atr_14",
     "atr_14_pct",
@@ -201,6 +355,16 @@ __all__ = [
     "realized_vol_20",
     "return_1",
     "return_5",
+    "adx_14",
+    "bollinger_position",
+    "bollinger_width",
+    "donchian_position",
+    "macd_hist",
+    "roc_20",
+    "sma_50",
+    "sma_200",
+    "sma_50_over_200",
+    "stochastic_k",
     "rsi_14",
     "sma_20",
 ]
