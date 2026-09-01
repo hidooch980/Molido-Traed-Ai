@@ -272,6 +272,12 @@ class ChallengeState:
     # floor below the provider's whenever the day opened with a floating loss.
     daily_starting_balance: float | None = None
     current_leverage: float | None = None
+    #: Whether the holder has compared this account's rules with their
+    #: own contract. Not a rule and not a limit: it is the answer to the
+    #: one question no rulebook can carry, because two holders on the
+    #: same program can be on different contracts. Defaults to False, so
+    #: a caller that does not know still gets the refusing answer.
+    rules_confirmed_by_holder: bool = False
     #: What the proposed trade is in, so a per-asset cap can be resolved.
     #: `None` is honest and costs exposure rather than granting it: the
     #: tightest published cap applies to a trade nobody identified.
@@ -909,7 +915,18 @@ def check(
     # money-management and copy-trading experts while forbidding automated
     # decision-making, which is exactly what this system is - so "we use an
     # expert" is not the question, and "our software picked the trade" is.
-    if rules.automated_trading_allowed is None:
+    if rules.automated_trading_allowed is None and state.rules_confirmed_by_holder:
+        # The holder has compared this account's terms with the
+        # published ones and said the permission is there. That is the
+        # sentence the refusal below asks for, and it is per account
+        # rather than per rulebook because two holders on the same
+        # program can be on different contracts - which is exactly why
+        # the rulebook cannot answer it and stays unread.
+        #
+        # It is recorded, not inferred: nothing here reads a confirmation
+        # the holder did not give, and withdrawing it puts the gate back.
+        pass
+    elif rules.automated_trading_allowed is None:
         # Gated, and this is the second time the decision has moved - so the
         # argument on both sides is kept rather than replaced.
         #

@@ -520,6 +520,10 @@ def _challenge_gate(
         daily_starting_equity=equity,
         days_traded=0,
         open_positions=open_positions,
+        # `getattr` because a stand-in account in a test predates the field,
+        # and the safe default is the one that refuses: an account whose
+        # confirmation cannot be read has not confirmed anything.
+        rules_confirmed_by_holder=bool(getattr(account, "rules_confirmed", False)),
         current_date=today,
         current_balance=float(published.get("balance") or 0.0),
         # Both supplied rather than left None. The engine gates on an unknown

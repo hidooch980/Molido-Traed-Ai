@@ -1032,3 +1032,64 @@ class TestLeverageIsCappedPerAssetClass:
 
         assert any("leverage" in b for b in verdict.breaches)
         assert any("no asset class" in w for w in verdict.warnings)
+
+
+class TestTheHolderAnswersTheAutomationQuestion:
+    """The rulebook cannot answer it - two holders on the same program can be
+    on different contracts - so the account's own confirmation does."""
+
+    def rules(self):
+        from app.brain.challenge import ChallengeRules
+
+        return ChallengeRules(
+            profit_target_pct=0.05,
+            max_daily_drawdown_pct=0.05,
+            max_total_drawdown_pct=0.10,
+            min_trading_days=3,
+            automated_trading_allowed=None,
+        )
+
+    def state(self, **over):
+        from datetime import date as _date
+
+        from app.brain.challenge import ChallengeState
+
+        base = dict(
+            starting_balance=15000.0,
+            current_equity=15000.0,
+            peak_equity=15000.0,
+            daily_starting_equity=15000.0,
+            days_traded=1,
+            open_positions=0,
+            current_date=_date(2026, 9, 1),
+        )
+        base.update(over)
+        return ChallengeState(**base)
+
+    def test_an_unconfirmed_account_is_still_gated(self):
+        from app.brain.challenge import check
+
+        verdict = check(self.rules(), self.state(), proposed_risk_r=0.25)
+
+        assert not verdict.allowed
+        assert any("automation permission" in g for g in verdict.gates)
+
+    def test_a_confirmed_account_passes_the_automation_gate(self):
+        from app.brain.challenge import check
+
+        verdict = check(
+            self.rules(),
+            self.state(rules_confirmed_by_holder=True),
+            proposed_risk_r=0.25,
+        )
+
+        assert not any("automation permission" in g for g in verdict.gates)
+
+    def test_confirmation_is_read_not_assumed(self):
+        """The default refuses, so a caller that does not know still gets the
+        answer that costs least when wrong."""
+        from app.brain.challenge import ChallengeState
+
+        assert ChallengeState.__dataclass_fields__[
+            "rules_confirmed_by_holder"
+        ].default is False
