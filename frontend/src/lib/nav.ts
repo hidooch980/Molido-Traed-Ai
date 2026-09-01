@@ -53,7 +53,7 @@ export const NAV: NavItem[] = [
   { key: "accounts", labelKey: "nav.accounts", href: "/accounts", group: "operations" },
   { key: "terminals", labelKey: "nav.terminals", href: "/terminals", group: "operations" },
   { key: "brokers", labelKey: "nav.brokers", href: "/brokers", group: "operations" },
-  { key: "telegram", labelKey: "nav.telegram", href: "/security", group: "operations" },
+  { key: "telegram", labelKey: "nav.telegram", href: "/telegram", group: "operations" },
   { key: "automation", labelKey: "nav.automation", href: "/automation", group: "operations" },
   { key: "security", labelKey: "nav.security", href: "/security", group: "operations" },
   { key: "settings", labelKey: "nav.settings", href: "/settings", group: "operations" },

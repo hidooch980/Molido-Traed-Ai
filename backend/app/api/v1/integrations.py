@@ -25,6 +25,7 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, Depends, Query
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.api.deps import ROLE_PERMISSIONS, Principal, require
@@ -38,6 +39,7 @@ from app.integrations import notify, telegram
 router = APIRouter(prefix="/integrations", tags=["integrations"])
 
 READ = Depends(require(Permission.READ))
+SETTINGS_WRITE = Depends(require(Permission.SETTINGS_WRITE))
 
 
 @router.get("/commands")
@@ -154,7 +156,10 @@ def read_security(_: Principal = READ) -> dict[str, Any]:
 
 
 @router.get("/telegram")
-def read_telegram(_: Principal = READ) -> dict[str, Any]:
+def read_telegram(
+    _: Principal = READ,
+    session: Session = Depends(get_db),
+) -> dict[str, Any]:
     """Whether the chat channel is configured, and whether the token works.
 
     `getMe` proves the token without sending anything to the channel, so a
@@ -163,7 +168,7 @@ def read_telegram(_: Principal = READ) -> dict[str, Any]:
     a health check that notifies everybody every time it runs is its own
     outage.
     """
-    state = telegram.check()
+    state = telegram.check(session)
     return {
         **state,
         "read_only": True,
@@ -177,6 +182,83 @@ def read_telegram(_: Principal = READ) -> dict[str, Any]:
             "outbound alerts share the incident cooldown, so a flapping "
             "condition does not send a message every thirty seconds - the "
             "alert everybody learns to ignore is the one that mattered"
+        ),
+    }
+
+
+class TelegramPayload(BaseModel):
+    """What the site may set. Every field optional and every omission means
+    "leave it alone" - a form that posts only the recipients must not wipe a
+    token the operator cannot re-read from the page."""
+
+    token: str | None = None
+    chat_ids: list[str] | None = None
+    enabled: bool | None = None
+
+
+@router.put("/telegram")
+def write_telegram(
+    payload: TelegramPayload,
+    _: Principal = SETTINGS_WRITE,
+    session: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Save the bot token and who it talks to.
+
+    Behind `settings.write` rather than `read`: a token is the channel's
+    identity, and whoever can change it can redirect every alert this system
+    produces to a chat the owner does not read.
+
+    The response never contains the token. It comes back masked, like every
+    other read of it, so a page that displays what it saved cannot become a
+    way to recover a secret from a screen somebody left open.
+    """
+    from app.services import telegram_settings
+
+    channel = telegram_settings.save(
+        session,
+        token=payload.token,
+        chat_ids=payload.chat_ids,
+        enabled=payload.enabled,
+    )
+    session.commit()
+    return channel.as_dict()
+
+
+@router.post("/telegram/test")
+def test_telegram(
+    _: Principal = SETTINGS_WRITE,
+    session: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Send one real message to every configured recipient.
+
+    A real send rather than `getMe`, because the two prove different things:
+    `getMe` proves the token, this proves the *recipients* - and a chat id
+    that is right-shaped and wrong is invisible until a message fails to
+    arrive. Deliberately un-deduplicated: a test somebody asked for that is
+    silently suppressed by the alert cooldown teaches the opposite of what
+    they were testing.
+    """
+    from datetime import UTC, datetime
+
+    from app.integrations import notify
+
+    message = notify.Message(
+        urgency=notify.Urgency.INFO,
+        at=datetime.now(UTC),
+        title="MolidoTrade AI",
+        body=(
+            "Test message. If you can read this, this chat is on the alert "
+            "list - the channel answers questions and can never place an order."
+        ),
+    )
+    delivery = telegram.send(message, session=session)
+    return {
+        "sent": delivery.sent,
+        "delivered_to": delivery.chat_id,
+        "reason": delivery.reason,
+        "note": (
+            "sent without the alert cooldown: a test that is silently "
+            "suppressed proves the opposite of what it was asked to prove"
         ),
     }
 

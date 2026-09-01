@@ -76,12 +76,23 @@ class Delivery:
         }
 
 
-def configured() -> tuple[bool, str | None]:
-    """Whether this deployment can send at all, and why not if it cannot."""
-    settings = get_settings()
-    token = (getattr(settings, "telegram_bot_token", "") or "").strip()
-    chat = (getattr(settings, "telegram_chat_id", "") or "").strip()
+def configured(session: Session | None = None) -> tuple[bool, str | None]:
+    """Whether this deployment can send at all, and why not if it cannot.
 
+    Reads the stored configuration when a session is offered and the
+    environment otherwise, so a deployment configured from the site and one
+    configured from its env file both answer this the same way.
+    """
+    from app.services import telegram_settings
+
+    channel = telegram_settings.load(session)
+    token, chat = channel.token, ",".join(channel.chat_ids)
+
+    if token and channel.chat_ids and not channel.enabled:
+        return False, (
+            "the channel is configured and switched off. That is a state "
+            "somebody chose, not a missing token"
+        )
     if not token:
         return False, (
             "no bot token is set, which means this deployment is not configured "
@@ -92,15 +103,18 @@ def configured() -> tuple[bool, str | None]:
     return True, None
 
 
-def _post(method: str, payload: dict[str, Any]) -> tuple[bool, str]:
+def _post(
+    method: str, payload: dict[str, Any], *, token: str | None = None
+) -> tuple[bool, str]:
     """One call to the Telegram API.
 
     The token goes in the URL because that is the API's design, and no part of
     this function returns or logs that URL. Errors report the API's message,
     never the request.
     """
-    settings = get_settings()
-    token = (getattr(settings, "telegram_bot_token", "") or "").strip()
+    if token is None:
+        settings = get_settings()
+        token = (getattr(settings, "telegram_bot_token", "") or "").strip()
     url = f"{API_ROOT}/bot{token}/{method}"
     # Checked rather than assumed. API_ROOT is a constant today, but a scheme
     # this function does not expect would turn a bot token into a file read or
@@ -149,7 +163,7 @@ def send(
     is right for a message a person asked for and wrong for one a checker
     produces - so the caller states which it is rather than this guessing.
     """
-    ready, reason = configured()
+    ready, reason = configured(session)
     if not ready:
         return Delivery(sent=False, reason=reason)
 
@@ -165,17 +179,36 @@ def send(
     if len(text) > MAX_MESSAGE:
         text = text[: MAX_MESSAGE - 40] + "\n\n[truncated]"
 
-    settings = get_settings()
-    chat = (getattr(settings, "telegram_chat_id", "") or "").strip()
-    ok, detail = _post(
-        "sendMessage",
-        {"chat_id": chat, "text": text, "disable_web_page_preview": "true"},
-    )
+    from app.services import telegram_settings
 
-    if ok and fingerprint and session is not None:
+    channel = telegram_settings.load(session)
+
+    # Every recipient, and the failures are named per recipient. One admin
+    # whose chat id went stale must not silence the alert for the others,
+    # and "sent to 2 of 3" is a different fact from "sent" - the operator
+    # who is not being reached is exactly the one who cannot notice.
+    delivered: list[str] = []
+    failures: list[str] = []
+    for chat in channel.chat_ids:
+        ok, detail = _post(
+            "sendMessage",
+            {"chat_id": chat, "text": text, "disable_web_page_preview": "true"},
+            token=channel.token,
+        )
+        if ok:
+            delivered.append(chat)
+        else:
+            failures.append(f"{chat}: {detail}")
+
+    sent = bool(delivered)
+    if sent and fingerprint and session is not None:
         incident_memory.mark_alerted(session, fingerprint, now=now)
 
-    return Delivery(sent=ok, reason=None if ok else detail, chat_id=chat if ok else None)
+    return Delivery(
+        sent=sent,
+        reason=None if not failures else "; ".join(failures),
+        chat_id=",".join(delivered) if delivered else None,
+    )
 
 
 def answer(text: str, *, source: str = "telegram") -> dict[str, Any]:
@@ -217,20 +250,27 @@ def answer(text: str, *, source: str = "telegram") -> dict[str, Any]:
     }
 
 
-def check() -> dict[str, Any]:
+def check(session: Session | None = None) -> dict[str, Any]:
     """Ask Telegram who this bot is, without sending anything to anybody.
 
     The one call worth making before trusting the configuration: a wrong token
     fails here rather than at the moment an alert matters.
     """
-    ready, reason = configured()
-    if not ready:
-        return {"configured": False, "reason": reason}
+    from app.services import telegram_settings
 
-    ok, detail = _post("getMe", {})
+    channel = telegram_settings.load(session)
+    ready, reason = configured(session)
+    if not ready:
+        return {
+            "configured": bool(channel.token),
+            "reason": reason,
+            **channel.as_dict(),
+        }
+
+    ok, detail = _post("getMe", {}, token=channel.token)
     return {
-        "configured": True,
         "reachable": ok,
         "detail": detail,
+        **channel.as_dict(),
         "note": "getMe sends nothing to the channel; it only proves the token works",
     }

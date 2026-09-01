@@ -29,7 +29,7 @@ def sent(monkeypatch):
     """Records what would have gone out, and never leaves the process."""
     calls: list[tuple[str, dict]] = []
 
-    def fake_post(method, payload):
+    def fake_post(method, payload, *, token=None):
         calls.append((method, payload))
         return True, "delivered"
 
@@ -183,13 +183,15 @@ class TestNothingLeaks:
         """An error containing the URL would put the token in whatever caught
         it."""
         monkeypatch.setattr(
-            telegram, "_post", lambda method, payload: (False, "chat not found")
+            telegram, "_post", lambda method, payload, *, token=None: (False, "chat not found")
         )
 
         result = telegram.send(message(), session=session, now=NOW)
 
         assert result.sent is False
-        assert result.reason == "chat not found"
+        # Named per recipient: with several admins on the list, "it failed"
+        # without saying whose id is stale is a failure nobody can fix.
+        assert result.reason.endswith("chat not found")
         assert "test-token" not in str(result.as_dict())
 
     def test_an_over_long_message_is_truncated_and_says_so(self, configured, sent, session):

@@ -26,6 +26,7 @@ from app.models.market_data import Bar, Tick
 from app.models.policy_rates import PolicyRateObservation
 from app.models.recovery_codes import RecoveryCode
 from app.models.symbol_dna import SymbolProfile
+from app.models.telegram_config import TelegramConfig
 from app.models.tenancy import ApiKey, Tenant, User
 from app.models.terminals import Terminal
 
@@ -35,6 +36,7 @@ __all__ = [
     "JournalEntry",
     "LoginAttempt",
     "PolicyRateObservation",
+    "TelegramConfig",
     "RecoveryCode",
     "ChallengeAccount",
     "ApiKey",

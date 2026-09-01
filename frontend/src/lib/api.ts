@@ -1178,6 +1178,21 @@ export const api = {
    *  when it was actually refused is a page that lies quietly. */
   users: () => request<UsersView>("/api/v1/users"),
   health: () => request<Health>("/health/ready"),
+  telegram: () =>
+    request<{
+      configured: boolean;
+      enabled: boolean;
+      masked_token: string | null;
+      chat_ids: string[];
+      recipients: number;
+      source: string;
+      ready: boolean;
+      reachable?: boolean;
+      detail?: string;
+      reason?: string;
+      allowed_commands?: string[];
+      why_read_only?: string;
+    }>("/api/v1/integrations/telegram"),
   systemSettings: () => request<SystemSettings>("/api/v1/system/settings"),
   riskLimits: () => request<RiskLimits>("/api/v1/risk/limits"),
   challenge: (params: Record<string, string | number>) =>
