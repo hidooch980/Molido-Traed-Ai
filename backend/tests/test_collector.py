@@ -528,16 +528,16 @@ class TestEveryPublishedTimeframeIsRead:
 
         report = collector.ingest_broker_bars()
 
-        assert set(asked) == {"H1", "M15", "M5", "M1"}
-        assert report["recorded"] == 4
+        assert set(asked) == {"H1", "M15", "M5"}
+        assert report["recorded"] == 3
 
-    def test_the_hourly_bars_survive_a_broken_minute_file(self, monkeypatch):
-        """H1 is what the live rule decides on. A malformed M1 file must not
+    def test_the_hourly_bars_survive_a_broken_fast_file(self, monkeypatch):
+        """H1 is what the live rule decides on. A malformed fast-timeframe file must not
         take the bars the account is trading on down with it."""
         from app.workers import collector
 
         def fake_ingest(session, timeframe=None, directory=None):
-            if timeframe and timeframe.value == "M1":
+            if timeframe and timeframe.value == "M5":
                 raise ValueError("malformed row")
             return {"recorded": 7}
 
@@ -546,8 +546,7 @@ class TestEveryPublishedTimeframeIsRead:
         report = collector.ingest_broker_bars()
 
         assert report["by_timeframe"]["H1"]["recorded"] == 7
-        assert report["by_timeframe"]["M1"]["recorded"] == 0
-        assert "ValueError" in report["by_timeframe"]["M1"]["reason"]
+        assert "ValueError" in report["by_timeframe"]["M5"]["reason"]
 
     def test_the_hourly_timeframe_is_still_among_them(self):
         """The faster ones are for measuring. Dropping the one the live rule

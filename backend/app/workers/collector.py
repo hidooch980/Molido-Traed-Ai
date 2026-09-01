@@ -405,7 +405,13 @@ def _broker_timeframes() -> tuple:
     """
     from app.core.enums import Timeframe
 
-    return (Timeframe.H1, Timeframe.M15, Timeframe.M5, Timeframe.M1)
+    # M1 is not here, and its absence is a measurement rather than a
+    # preference: the round trip costs about 0.52 R at one minute against a
+    # 0.25 R ceiling, so no M1 decision can ever pass the spread gate. Pulling
+    # those bars was a quarter of every cycle's work for a timeframe that
+    # cannot produce a trade - and the cycle was timing out before it reached
+    # the step that sends orders.
+    return (Timeframe.H1, Timeframe.M15, Timeframe.M5)
 
 
 def record_forward() -> dict[str, Any]:

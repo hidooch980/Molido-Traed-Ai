@@ -252,6 +252,12 @@ def materialize(
         # duplicate key aborted the whole collection cycle - which runs the
         # order step last, so the system stopped trading and said nothing
         # about why.
+        #: Rows per statement. Nine columns each, so a hundred rows is nine
+        #: hundred bound parameters - under SQLite's old 999 ceiling, which a
+        #: single statement for the whole pass blew through the moment ten new
+        #: indicators multiplied the row count.
+        chunk = 100
+
         from sqlalchemy.dialects.postgresql import insert as _pg_insert
 
         rows = [
@@ -268,9 +274,12 @@ def materialize(
             }
             for row in pending
         ]
-        session.execute(
-            _pg_insert(FeatureValue).values(rows).on_conflict_do_nothing()
-        )
+        for start_at in range(0, len(rows), chunk):
+            session.execute(
+                _pg_insert(FeatureValue)
+                .values(rows[start_at : start_at + chunk])
+                .on_conflict_do_nothing()
+            )
 
     session.flush()
     log.info(
