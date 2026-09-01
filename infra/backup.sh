@@ -17,8 +17,21 @@ ENV_FILE="$(dirname "$0")/.env.prod"
 BACKUP_DIR="$(dirname "$0")/backups"
 RETENTION_DAYS="${RETENTION_DAYS:-14}"
 
-# shellcheck disable=SC1090
-source "$ENV_FILE"
+# Read only the variables this script needs, never `source` the file: the
+# env file is docker-compose format, not shell, and the day a value grew a
+# space ("CADDY_TLS=tls internal") sourcing executed the second word, the
+# script died under `set -e`, and the nightly backup silently produced
+# nothing for a week. A backup that fails must fail loudly; one that can be
+# killed by an unrelated config line must not be possible.
+_env() {
+  grep -E "^$1=" "$ENV_FILE" | tail -1 | cut -d= -f2-
+}
+POSTGRES_USER="$(_env POSTGRES_USER)"
+POSTGRES_DB="$(_env POSTGRES_DB)"
+if [ -z "$POSTGRES_USER" ] || [ -z "$POSTGRES_DB" ]; then
+  echo "backup: POSTGRES_USER/POSTGRES_DB missing from $ENV_FILE" >&2
+  exit 1
+fi
 
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 FILE="molido-${STAMP}.dump"
