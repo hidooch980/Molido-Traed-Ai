@@ -474,3 +474,43 @@ class TestTheCostIsMeasuredNotAssumed:
         real = measure.cost_in_r(self.SPREAD, 0.00225)
 
         assert real > measure.COST_R * 5
+
+
+class TestInstantRowsForSlicing:
+    """One pass, sliced afterwards - by hour, session or year - instead of
+    one heavy walk per slice."""
+
+    def test_rows_are_kept_only_on_request(self):
+        from datetime import timedelta as _td
+
+        from app.learning.measure import Bar as MBar
+        from app.learning.measure import measure as _measure
+
+        start = datetime(2024, 1, 1, tzinfo=UTC)
+        series = {
+            f"S{i:02d}": [
+                MBar(
+                    at=start + _td(hours=k),
+                    open=100 + i + k * 0.1,
+                    high=101 + i + k * 0.1,
+                    low=99 + i + k * 0.1,
+                    close=100.5 + i + k * 0.1,
+                )
+                for k in range(200)
+            ]
+            for i in range(22)
+        }
+
+        silent = _measure(series, bar_interval=_td(hours=1), universe=None)
+        kept = _measure(
+            series, bar_interval=_td(hours=1), universe=None, keep_instants=True
+        )
+
+        assert silent.instant_rows is None
+        assert kept.instant_rows is not None
+        assert len(kept.instant_rows) == kept.instants
+        # The rows re-add to exactly the aggregates the summary reports.
+        assert abs(
+            sum(r for _, r, _ in kept.instant_rows) / len(kept.instant_rows)
+            - kept.rule_r
+        ) < 1e-12

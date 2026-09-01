@@ -103,6 +103,12 @@ class Measurement:
     unclustered_t: float
     dropped_undecided: int
     window: tuple[datetime, datetime] | None
+    #: One row per scored instant - (stamp, rule mean R, control mean R) -
+    #: kept only when the caller asked. This is what lets a single pass be
+    #: sliced afterwards (by hour, by session, by year) without re-walking
+    #: the series once per slice; the slicer recomputes its own paired t
+    #: from these rows rather than trusting any pre-aggregated number.
+    instant_rows: tuple[tuple[datetime, float, float], ...] | None = None
 
     @property
     def edge_r(self) -> float:
@@ -209,6 +215,7 @@ def measure(
     universe: frozenset[str] | None = crosssection.RANKED_UNIVERSE,
     only: frozenset[str] | None = None,
     rule: Any = None,
+    keep_instants: bool = False,
 ) -> Measurement:
     """Walk every instant in a stored series and score both arms.
 
@@ -234,6 +241,7 @@ def measure(
 
     rule_by_instant: list[float] = []
     control_by_instant: list[float] = []
+    kept_instants: list[datetime] = []
     per_trade: list[float] = []
     trades = 0
     dropped = 0
@@ -352,8 +360,10 @@ def measure(
         # t = -0.12 on the same trades.
         rule_by_instant.append(sum(rule_here) / len(rule_here))
         control_by_instant.append(sum(control_here) / len(control_here))
+        if keep_instants:
+            kept_instants.append(moment)
 
-    return _summarise(
+    summary = _summarise(
         rule_by_instant,
         control_by_instant,
         per_trade,
@@ -361,6 +371,16 @@ def measure(
         dropped=dropped,
         window=(instants[0], instants[-1]) if instants else None,
     )
+    if keep_instants:
+        from dataclasses import replace as _replace
+
+        summary = _replace(
+            summary,
+            instant_rows=tuple(
+                zip(kept_instants, rule_by_instant, control_by_instant, strict=True)
+            ),
+        )
+    return summary
 
 
 def _paired_t(differences: Sequence[float]) -> tuple[float, float]:
