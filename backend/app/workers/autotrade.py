@@ -1139,8 +1139,7 @@ def run_cycle(
             )
             continue
 
-        # Brains that contradict each other are refused, whatever the
-        # consensus setting says.
+        # A contradiction is settled by weight of opinion, not by veto.
         #
         # With one brain enough to act, a long from one and a short from
         # another on the same symbol at the same instant both became
@@ -1149,15 +1148,27 @@ def run_cycle(
         # has its own supporter and neither is outvoted.
         #
         # Disagreement is information rather than noise: the brains read
-        # the same bars and came to opposite conclusions, which is the
-        # one case where sitting out costs nothing and being wrong costs
-        # the spread twice.
+        # the same bars and reached opposite conclusions, and sitting out
+        # costs nothing while being wrong costs the spread twice.
+        #
+        # But refusing on *any* opposition was a veto, and with seven
+        # brains something is almost always on the other side: it blocked
+        # sixty-one of sixty-four decisions in one cycle, which is not
+        # caution, it is a system that has stopped. A single dissenter
+        # against three supporters is a minority, and treating it as a
+        # halt gives one brain more power than the other six together.
+        #
+        # So the side with more brains behind it wins, and a tie refuses:
+        # equal weight on both sides is exactly no information, which is
+        # the case sitting out was meant for.
         other_side = "short" if entry.decision == "long" else "long"
         against = votes.get((entry.symbol, other_side), set())
-        if against:
+        supporting = votes.get((entry.symbol, entry.decision), set())
+        if len(against) >= len(supporting):
             skipped.append(
-                f"{entry.symbol}: the brains disagree - "
-                f"{', '.join(sorted(against))} want the other side"
+                f"{entry.symbol}: {len(against)} brains want the other side "
+                f"against {len(supporting)} for it "
+                f"({', '.join(sorted(against))})"
             )
             continue
 

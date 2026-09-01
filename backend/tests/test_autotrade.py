@@ -2099,7 +2099,7 @@ class TestTheBrainsMustNotContradictEachOther:
         )
 
         assert report["orders"] == 0
-        assert any("disagree" in note for note in report["skipped"])
+        assert any("want the other side" in note for note in report["skipped"])
 
     def test_agreement_on_one_symbol_still_trades(self, session, live):
         decide(session, symbol="EURUSD", strategy="cross-sectional-stretch")
@@ -2190,3 +2190,93 @@ class TestTheBookIsCountedInCurrencies:
         assert all(
             p.base_currency and p.quote_currency for p in seen.get("positions", [])
         )
+
+
+class TestTheMajorityDecides:
+    """Refusing on any opposition was a veto: with seven brains something is
+    almost always on the other side, and it blocked sixty-one of sixty-four
+    decisions in one cycle. That is not caution, it is a system that has
+    stopped."""
+
+    def test_a_lone_dissenter_does_not_stop_three_supporters(
+        self, session, live
+    ):
+        decide(session, symbol="EURUSD", strategy="cross-sectional-stretch")
+        decide(
+            session,
+            symbol="EURUSD",
+            timeframe="M15",
+            at=NOW - timedelta(minutes=6),
+            strategy="trend-following",
+        )
+        decide(
+            session,
+            symbol="EURUSD",
+            timeframe="M5",
+            at=NOW - timedelta(minutes=7),
+            strategy="donchian-breakout",
+        )
+        decide(
+            session,
+            symbol="EURUSD",
+            timeframe="D1",
+            at=NOW - timedelta(minutes=8),
+            strategy="time-series-momentum",
+            decision="short",
+        )
+        broker = FakeBroker()
+
+        report = autotrade.run_cycle(
+            session, now=NOW, broker=broker, bridge=FakeBridge()
+        )
+
+        assert report["orders"] >= 1
+
+    def test_a_tie_still_refuses(self, session, live):
+        """Equal weight on both sides is exactly no information, which is the
+        case sitting out was meant for."""
+        decide(session, symbol="EURUSD", strategy="cross-sectional-stretch")
+        decide(
+            session,
+            symbol="EURUSD",
+            timeframe="M15",
+            at=NOW - timedelta(minutes=6),
+            strategy="trend-following",
+            decision="short",
+        )
+        broker = FakeBroker()
+
+        report = autotrade.run_cycle(
+            session, now=NOW, broker=broker, bridge=FakeBridge()
+        )
+
+        assert report["orders"] == 0
+
+    def test_the_minority_side_is_refused(self, session, live):
+        """The decision being checked is the one on the losing side."""
+        decide(session, symbol="EURUSD", strategy="cross-sectional-stretch")
+        decide(
+            session,
+            symbol="EURUSD",
+            timeframe="M15",
+            at=NOW - timedelta(minutes=6),
+            strategy="trend-following",
+            decision="short",
+        )
+        decide(
+            session,
+            symbol="EURUSD",
+            timeframe="M5",
+            at=NOW - timedelta(minutes=7),
+            strategy="donchian-breakout",
+            decision="short",
+        )
+        broker = FakeBroker()
+
+        report = autotrade.run_cycle(
+            session, now=NOW, broker=broker, bridge=FakeBridge()
+        )
+
+        # Two shorts against one long: the long is refused, and the shorts
+        # are free to trade.
+        assert any("want the other side" in note for note in report["skipped"])
