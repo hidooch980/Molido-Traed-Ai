@@ -92,6 +92,15 @@ def _instrument(session: Session, symbol: str) -> Instrument:
     return row
 
 
+#: The timeframe whose alignment decides the broker's clock.
+#:
+#: The hourly file is the deepest the bridge publishes, and depth is what an
+#: alignment needs: the faster files hold a few days and produce ties between
+#: candidate offsets that are honestly refused. One measurement, taken where
+#: the evidence is, applied to every timeframe from the same terminal.
+OFFSET_REFERENCE_TIMEFRAME = Timeframe.H1
+
+
 def _measure_offset(
     session: Session, root: pathlib.Path, timeframe: Timeframe
 ) -> broker_offset.Offset:
@@ -160,6 +169,25 @@ def ingest(
     # every bar it touches and looks entirely normal doing it - which is what
     # the old GMT+0 constant did for three weeks.
     offset = _measure_offset(session, root, timeframe)
+    if not offset.known and timeframe is not OFFSET_REFERENCE_TIMEFRAME:
+        # A clock offset is a property of the broker, not of the timeframe.
+        #
+        # The faster files carry a fraction of the history, so the alignment
+        # has far less overlap to work with and two candidate offsets come out
+        # nearly tied - on M15 the winner missed by 4.21 pips against a
+        # runner-up at 4.35, which is not evidence and is correctly refused.
+        # The hourly file, aligned over 487 shared bars, separates them
+        # cleanly at 3.47 against 4.89.
+        #
+        # So the ambiguous measurement is replaced by the confident one from
+        # the same broker rather than by a constant. Refusing instead meant
+        # the M15 and M5 series were never stored at all, which left the fast
+        # timeframes empty and every short-horizon decision impossible - and
+        # nothing said so, because "no bars" is what an untraded market looks
+        # like too.
+        borrowed = _measure_offset(session, root, OFFSET_REFERENCE_TIMEFRAME)
+        if borrowed.known:
+            offset = borrowed
     if not offset.known:
         return {
             "ingested": 0,
@@ -174,6 +202,9 @@ def ingest(
     written = 0
     files = 0
     failures: list[str] = []
+    #: Half-written lines skipped. Counted rather than silent: a file that is
+    #: mostly torn is a bridge problem, and a count is what shows that.
+    torn = 0
 
     for path in sorted(root.glob(f"molido_bars_*_{timeframe.value}.csv")):
         symbol = path.name[len("molido_bars_") : -len(f"_{timeframe.value}.csv")]
@@ -195,6 +226,23 @@ def ingest(
                         ).replace(tzinfo=UTC)
                         - shift
                     )
+                    # A short row is dropped, not fatal. The bridge writes
+                    # while the terminal is appending, so the last line of a
+                    # file is sometimes half-written - and a whole symbol's
+                    # history refused because of one torn line is a series
+                    # that never arrives. The four prices are required
+                    # together: a bar missing its high is not a bar.
+                    try:
+                        prices = {
+                            "open": float(row["open"]),
+                            "high": float(row["high"]),
+                            "low": float(row["low"]),
+                            "close": float(row["close"]),
+                        }
+                    except (TypeError, ValueError, KeyError):
+                        torn += 1
+                        continue
+
                     rows.append(
                         {
                             "instrument_id": instrument.id,
@@ -203,10 +251,7 @@ def ingest(
                             "event_time": stamp,
                             "revision": 1,
                             "ingested_at": moment,
-                            "open": float(row["open"]),
-                            "high": float(row["high"]),
-                            "low": float(row["low"]),
-                            "close": float(row["close"]),
+                            **prices,
                             "volume": float(row.get("volume") or 0.0),
                             "quality_score": 1.0,
                             "source_ref": f"metatrader:{symbol}:{timeframe.value}",
@@ -246,6 +291,7 @@ def ingest(
     return {
         "ingested": written,
         "files": files,
+        "torn_rows": torn,
         "provider": PROVIDER_CODE,
         "clock_offset": offset.as_dict(),
         "failures": failures,

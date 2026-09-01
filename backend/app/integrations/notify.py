@@ -43,7 +43,22 @@ from app.core.errors import ValidationFailedError
 # anything that opens, closes, resizes or authorises a position, and anything
 # that changes a limit.
 READ_ONLY_COMMANDS = frozenset(
-    {"status", "positions", "health", "why_no_trade", "journal", "drawdown", "help"}
+    {
+        "status",
+        "positions",
+        "health",
+        "why_no_trade",
+        "journal",
+        "drawdown",
+        "help",
+        # Added deliberately and visibly, which is the point of an allowlist:
+        # each one is a question with a published answer and no side effect.
+        "accounts",
+        "orders",
+        "brains",
+        "challenge",
+        "prices",
+    }
 )
 
 # A webhook older than this is refused even with a valid signature: a captured

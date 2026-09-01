@@ -44,10 +44,26 @@ BATCH = 10
 #: the buttons are a way to type them, never a way around them.
 KEYBOARD: tuple[tuple[tuple[str, str], ...], ...] = (
     (("📊 وضعیت", "status"), ("📈 پوزیشن‌ها", "positions")),
-    (("🩺 سلامت", "health"), ("📉 افت سرمایه", "drawdown")),
+    (("💼 حساب‌ها", "accounts"), ("🧾 سفارش‌ها", "orders")),
+    (("🧠 مغزها", "brains"), ("🏆 چلنج", "challenge")),
+    (("💱 قیمت‌ها", "prices"), ("📉 افت سرمایه", "drawdown")),
     (("📓 ژورنال", "journal"), ("🤔 چرا معامله نشد", "why_no_trade")),
-    (("❓ راهنما", "help"),),
+    (("🩺 سلامت", "health"), ("❓ راهنما", "help")),
 )
+
+#: The same commands as a keyboard that stays at the bottom of the chat.
+#:
+#: Inline buttons hang off the message that carried them, so they scroll away
+#: and the operator is back to typing - which is what "it is commands, not
+#: buttons" means in practice. A reply keyboard persists until it is replaced,
+#: so the menu is there on the next question and the one after that.
+#:
+#: The labels are the same strings the inline buttons use, and the router
+#: below maps a label back to its command - so a tap on either keyboard walks
+#: exactly the same allowlist. Two keyboards, one door.
+LABEL_TO_COMMAND: dict[str, str] = {
+    label: command for row in KEYBOARD for label, command in row
+}
 
 TITLES: dict[str, str] = {
     "status": "وضعیت سامانه",
@@ -57,6 +73,11 @@ TITLES: dict[str, str] = {
     "journal": "ژورنال تصمیم‌ها",
     "why_no_trade": "چرا معامله‌ای انجام نشد",
     "help": "راهنما",
+    "accounts": "حساب‌ها",
+    "orders": "سفارش‌های اخیر",
+    "brains": "مغزها",
+    "challenge": "چلنج",
+    "prices": "قیمت‌های زنده",
 }
 
 
@@ -66,6 +87,18 @@ class Reply:
 
     text: str
     keyboard: bool = True
+
+
+def _reply_keyboard() -> dict[str, Any]:
+    """The persistent keyboard: rows of labels, kept until replaced."""
+    return {
+        "keyboard": [
+            [{"text": label} for label, _command in row] for row in KEYBOARD
+        ],
+        "resize_keyboard": True,
+        "is_persistent": True,
+        "input_field_placeholder": "یک دکمه را بزنید",
+    }
 
 
 def _keyboard_payload() -> dict[str, Any]:
@@ -233,12 +266,17 @@ def _help(session: Session) -> str:
             "این ربات به سؤال پاسخ می‌دهد و هیچ کاری انجام نمی‌دهد.",
             "",
             "دستورها:",
-            "/status — حالت اجرا و حساب‌ها",
+            "/status — حالت اجرا و خلاصهٔ حساب‌ها",
+            "/accounts — هر ترمینال، موجودی و اکوئیتی",
             "/positions — پوزیشن‌های باز",
-            "/health — سلامت سرویس‌ها",
+            "/orders — سفارش‌های ۳۰ ساعت اخیر و پاسخ بروکر",
+            "/prices — قیمت زندهٔ ترمینال",
+            "/brains — کدام مغز برای کدام حساب",
+            "/challenge — قوانین پراپ و سقف‌ها",
             "/drawdown — سود و زیان شناور",
             "/journal — کارنامهٔ هفتگی مغزها",
-            "/why_no_trade — دلیل نام‌برده‌شدهٔ آخرین ردها",
+            "/why_no_trade — دلیل نام‌بردهٔ آخرین ردها",
+            "/health — سلامت سرویس‌ها",
             "",
             "هیچ پیامی از اینجا نمی‌تواند سفارشی ثبت کند. برای معامله، کلید API با "
             "مجوز اجرا لازم است که جای دیگری نگهداری می‌شود.",
@@ -246,8 +284,17 @@ def _help(session: Session) -> str:
     )
 
 
+# The detailed answers live in `telegram_answers`, which changes when a
+# question is added and never when the transport changes.
+from app.integrations import telegram_answers as _answers  # noqa: E402
+
 ANSWERS = {
     "status": _status,
+    "accounts": _answers.accounts,
+    "orders": _answers.orders,
+    "brains": _answers.brains,
+    "challenge": _answers.challenge,
+    "prices": _answers.prices,
     "positions": _positions,
     "health": _health,
     "drawdown": _drawdown,
@@ -397,14 +444,28 @@ def poll(session: Session, *, limit: int = BATCH) -> dict[str, Any]:
             )
             continue
 
+        # A tap on the persistent keyboard arrives as the label's text,
+        # not as a command. Mapped back here so both keyboards and a
+        # typed command walk exactly the same allowlist - the menu is a
+        # way to type, never a second door.
+        text = LABEL_TO_COMMAND.get(text.strip(), text)
+
         if text.strip().lstrip("/").lower() in {"start", "menu"}:
+            opening = True
             reply = Reply(
                 "*MolidoTrade AI*\n\nیکی را انتخاب کنید. این کانال فقط پاسخ "
                 "می‌دهد و هرگز سفارشی ثبت نمی‌کند."
             )
         else:
+            opening = False
             reply = answer_command(session, text)
 
+        # The persistent keyboard is installed once, with the welcome.
+        # Sending it on every reply would redraw the menu under each
+        # answer and push the answer itself off the screen.
+        markup: dict[str, Any] = (
+            _reply_keyboard() if opening else _keyboard_payload()
+        )
         telegram.api_call(
             "sendMessage",
             {
@@ -412,11 +473,7 @@ def poll(session: Session, *, limit: int = BATCH) -> dict[str, Any]:
                 "text": reply.text,
                 "parse_mode": "Markdown",
                 "disable_web_page_preview": "true",
-                **(
-                    {"reply_markup": _keyboard_payload()}
-                    if reply.keyboard
-                    else {}
-                ),
+                **({"reply_markup": markup} if reply.keyboard else {}),
             },
             token=channel.token,
         )
