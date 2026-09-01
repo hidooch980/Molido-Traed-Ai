@@ -343,6 +343,167 @@ class CarryDifferential:
 
 
 
+@dataclass(frozen=True)
+class TrendFollowing:
+    """Hold what is above its own long average, sell what is below it.
+
+    The oldest systematic idea there is, and the one this platform did not
+    have: every brain here so far ranks instruments against each other or
+    against their own recent mean, and none of them simply asks whether a
+    market is in an uptrend.
+
+    Judged per instrument rather than across the cross-section, which is what
+    makes it usable on a short list. The incumbent needs twenty instruments
+    before a ranking means anything; this one needs one.
+
+    The signal is the fast average against the slow one, in units of the
+    instrument's own volatility. Dividing by ATR is what lets a seven-symbol
+    list hold gold and EURUSD together: without it the comparison is between
+    a four-thousand-dollar instrument and a one-dollar one, and gold wins
+    every ranking on arithmetic rather than on trend.
+    """
+
+    name: str = "trend-following"
+    fast: int = 20
+    slow: int = 100
+    lookback: int = 100
+    per_side: int = 2
+
+    def __call__(
+        self, snapshot: dict[str, dict[str, Any]], *, universe: frozenset[str] | None
+    ) -> Picks:
+        scored: list[tuple[float, str]] = []
+        for symbol in _eligible(snapshot, universe):
+            closes = _closes(snapshot, symbol)
+            bars = list(snapshot.get(symbol, {}).get("bars") or [])
+            if len(closes) < self.slow or len(bars) < self.slow:
+                continue
+            fast = sum(closes[-self.fast :]) / self.fast
+            slow = sum(closes[-self.slow :]) / self.slow
+            atr = crosssection.average_true_range(bars[-self.slow :])
+            if not atr:
+                continue
+            scored.append(((fast - slow) / atr, symbol))
+
+        if len(scored) < self.per_side * 2:
+            return Picks(
+                declined=f"only {len(scored)} instruments have {self.slow} bars"
+            )
+
+        scored.sort()
+        return Picks(
+            longs=tuple(symbol for _, symbol in scored[-self.per_side :]),
+            shorts=tuple(symbol for _, symbol in scored[: self.per_side]),
+        )
+
+
+@dataclass(frozen=True)
+class RSIMeanReversion:
+    """Buy what is oversold on its own scale, sell what is overbought.
+
+    RSI is bounded 0-100 by construction, so no volatility normalisation is
+    needed and gold competes with EURUSD on equal terms - which is the whole
+    reason to use a bounded oscillator on a mixed list.
+
+    The thresholds are the published ones, 30 and 70, not numbers tuned here.
+    A threshold chosen to fit this data would make the measurement that
+    follows a measurement of the tuning.
+    """
+
+    name: str = "rsi-mean-reversion"
+    period: int = 14
+    lookback: int = 15
+    oversold: float = 30.0
+    overbought: float = 70.0
+    per_side: int = 2
+
+    def _rsi(self, closes: list[float]) -> float | None:
+        window = closes[-(self.period + 1) :]
+        if len(window) < self.period + 1:
+            return None
+        gains = [max(b - a, 0.0) for a, b in zip(window, window[1:], strict=False)]
+        losses = [max(a - b, 0.0) for a, b in zip(window, window[1:], strict=False)]
+        average_gain = sum(gains) / self.period
+        average_loss = sum(losses) / self.period
+        if average_loss == 0:
+            return 100.0 if average_gain > 0 else 50.0
+        strength = average_gain / average_loss
+        return 100 - (100 / (1 + strength))
+
+    def __call__(
+        self, snapshot: dict[str, dict[str, Any]], *, universe: frozenset[str] | None
+    ) -> Picks:
+        scored: list[tuple[float, str]] = []
+        for symbol in _eligible(snapshot, universe):
+            value = self._rsi(_closes(snapshot, symbol))
+            if value is None:
+                continue
+            scored.append((value, symbol))
+
+        longs = tuple(s for v, s in sorted(scored) if v <= self.oversold)
+        shorts = tuple(
+            s for v, s in sorted(scored, reverse=True) if v >= self.overbought
+        )
+        if not longs and not shorts:
+            # Nothing is stretched, which is most of the time and is not a
+            # failure: an oscillator that always has an opinion is not an
+            # oscillator, it is a coin.
+            return Picks(declined="nothing is oversold or overbought")
+        return Picks(
+            longs=longs[: self.per_side], shorts=shorts[: self.per_side]
+        )
+
+
+@dataclass(frozen=True)
+class DonchianBreakout:
+    """Buy a new high, sell a new low - the Turtle rule, unchanged.
+
+    Fifty-five bars is the published channel, and the entry is the break
+    itself rather than a confirmation of it: waiting for a close beyond the
+    channel and then waiting again is a different rule with a different name.
+
+    The channel is measured on the bars *before* this one, so a bar cannot
+    break a high it set itself. That is not a refinement - including the
+    current bar makes every bar its own breakout and the rule fires
+    constantly on nothing.
+    """
+
+    name: str = "donchian-breakout"
+    channel: int = 55
+    lookback: int = 56
+    per_side: int = 2
+
+    def __call__(
+        self, snapshot: dict[str, dict[str, Any]], *, universe: frozenset[str] | None
+    ) -> Picks:
+        longs: list[tuple[float, str]] = []
+        shorts: list[tuple[float, str]] = []
+        for symbol in _eligible(snapshot, universe):
+            bars = list(snapshot.get(symbol, {}).get("bars") or [])
+            if len(bars) < self.channel + 1:
+                continue
+            prior = bars[-(self.channel + 1) : -1]
+            highest = max(high for high, _low, _close in prior)
+            lowest = min(low for _high, low, _close in prior)
+            close = bars[-1][2]
+            atr = crosssection.average_true_range(bars[-(self.channel + 1) :])
+            if not atr:
+                continue
+            if close > highest:
+                longs.append(((close - highest) / atr, symbol))
+            elif close < lowest:
+                shorts.append(((lowest - close) / atr, symbol))
+
+        if not longs and not shorts:
+            return Picks(declined="no instrument broke its channel")
+        longs.sort(reverse=True)
+        shorts.sort(reverse=True)
+        return Picks(
+            longs=tuple(s for _, s in longs[: self.per_side]),
+            shorts=tuple(s for _, s in shorts[: self.per_side]),
+        )
+
+
 #: Every candidate, by name. Adding one here is the whole cost of testing it.
 CANDIDATES: dict[str, Rule] = {
     rule.name: rule  # type: ignore[misc]
@@ -351,6 +512,9 @@ CANDIDATES: dict[str, Rule] = {
         TimeSeriesMomentum(),
         ShortHorizonReversal(),
         CarryDifferential(),
+        TrendFollowing(),
+        RSIMeanReversion(),
+        DonchianBreakout(),
     )
 }
 

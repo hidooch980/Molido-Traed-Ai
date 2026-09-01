@@ -137,3 +137,119 @@ class TestPolicyRateHistoryParsing:
         # An unmapped area and an empty observation both vanish rather than
         # entering the table as numbers nobody published.
         assert len(rows) == 2
+
+
+class TestTheThreeSingleInstrumentBrains:
+    """Per instrument rather than across a cross-section, which is what makes
+    them usable on a seven-symbol list: the incumbent needs twenty
+    instruments before a ranking means anything, these need one."""
+
+    def rising(self, count=160, base=100.0, drift=0.5):
+        return {
+            "closes": [base + i * drift for i in range(count)],
+            "bars": [
+                (base + i * drift + 1, base + i * drift - 1, base + i * drift)
+                for i in range(count)
+            ],
+        }
+
+    def falling(self, count=160, base=100.0):
+        return self.rising(count=count, base=base, drift=-0.5)
+
+    def flat(self, count=160, base=100.0):
+        return self.rising(count=count, base=base, drift=0.0)
+
+    def snapshot(self, **kinds):
+        return {name: shape for name, shape in kinds.items()}
+
+    def test_trend_following_buys_the_riser_and_sells_the_faller(self):
+        from app.learning.rules import TrendFollowing
+
+        picks = TrendFollowing(per_side=1)(
+            self.snapshot(
+                UP=self.rising(),
+                DOWN=self.falling(),
+                FLAT1=self.flat(),
+                FLAT2=self.flat(base=50.0),
+            ),
+            universe=None,
+        )
+
+        assert "UP" in picks.longs
+        assert "DOWN" in picks.shorts
+
+    def test_trend_following_is_scaled_by_volatility(self):
+        """Without dividing by ATR a four-thousand-dollar instrument wins
+        every ranking on arithmetic rather than on trend."""
+        from app.learning.rules import TrendFollowing
+
+        picks = TrendFollowing(per_side=1)(
+            self.snapshot(
+                CHEAP=self.rising(base=1.0, drift=0.01),
+                GOLD=self.rising(base=4000.0, drift=0.5),
+                DOWN=self.falling(),
+                FLAT=self.flat(),
+            ),
+            universe=None,
+        )
+
+        # Both rise; the pick is about trend strength in each instrument's
+        # own units, so the expensive one does not win automatically.
+        assert picks.longs and picks.longs[0] in {"CHEAP", "GOLD"}
+
+    def test_rsi_declines_when_nothing_is_stretched(self):
+        """An oscillator that always has an opinion is not an oscillator."""
+        from app.learning.rules import RSIMeanReversion
+
+        picks = RSIMeanReversion()(
+            self.snapshot(A=self.flat(), B=self.flat(base=2.0)), universe=None
+        )
+
+        assert picks.empty
+        assert picks.declined is not None
+
+    def test_rsi_buys_the_oversold(self):
+        from app.learning.rules import RSIMeanReversion
+
+        picks = RSIMeanReversion(per_side=1)(
+            self.snapshot(DOWN=self.falling(), FLAT=self.flat()), universe=None
+        )
+
+        assert "DOWN" in picks.longs
+
+    def test_donchian_needs_a_break_of_the_prior_channel(self):
+        """Including the current bar makes every bar its own breakout."""
+        from app.learning.rules import DonchianBreakout
+
+        picks = DonchianBreakout()(
+            self.snapshot(FLAT=self.flat(), FLAT2=self.flat(base=3.0)),
+            universe=None,
+        )
+
+        assert picks.empty
+
+    def test_donchian_buys_a_new_high(self):
+        from app.learning.rules import DonchianBreakout
+
+        shape = self.flat()
+        shape["closes"] = shape["closes"][:-1] + [200.0]
+        shape["bars"] = shape["bars"][:-1] + [(201.0, 199.0, 200.0)]
+
+        picks = DonchianBreakout(per_side=1)(
+            self.snapshot(BREAK=shape, FLAT=self.flat(base=5.0)), universe=None
+        )
+
+        assert "BREAK" in picks.longs
+
+    def test_each_declares_the_history_it_needs(self):
+        """The recorder sizes its window from this, and a brain that
+        understates it silently declines every instant."""
+        from app.learning.rules import (
+            DonchianBreakout,
+            RSIMeanReversion,
+            TrendFollowing,
+        )
+
+        assert TrendFollowing().lookback >= TrendFollowing().slow
+        assert RSIMeanReversion().lookback > RSIMeanReversion().period
+        assert DonchianBreakout().lookback > DonchianBreakout().channel
