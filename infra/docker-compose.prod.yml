@@ -22,6 +22,8 @@ x-backend-env: &backend-env
   # Which brain each account trades, "login=strategy,...". Unset means every
   # account trades the incumbent, exactly as before brains were separable.
   MOLIDO_ACCOUNT_STRATEGIES: ${MOLIDO_ACCOUNT_STRATEGIES:-}
+  # The council gate: how many brains must agree before an order is sent.
+  MOLIDO_CONSENSUS_REQUIRED: ${MOLIDO_CONSENSUS_REQUIRED:-1}
   MOLIDO_ENV: production
   MOLIDO_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
   MOLIDO_REDIS_URL: redis://redis:6379/0
