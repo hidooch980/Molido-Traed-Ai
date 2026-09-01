@@ -510,6 +510,38 @@ def move_challenge_account(
     }
 
 
+@router.delete("/challenge-accounts/{account_id}")
+def delete_challenge_account(
+    account_id: uuid.UUID,
+    _: Principal = RULEBOOK_WRITE,
+    session: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Delete an account that should never have been recorded.
+
+    Switching off is the ordinary answer and stays the default in the UI: a
+    failed challenge is history worth keeping. This is for the row that is
+    not history - a typo, a test, a program abandoned before it was traded -
+    because an off-switched account nobody can remove turns the page into a
+    list somebody has to read past, and a page read past is a page not read.
+
+    Behind `rulebook.write` like the rest of this group: removing an account
+    removes the limits measured against it.
+    """
+    label = challenge_accounts.remove(
+        session,
+        tenant_id=challenge_accounts.default_tenant(session),
+        account_id=account_id,
+    )
+    return {
+        "deleted": True,
+        "label": label,
+        "note": (
+            "deleted, not hidden. An account with history worth keeping "
+            "should be switched off instead"
+        ),
+    }
+
+
 @router.post("/challenge-accounts/{account_id}/active")
 def set_challenge_account_active(
     account_id: uuid.UUID,

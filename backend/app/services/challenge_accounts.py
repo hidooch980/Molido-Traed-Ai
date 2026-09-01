@@ -423,6 +423,40 @@ def set_active(
     return account
 
 
+def remove(
+    session: Session, *, tenant_id: uuid.UUID, account_id: uuid.UUID
+) -> str:
+    """Delete an account and everything it knows. Returns its label.
+
+    `set_active` exists for the ordinary case and is what almost every
+    situation wants: a failed challenge, an account between funding rounds,
+    one whose holder stepped away - all real accounts with real history, kept
+    and measured against nothing.
+
+    This is the other case, and it is narrower than it looks: an account that
+    should never have been written down. A typo, a test row, a program the
+    holder abandoned before trading it. For those, "switched off" is clutter
+    that outlives its usefulness on a page somebody reads under pressure, and
+    a page nobody trusts to be current is a page nobody reads at all.
+
+    It really deletes. The alternative - a hidden flag - produces two kinds
+    of invisible account whose difference nobody can see, which is how a
+    deleted row comes back after somebody clears a filter.
+    """
+    account = session.scalar(
+        select(ChallengeAccount).where(
+            ChallengeAccount.id == account_id, ChallengeAccount.tenant_id == tenant_id
+        )
+    )
+    if account is None:
+        raise NotFoundError("No challenge account with that id.")
+
+    label = account.label
+    session.delete(account)
+    session.flush()
+    return label
+
+
 def listing(session: Session, *, tenant_id: uuid.UUID | None = None) -> list[AccountView]:
     query = select(ChallengeAccount).order_by(ChallengeAccount.created_at)
     if tenant_id is not None:

@@ -451,6 +451,44 @@ RULEBOOKS: tuple[Rulebook, ...] = (
         notes=(_CLOSED_ONLY, "maximum loss is static", _INACTIVITY, _MARGIN, _AUTOMATION),
     ),
     Rulebook(
+        key="fundednext-free-trial",
+        provider="FundedNext",
+        program="Free Trial",
+        phase="trial",
+        rules=ChallengeRules(
+            # Transcribed from the account's own Trading Objectives panel on
+            # 1 Sep 2026, for account 34838666 at $15,000: "Profit target
+            # $750", "Min trading days 3 Days", "Daily loss limit (-5%) $750",
+            # "Max loss limit (-10%) $1,500". Read as percentages of the
+            # starting balance, which is how the panel labels the two limits.
+            #
+            # The general-rules page carries no Free Trial column - it lists
+            # the paid Stellar programs, whose 2-Step phase 1 asks 8% over 5
+            # days. Copying those numbers here would have set a target half
+            # again too high and a day count that fails this account for being
+            # too quick. So the account's own page is the source, and it is a
+            # first-party, dated reading rather than an inference from a
+            # neighbouring product.
+            profit_target_pct=0.05,
+            max_daily_drawdown_pct=0.05,
+            max_total_drawdown_pct=0.10,
+            min_trading_days=3,
+            **_COMMON,
+            max_leverage=_LEVERAGE_2STEP_AND_LITE,
+        ),
+        source="https://app.fundednext.com/accounts (account 34838666 overview)",
+        retrieved=date(2026, 9, 1),
+        notes=(
+            _CLOSED_ONLY,
+            "maximum loss is static",
+            _INACTIVITY,
+            _MARGIN,
+            _AUTOMATION,
+            "the trial's objectives are read from the account page rather "
+            "than the general-rules table, which has no Free Trial column",
+        ),
+    ),
+    Rulebook(
         key="fundednext-stellar-instant",
         provider="FundedNext",
         program="Stellar Instant",

@@ -1,4 +1,5 @@
 import { AccountPhaseMove } from "@/components/AccountPhaseMove";
+import { AccountDelete } from "@/components/AccountDelete";
 import { AccountSwitch } from "@/components/AccountSwitch";
 import { ChallengeAccountForm } from "@/components/ChallengeAccountForm";
 import { Empty, Offline, Panel, Pill, Stat, StatusBadge } from "@/components/ui";
@@ -305,6 +306,22 @@ export default async function ChallengePage() {
                           failed: t("challenge.switchFailed"),
                         }}
                       />
+                      {/* Beside the switch and deliberately quieter: off is
+                          the right answer for a failed challenge, and this is
+                          for the row that should never have been recorded. */}
+                      <div className="mt-1">
+                        <AccountDelete
+                          id={account.id}
+                          labels={{
+                            delete: t("challenge.delete"),
+                            confirm: t("challenge.deleteConfirm"),
+                            cancel: t("challenge.deleteCancel"),
+                            deleting: t("challenge.deleting"),
+                            failed: t("challenge.deleteFailed"),
+                            signInFirst: t("challenge.signInFirst"),
+                          }}
+                        />
+                      </div>
                     </td>
                   </tr>
                 ))}

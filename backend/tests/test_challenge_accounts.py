@@ -656,3 +656,85 @@ class TestWhatCannotMove:
         )
 
         assert response.status_code >= 400
+
+
+class TestRemovingAnAccountThatShouldNotExist:
+    """Off is the ordinary answer; this is for the row that is not history."""
+
+    def make(self, session):
+        from decimal import Decimal
+
+        from app.services import challenge_accounts
+
+        return challenge_accounts.create(
+            session,
+            tenant_id=challenge_accounts.default_tenant(session),
+            label="typo",
+            rulebook_key="fundednext-free-trial",
+            starting_balance=Decimal("15000"),
+        )
+
+    def test_a_deleted_account_is_gone_not_hidden(self, session):
+        from app.services import challenge_accounts
+
+        account = self.make(session)
+        tenant = challenge_accounts.default_tenant(session)
+
+        label = challenge_accounts.remove(
+            session, tenant_id=tenant, account_id=account.id
+        )
+
+        assert label == "typo"
+        assert all(
+            view.account.id != account.id
+            for view in challenge_accounts.listing(session, tenant_id=tenant)
+        )
+
+    def test_deleting_an_unknown_account_is_named(self, session):
+        import uuid
+
+        import pytest
+
+        from app.core.errors import NotFoundError
+        from app.services import challenge_accounts
+
+        with pytest.raises(NotFoundError):
+            challenge_accounts.remove(
+                session,
+                tenant_id=challenge_accounts.default_tenant(session),
+                account_id=uuid.uuid4(),
+            )
+
+
+class TestTheFreeTrialRulebook:
+    """Transcribed from the account's own objectives panel, because the
+    general-rules table has no Free Trial column."""
+
+    def test_it_asks_for_five_percent_over_three_days(self):
+        from app.brain import rulebooks
+
+        book = rulebooks.get("fundednext-free-trial")
+
+        assert book is not None
+        assert book.rules.profit_target_pct == 0.05
+        assert book.rules.min_trading_days == 3
+
+    def test_it_does_not_inherit_the_paid_program_numbers(self):
+        """Copying Stellar 2-Step would set a target half again too high and
+        a day count that fails this account for being too quick."""
+        from app.brain import rulebooks
+
+        trial = rulebooks.get("fundednext-free-trial")
+        paid = rulebooks.get("fundednext-stellar-2step-phase1")
+
+        assert trial.rules.profit_target_pct != paid.rules.profit_target_pct
+        assert trial.rules.min_trading_days != paid.rules.min_trading_days
+
+    def test_the_loss_limits_match_the_panel(self):
+        from app.brain import rulebooks
+
+        book = rulebooks.get("fundednext-free-trial")
+
+        # $750 daily and $1,500 total on a $15,000 account.
+        assert book.rules.max_daily_drawdown_pct * 15000 == 750
+        assert book.rules.max_total_drawdown_pct * 15000 == 1500
