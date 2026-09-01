@@ -1088,7 +1088,10 @@ def run_cycle(
     skipped: list[str] = []
 
     required = _consensus_required()
-    votes = _fresh_votes(session, moment) if required > 1 else {}
+    # Always built, not only when a majority is demanded: the votes are
+    # what tell agreement from contradiction, and contradiction is worth
+    # acting on even when one brain is enough to act.
+    votes = _fresh_votes(session, moment)
 
     for entry in candidates:
         # Resolved before the per-symbol cap, because the cap is about the
@@ -1105,6 +1108,28 @@ def run_cycle(
         if len(sent) >= room:
             skipped.append(
                 f"{entry.symbol}: the open-position cap was reached in this cycle"
+            )
+            continue
+
+        # Brains that contradict each other are refused, whatever the
+        # consensus setting says.
+        #
+        # With one brain enough to act, a long from one and a short from
+        # another on the same symbol at the same instant both became
+        # orders: the fleet ends up flat and pays two spreads for the
+        # privilege. Counting agreement does not catch this - each side
+        # has its own supporter and neither is outvoted.
+        #
+        # Disagreement is information rather than noise: the brains read
+        # the same bars and came to opposite conclusions, which is the
+        # one case where sitting out costs nothing and being wrong costs
+        # the spread twice.
+        other_side = "short" if entry.decision == "long" else "long"
+        against = votes.get((entry.symbol, other_side), set())
+        if against:
+            skipped.append(
+                f"{entry.symbol}: the brains disagree - "
+                f"{', '.join(sorted(against))} want the other side"
             )
             continue
 

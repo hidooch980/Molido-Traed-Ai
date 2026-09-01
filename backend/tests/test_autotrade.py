@@ -488,7 +488,10 @@ class TestOneBadDecisionDoesNotEndTheCycle:
         broken = decide(session, at=NOW - timedelta(minutes=9))
         broken.decision = "short"  # levels still say long
         session.flush()
-        decide(session, symbol="EURUSD", at=NOW - timedelta(minutes=8))
+        # A different symbol on purpose: two opposite decisions on one
+        # symbol are now refused as a disagreement, which is a different
+        # rule and would hide the one this test is about.
+        decide(session, symbol="GBPUSD", at=NOW - timedelta(minutes=8))
         broker = FakeBroker()
 
         report = autotrade.run_cycle(
@@ -2070,3 +2073,71 @@ class TestARulebookBindsItsOwnAccount:
         allowed, _, _ = self.gate(session, "5055261836", 100.0)
 
         assert allowed is False
+
+
+class TestTheBrainsMustNotContradictEachOther:
+    """Counting agreement does not catch a contradiction: each side has its
+    own supporter and neither is outvoted. The fleet ends up flat and pays
+    two spreads for it."""
+
+    def test_opposite_decisions_on_one_symbol_are_both_refused(
+        self, session, live
+    ):
+        decide(session, symbol="EURUSD", strategy="cross-sectional-stretch")
+        decide(
+            session,
+            symbol="EURUSD",
+            timeframe="M15",
+            at=NOW - timedelta(minutes=6),
+            strategy="short-horizon-reversal",
+            decision="short",
+        )
+        broker = FakeBroker()
+
+        report = autotrade.run_cycle(
+            session, now=NOW, broker=broker, bridge=FakeBridge()
+        )
+
+        assert report["orders"] == 0
+        assert any("disagree" in note for note in report["skipped"])
+
+    def test_agreement_on_one_symbol_still_trades(self, session, live):
+        decide(session, symbol="EURUSD", strategy="cross-sectional-stretch")
+        decide(
+            session,
+            symbol="EURUSD",
+            timeframe="M15",
+            at=NOW - timedelta(minutes=6),
+            strategy="short-horizon-reversal",
+        )
+        broker = FakeBroker()
+
+        report = autotrade.run_cycle(
+            session, now=NOW, broker=broker, bridge=FakeBridge()
+        )
+
+        assert report["orders"] >= 1
+
+    def test_a_disagreement_elsewhere_does_not_block_this_symbol(
+        self, session, live
+    ):
+        """The refusal is per symbol. A fleet that stops trading everything
+        because two brains disagree about one instrument has turned one
+        disagreement into a shutdown."""
+        decide(session, symbol="EURUSD", strategy="cross-sectional-stretch")
+        decide(
+            session,
+            symbol="EURUSD",
+            timeframe="M15",
+            at=NOW - timedelta(minutes=6),
+            strategy="short-horizon-reversal",
+            decision="short",
+        )
+        decide(session, symbol="GBPUSD", at=NOW - timedelta(minutes=7))
+        broker = FakeBroker()
+
+        report = autotrade.run_cycle(
+            session, now=NOW, broker=broker, bridge=FakeBridge()
+        )
+
+        assert report["orders"] == 1
