@@ -46,7 +46,42 @@ PREFIX = pathlib.Path(os.environ.get("WINEPREFIX", str(pathlib.Path.home() / ".m
 #: queue and unit.
 UNIT = os.environ.get("MOLIDO_MT5_UNIT", "molido-mt5")
 
-_TERMINAL = PREFIX / "drive_c/Program Files/MetaTrader 5"
+def _terminal_dir(prefix: pathlib.Path | None = None) -> pathlib.Path:
+    """Whichever MetaTrader install this prefix actually runs.
+
+    A prop firm's account lives on that firm's server, and a terminal only
+    knows the servers its own installer shipped: the generic MetaQuotes build
+    logged no authorization attempt at all against `FundedNext-Server3` - not
+    a wrong password, not a network failure, a server name it had never heard
+    of. So a prefix can hold the broker's build instead, under the broker's
+    own directory name.
+
+    This agent used to hardcode "MetaTrader 5". Against a prefix running a
+    branded build it then wrote a valid, correctly permissioned startup file
+    into a directory nothing reads, restarted the terminal, and reported that
+    the login did not connect - which was true, and about a file the terminal
+    never saw.
+
+    A branded build wins when both exist, and that ordering is the whole
+    point: a prefix acquires one only because somebody installed it there on
+    purpose, while the generic build is simply what every prefix starts with
+    and is left behind by the conversion. Preferring the generic would send
+    the login back to the terminal that could not use it.
+    """
+    root = (prefix or PREFIX) / "drive_c/Program Files"
+    generic = root / "MetaTrader 5"
+    try:
+        for candidate in sorted(root.iterdir()):
+            if candidate == generic:
+                continue
+            if (candidate / "terminal64.exe").is_file():
+                return candidate
+    except OSError:
+        pass
+    return generic
+
+
+_TERMINAL = _terminal_dir()
 
 
 def _config_dir() -> pathlib.Path:
@@ -195,7 +230,10 @@ class Target:
         self.key = key
         self.prefix = prefix
         self.unit = unit
-        terminal = prefix / "drive_c/Program Files/MetaTrader 5"
+        # The install this prefix actually runs, which is not always the
+        # generic one: a prop account needs its firm's own build, because a
+        # terminal only knows the servers its installer shipped.
+        terminal = _terminal_dir(prefix)
         cfg_dir = next(
             (terminal / n for n in ("Config", "config") if (terminal / n).is_dir()),
             terminal / "Config",
