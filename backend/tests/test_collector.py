@@ -520,7 +520,7 @@ class TestEveryPublishedTimeframeIsRead:
 
         asked: list[str] = []
 
-        def fake_ingest(session, timeframe=None):
+        def fake_ingest(session, timeframe=None, directory=None):
             asked.append(timeframe.value if timeframe else "default")
             return {"recorded": 1}
 
@@ -536,7 +536,7 @@ class TestEveryPublishedTimeframeIsRead:
         take the bars the account is trading on down with it."""
         from app.workers import collector
 
-        def fake_ingest(session, timeframe=None):
+        def fake_ingest(session, timeframe=None, directory=None):
             if timeframe and timeframe.value == "M1":
                 raise ValueError("malformed row")
             return {"recorded": 7}

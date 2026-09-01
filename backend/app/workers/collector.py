@@ -491,13 +491,46 @@ def ingest_broker_bars() -> dict[str, Any]:
     Each timeframe commits on its own. A malformed M1 file must not roll back
     the hourly bars, which are the ones the live rule is deciding on.
     """
+    from app.providers.metatrader import MetaTraderBridge, bridge_dirs
     from app.workers.broker_bars import ingest
 
+    # Whichever terminal is actually signed in, not the built-in one.
+    #
+    # This read the single default bridge, which was the main terminal - and
+    # a terminal with no account publishes no quotes. Stopping that empty
+    # terminal stopped the broker price series without stopping anything that
+    # said so: the collector kept succeeding, the recorder kept ranking, and
+    # every decision it produced was against yesterday's 16:00 bars. Orders
+    # then failed the freshness window, which reads as "the rule chose
+    # nothing" rather than "the prices stopped seventeen hours ago".
+    #
+    # A live account is the requirement, not a name: the bars only exist
+    # because a logged-in terminal is streaming them.
+    source = None
+    for _key, directory in sorted(bridge_dirs().items()):
+        try:
+            if MetaTraderBridge(directory=directory).account().get("available"):
+                source = directory
+                break
+        except Exception:  # noqa: BLE001, S112 - an unreadable bridge is not this one
+            continue
+
     reports: dict[str, Any] = {}
+    # A preference, not a precondition: with nothing signed in the default
+    # bridge is still read, which is exactly what happened before and keeps
+    # whatever a terminal left behind. The note is what makes the difference
+    # visible, because "no bars" and "no terminal" look identical downstream.
+    note = (
+        None
+        if source is not None
+        else "no terminal reports an account, so the default bridge was read"
+    )
     for timeframe in _broker_timeframes():
         try:
             with session_scope() as session:
-                reports[timeframe.value] = ingest(session, timeframe=timeframe)
+                reports[timeframe.value] = ingest(
+                    session, timeframe=timeframe, directory=source
+                )
         except Exception as problem:  # noqa: BLE001 - reported, never fatal
             reports[timeframe.value] = {
                 "recorded": 0,
@@ -507,6 +540,7 @@ def ingest_broker_bars() -> dict[str, Any]:
     return {
         "recorded": sum(int(r.get("recorded") or 0) for r in reports.values()),
         "by_timeframe": reports,
+        **({"note": note} if note else {}),
     }
 
 
