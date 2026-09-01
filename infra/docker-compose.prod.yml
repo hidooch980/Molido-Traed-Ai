@@ -90,6 +90,13 @@ services:
   postgres:
     image: timescale/timescaledb:2.17.2-pg16
     restart: unless-stopped
+    # Docker gives a container 64MB of /dev/shm, and Postgres puts every
+    # parallel query's shared workspace there. A VACUUM over the feature table
+    # failed outright with "could not resize shared memory segment ... No
+    # space left on device" - not a disk problem and not a memory problem, a
+    # default nobody set. Parallel scans on the larger chunks were hitting the
+    # same ceiling and quietly falling back to a single worker.
+    shm_size: 1gb
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
