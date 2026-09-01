@@ -47,7 +47,7 @@ import uuid
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.errors import ValidationFailedError
@@ -937,6 +937,76 @@ def _maybe_number(value: Any) -> float | None:
         return None
 
 
+#: How many resolved decisions a timeframe needs before its own measurement
+#: is allowed to set the ceiling. Below this the fixed ceiling stands: a
+#: handful of trades is not an edge, and letting six samples widen or narrow
+#: what may be paid is fitting the gate to noise.
+MIN_FOR_MEASURED_CEILING = 200
+
+
+def _measured_edge(session: Session) -> dict[str, float]:
+    """Expectancy in R per timeframe, from this deployment's own journal.
+
+    The fixed ceiling answered "how much may execution cost" without ever
+    asking what the trade was worth, and the two numbers turned out to be on
+    opposite sides of each other: 0.25 R allowed, and the best brain earning
+    0.124 R gross. Every trade at the ceiling was a loser by arithmetic, and
+    the arithmetic was never done.
+
+    So the ceiling is now the edge itself. A trade may not cost more than it
+    is expected to make - not a preference, an accounting identity, and the
+    one threshold here that nobody has to choose. Where a timeframe measures
+    negative it buys nothing at any price and its decisions stop reaching a
+    broker, which is how H1 came to be excluded without anybody writing a
+    rule about H1.
+
+    Gross of costs on purpose: the journal resolves decisions against the
+    price series, so what it reports is what the signal is worth before
+    paying for it. That is exactly the quantity a cost has to fit inside.
+    """
+    rows = session.execute(
+        select(
+            JournalEntry.timeframe,
+            func.avg(JournalEntry.r_multiple),
+            func.count(JournalEntry.id),
+        )
+        .where(
+            JournalEntry.arm == ARM_RULE,
+            JournalEntry.closed_at.is_not(None),
+            JournalEntry.r_multiple.is_not(None),
+        )
+        .group_by(JournalEntry.timeframe)
+    ).all()
+
+    edges: dict[str, float] = {}
+    for timeframe, expectancy, count in rows:
+        if not timeframe or expectancy is None:
+            continue
+        if int(count or 0) < MIN_FOR_MEASURED_CEILING:
+            continue
+        edges[str(timeframe)] = float(expectancy)
+    return edges
+
+
+def _cost_ceiling(edges: dict[str, float], timeframe: Any) -> tuple[float, str]:
+    """What this decision's timeframe may spend getting in, and why.
+
+    Never looser than the fixed ceiling. A timeframe measuring 0.4 R has not
+    earned the right to pay 0.4 R for entry - the fixed number is a statement
+    about execution quality that stands on its own, and this only ever
+    tightens it.
+    """
+    edge = edges.get(str(timeframe))
+    if edge is None:
+        return MAX_SPREAD_COST_R, (
+            f"the standing ceiling - {timeframe} has too few resolved "
+            "decisions to measure its own"
+        )
+    if edge <= 0:
+        return 0.0, f"{timeframe} has measured {edge:+.3f} R and buys nothing at any price"
+    return min(MAX_SPREAD_COST_R, edge), f"{timeframe} measures {edge:+.3f} R gross"
+
+
 def _bar_minutes(entry: JournalEntry) -> int:
     """How long the bar this particular decision was taken on lasted."""
     from app.core.enums import Timeframe
@@ -1214,6 +1284,9 @@ def run_cycle(
     # acting on even when one brain is enough to act.
     sides_by_timeframe: dict[tuple[str, str], set[str]] = {}
     votes = _fresh_votes(session, moment, sides_by_timeframe)
+    # Read once. It is one aggregate over the journal and it does not change
+    # inside a cycle.
+    edges = _measured_edge(session)
 
     for entry in candidates:
         # Resolved before the per-symbol cap, because the cap is about the
@@ -1364,11 +1437,12 @@ def run_cycle(
         if spread_cost is None:
             skipped.append(f"{entry.symbol}: {spread_reason}")
             continue
-        if spread_cost > MAX_SPREAD_COST_R:
+        ceiling, ceiling_why = _cost_ceiling(edges, entry.timeframe)
+        if spread_cost > ceiling:
             skipped.append(
-                f"{entry.symbol}: spread and slippage cost {spread_cost:.3f} R, "
-                f"over the {MAX_SPREAD_COST_R} R ceiling. The trade starts that "
-                "far behind before it has an opinion"
+                f"{entry.symbol}: spread and slippage cost {spread_cost:.3f} R "
+                f"against a {ceiling:.3f} R ceiling - {ceiling_why}. The trade "
+                "starts further behind than it is expected to travel"
             )
             continue
 

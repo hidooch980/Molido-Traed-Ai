@@ -13,6 +13,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from sqlalchemy import select
 
 from app.execution.contracts import ExecutionReport, OrderState
 from app.models.journal import (
@@ -2493,3 +2494,72 @@ class TestAnAccountMayHoldSeveralBrains:
 
         assert report["orders"] == 0
         assert "empty strategy" in report["refused"]
+
+
+class TestATradeMayNotCostMoreThanItEarns:
+    """The fixed ceiling answered "how much may execution cost" without ever
+    asking what the trade was worth, and the two numbers were on opposite
+    sides of each other: 0.25 R allowed, the best brain earning 0.124 R
+    gross. Every trade at the ceiling lost by arithmetic nobody had done."""
+
+    def test_a_measured_timeframe_sets_its_own_ceiling(self):
+        ceiling, why = autotrade._cost_ceiling({"M15": 0.108}, "M15")
+
+        assert ceiling == pytest.approx(0.108)
+        assert "0.108" in why
+
+    def test_a_negative_timeframe_buys_nothing_at_any_price(self):
+        """H1 measured -0.041 R. No entry cost makes that worth paying, and
+        this is how H1 came to be excluded without a rule naming H1."""
+        ceiling, why = autotrade._cost_ceiling({"H1": -0.041}, "H1")
+
+        assert ceiling == 0.0
+        assert "buys nothing" in why
+
+    def test_a_rich_timeframe_does_not_earn_a_looser_ceiling(self):
+        """The fixed number is a statement about execution quality that
+        stands on its own. This only ever tightens it."""
+        ceiling, _ = autotrade._cost_ceiling({"M1": 0.9}, "M1")
+
+        assert ceiling == autotrade.MAX_SPREAD_COST_R
+
+    def test_an_unmeasured_timeframe_keeps_the_standing_ceiling(self):
+        ceiling, why = autotrade._cost_ceiling({}, "M5")
+
+        assert ceiling == autotrade.MAX_SPREAD_COST_R
+        assert "too few resolved" in why
+
+    def test_a_thin_sample_does_not_set_a_ceiling(self, session):
+        """A handful of trades is not an edge, and letting six samples decide
+        what may be paid is fitting the gate to noise."""
+        for i in range(5):
+            decide(
+                session,
+                symbol=f"SYM{i}",
+                timeframe="M15",
+                at=NOW - timedelta(minutes=10 + i),
+            )
+        for row in session.scalars(select(JournalEntry)).all():
+            row.closed_at = NOW
+            row.r_multiple = 0.5
+        session.flush()
+
+        assert "M15" not in autotrade._measured_edge(session)
+
+    def test_the_edge_is_read_from_this_deployment_own_journal(self, session):
+        for i in range(autotrade.MIN_FOR_MEASURED_CEILING):
+            decide(
+                session,
+                symbol=f"SYM{i}",
+                timeframe="M15",
+                at=NOW - timedelta(minutes=10 + i),
+            )
+        for index, row in enumerate(session.scalars(select(JournalEntry)).all()):
+            row.closed_at = NOW
+            # Half win a full R, half lose half of one: +0.25 R expectancy.
+            row.r_multiple = 1.0 if index % 2 == 0 else -0.5
+        session.flush()
+
+        edges = autotrade._measured_edge(session)
+
+        assert edges["M15"] == pytest.approx(0.25)
