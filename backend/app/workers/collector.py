@@ -974,6 +974,26 @@ def run_deep_history() -> dict[str, Any]:
     return {k: v for k, v in report.items() if k != "periods_with_no_file"}
 
 
+async def weekly_scorecard_job(ctx: dict) -> dict[str, Any]:
+    """Log every brain's week beside its own control, Sunday mornings.
+
+    The journal fills every fifteen minutes and, until this, nobody read it
+    on a schedule - so the question the fleet exists to answer had no
+    standing answer. Logged in full so it lands where the operator already
+    looks, whichever way the numbers came out.
+    """
+    from app.learning.weekly import build_report
+
+    with session_scope() as session:
+        report = build_report(session)
+    log.info("weekly.scorecard", **{
+        "brains": report["brains"],
+        "accounts": report["accounts"],
+        "window_days": report["window_days"],
+    })
+    return report
+
+
 def _cron_jobs() -> list:
     from arq import cron
 
@@ -995,6 +1015,15 @@ def _cron_jobs() -> list:
         # Ten minutes after the day it folds has ended, so the decision it
         # produces is inside its freshness window rather than a day past it.
         cron(aggregate_daily_job, hour={AGGREGATE_HOUR}, minute={10}, max_tries=1),
+        # Sunday, before the week opens: the standing answer to "which brain
+        # is earning its vote", from the journal the week just filled.
+        cron(
+            weekly_scorecard_job,
+            weekday={6},
+            hour={9},
+            minute={30},
+            max_tries=1,
+        ),
         # Retries itself until the history is in, then reports that it skipped.
         # max_tries=1 on purpose: a failed attempt means the feed is closed,
         # and arq retrying it immediately is the opposite of waiting.
