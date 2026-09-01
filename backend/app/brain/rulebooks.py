@@ -486,6 +486,47 @@ RULEBOOKS: tuple[Rulebook, ...] = (
             _AUTOMATION,
             "the trial's objectives are read from the account page rather "
             "than the general-rules table, which has no Free Trial column",
+            # Read 1 Sep 2026 from the help centre's EA article, and it is
+            # why this account cannot be traded automatically at all: "For
+            # any kind of Free or BOGO accounts, 'EA' and 'VPS & EA' add-ons
+            # will not be included by default; however, a trader can choose
+            # to add them by paying the additional usage fee, after which the
+            # selected add-on will be activated on the account."
+            #
+            # So the server answers every automated order with retcode 10026
+            # - not a misconfiguration on this side and not something support
+            # can switch on, but a paid add-on this account does not carry.
+            # Twenty-five orders across thirteen symbols were refused that
+            # way before the sentence was found.
+            "automated trading needs a paid EA add-on that a Free Trial "
+            "account does not include, so the server refuses every EA order",
+            # The same article, and it is a live risk for this deployment
+            # rather than a note: "Using EA that incorporates third-party
+            # applications such as Telegram or WhatsApp is strictly
+            # prohibited." This platform has a Telegram channel. It is
+            # read-only by construction - nothing arriving from a chat can
+            # reach the order path, and a test pins that - but the rule is
+            # written broadly and the firm judges it, not us.
+            "this firm prohibits EAs that incorporate Telegram or WhatsApp; "
+            "the chat channel here is read-only, but the rule is theirs to "
+            "read",
+            # The VPS article, 8 Apr 2026, and it applies to this deployment
+            # by construction: the terminal runs on a server rather than on
+            # the holder's own machine, which is what a VPS is. "Traders are
+            # allowed to use a VPS in both the Challenge and FundedNext
+            # accounts, with an additional usage fee... VPS usage fee is
+            # applicable for all packages", and the same Free/BOGO sentence
+            # excludes the add-on from this account.
+            #
+            # Two of its clauses are worth carrying beside the fee, because
+            # they are about the shape of this system rather than its cost:
+            # a VPS may not be shared, and it may not be used for "Account
+            # Management" or "Group Trading" - so one host driving several
+            # of this firm's accounts is a question to settle in writing
+            # before it ever does.
+            "running the terminal on a server is VPS use by this firm's "
+            "definition: a paid add-on, excluded from Free accounts, and "
+            "not to be shared across accounts",
         ),
     ),
     Rulebook(
