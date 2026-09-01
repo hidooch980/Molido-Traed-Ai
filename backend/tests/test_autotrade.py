@@ -172,18 +172,21 @@ def decide(
     levels=True,
     during=None,
     timeframe=None,
+    strategy=None,
+    decision="long",
 ):
     before = {"entry": 1.1580, "stop": 1.1530, "target": 1.1630} if levels else {}
     if timeframe:
         before["timeframe"] = timeframe
     row = JournalEntry(
         symbol=symbol,
-        decision="long",
+        decision=decision,
         opened_at=at or NOW - timedelta(minutes=5),
         arm=arm,
         price_source=source,
         before=before,
         during=during or {},
+        **({"strategy": strategy} if strategy else {}),
     )
     session.add(row)
     session.flush()
@@ -1938,3 +1941,74 @@ class TestGoldIsAdmittedOnTheInstrumentNotTheFeed:
         """A GCFUT decision and an XAUUSD position are the same exposure under
         two names, and a cap that misses that opens both."""
         assert autotrade._tradeable_symbol("GCFUT") in {"XAUUSD"}
+
+
+class TestTheCouncil:
+    """The agreement gate. One brain moving alone is a hypothesis, not a
+    trade - and a brain that only records still gets a vote, because
+    recording it is what buys that vote."""
+
+    def require(self, monkeypatch, n):
+        monkeypatch.setattr(autotrade, "_consensus_required", lambda: n)
+
+    def test_a_lone_brain_is_skipped(self, session, live, monkeypatch):
+        self.require(monkeypatch, 2)
+        decide(session)
+        broker = FakeBroker()
+
+        report = autotrade.run_cycle(
+            session, now=NOW, broker=broker, bridge=FakeBridge()
+        )
+
+        assert report["orders"] == 0
+        assert broker.submitted == []
+        assert any("consensus" in reason for reason in report["skipped"])
+
+    def test_a_seconded_motion_is_traded(self, session, live, monkeypatch):
+        self.require(monkeypatch, 2)
+        row = decide(session)
+        # A non-trading brain recorded the same symbol and side on another
+        # timeframe. It never sends orders; here it seconds the motion.
+        decide(
+            session,
+            at=NOW - timedelta(minutes=5),
+            timeframe="M15",
+            strategy="time-series-momentum",
+        )
+        broker = FakeBroker()
+
+        report = autotrade.run_cycle(
+            session, now=NOW, broker=broker, bridge=FakeBridge()
+        )
+
+        assert report["orders"] == 1
+        assert row.during["orders"]["68345601"]["state"] == str(OrderState.FILLED)
+
+    def test_an_opposing_brain_is_not_agreement(self, session, live, monkeypatch):
+        self.require(monkeypatch, 2)
+        decide(session)
+        decide(
+            session,
+            at=NOW - timedelta(minutes=5),
+            timeframe="M15",
+            strategy="time-series-momentum",
+            decision="short",
+        )
+        broker = FakeBroker()
+
+        report = autotrade.run_cycle(
+            session, now=NOW, broker=broker, bridge=FakeBridge()
+        )
+
+        assert report["orders"] == 0
+
+    def test_one_is_the_old_behaviour(self, session, live, monkeypatch):
+        self.require(monkeypatch, 1)
+        decide(session)
+        broker = FakeBroker()
+
+        report = autotrade.run_cycle(
+            session, now=NOW, broker=broker, bridge=FakeBridge()
+        )
+
+        assert report["orders"] == 1

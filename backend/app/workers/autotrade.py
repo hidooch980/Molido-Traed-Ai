@@ -1055,6 +1055,9 @@ def run_cycle(
     sent: list[dict[str, Any]] = []
     skipped: list[str] = []
 
+    required = _consensus_required()
+    votes = _fresh_votes(session, moment) if required > 1 else {}
+
     for entry in candidates:
         # Resolved before the per-symbol cap, because the cap is about the
         # instrument the account will actually carry: a GCFUT decision and
@@ -1072,6 +1075,18 @@ def run_cycle(
                 f"{entry.symbol}: the open-position cap was reached in this cycle"
             )
             continue
+
+        if required > 1:
+            agreeing = votes.get((entry.symbol, entry.decision), set())
+            if len(agreeing) < required:
+                # The council rule: one brain moving alone is a hypothesis,
+                # not a trade. Named with the count so a symbol every brain
+                # ignores and one a single brain loves read differently.
+                skipped.append(
+                    f"{entry.symbol}: consensus needs {required} brains and "
+                    f"{len(agreeing)} agree ({', '.join(sorted(agreeing))})"
+                )
+                continue
 
         geometry = entry.before or {}
         price, stop = geometry.get("entry"), geometry.get("stop")
@@ -1271,6 +1286,51 @@ def run_cycle(
         considered=len(candidates),
         open_positions=open_now,
     )
+
+
+def _consensus_required() -> int:
+    """How many brains must agree before an order is sent.
+
+    1 is the pre-council behaviour: a brain's own decision is enough. 2 is
+    the roadmap's agreement gate. Floored at 1 because zero would mean an
+    order nobody decided, which is not a looser setting - it is nonsense.
+    """
+    from app.core.config import get_settings
+
+    return max(1, int(getattr(get_settings(), "consensus_required", 1)))
+
+
+def _fresh_votes(
+    session: Session, moment: datetime
+) -> dict[tuple[str, str], set[str]]:
+    """(symbol, side) -> the brains with a fresh decision saying exactly that.
+
+    Every brain votes, including the ones that only record: the whole value
+    of writing a non-trading brain's decisions down is that they can second
+    a trading brain's motion. Freshness is the same window an order gets -
+    a stale agreement is agreement about a price that has moved.
+    """
+    from datetime import timedelta
+
+    cutoff = moment - timedelta(
+        minutes=MAX_DECISION_AGE_MINUTES + DECISION_BAR_MINUTES
+    )
+    rows = session.scalars(
+        select(JournalEntry).where(
+            JournalEntry.arm == ARM_RULE,
+            JournalEntry.closed_at.is_(None),
+            JournalEntry.opened_at >= cutoff,
+        )
+    ).all()
+
+    votes: dict[tuple[str, str], set[str]] = {}
+    for row in rows:
+        if row.opened_at < moment - timedelta(
+            minutes=MAX_DECISION_AGE_MINUTES + _bar_minutes(row)
+        ):
+            continue
+        votes.setdefault((row.symbol, row.decision), set()).add(row.strategy)
+    return votes
 
 
 def _strategy_for(login: str) -> tuple[str | None, str]:

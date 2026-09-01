@@ -180,7 +180,11 @@ class Settings(BaseSettings):
     #: registered is a refusal at cycle time, never a silent fallback - an
     #: account trading a brain nobody assigned is the mistake this exists
     #: to prevent.
-    account_strategies: str = ""
+    account_strategies: str = ""
+    #: How many brains must agree on a symbol and side before an order is
+    #: sent. 1 is a brain acting alone; 2 is the roadmap's agreement gate.
+    #: Non-trading brains vote too - recording them is what buys their vote.
+    consensus_required: int = 1
 
     #: Which timeframes the rule records decisions on, comma separated.
     #:
