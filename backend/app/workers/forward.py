@@ -64,6 +64,7 @@ def snapshot(
     timeframe: Timeframe = Timeframe.H1,
     as_of: datetime | None = None,
     provider_code: str = SOURCE_PUBLIC,
+    lookback: int = LOOKBACK,
 ) -> tuple[dict[str, dict[str, Any]], datetime | None]:
     """The last `LOOKBACK` closed bars for every instrument, and their instant.
 
@@ -152,7 +153,7 @@ def snapshot(
     )
 
     rows = session.execute(
-        select(ranked).where(ranked.c._rn <= LOOKBACK)
+        select(ranked).where(ranked.c._rn <= lookback)
     ).all()
 
     by_instrument: dict[uuid.UUID, list[Any]] = {}
@@ -167,7 +168,7 @@ def snapshot(
         # name to a RowMapping, and one identifier carrying two types is how
         # the type checker - and the next reader - lose the thread.
         bucket = by_instrument.get(instrument.id, [])
-        if len(bucket) < LOOKBACK:
+        if len(bucket) < lookback:
             continue
 
         bucket.sort(key=lambda x: x["event_time"])
@@ -247,19 +248,45 @@ def _record_candidates(
     """
     from app.learning import rules as rules_module
 
+    # A brain whose lookback outruns the standard window gets a deeper
+    # snapshot, built once and only when somebody needs it. Handing every
+    # brain the deep one instead would silently shrink the universe for the
+    # short-lookback brains - an instrument with 100 bars of history answers
+    # a 10-bar question perfectly well and vanishes from a 280-bar window.
+    # This is the fourth appearance of the window-vs-lookback defect family;
+    # this time the window asks the brain what it needs.
+    deep_need = max(
+        (
+            int(getattr(rule, "lookback", 0)) + 30
+            for rule in rules_module.CANDIDATES.values()
+        ),
+        default=0,
+    )
+    deep: dict[str, dict[str, Any]] | None = None
+    if deep_need > LOOKBACK:
+        deep, _ = snapshot(
+            session,
+            timeframe=timeframe,
+            as_of=at,
+            provider_code=price_source,
+            lookback=deep_need,
+        )
+
     written = 0
     for name, rule in rules_module.CANDIDATES.items():
         if name == rules_module.CrossSectionalStretch().name:
             continue  # the incumbent is already recorded, with richer fields
-        picks = rule(built, universe=None)
+        needs = int(getattr(rule, "lookback", 0)) + 1
+        view = deep if deep is not None and needs > LOOKBACK else built
+        picks = rule(view, universe=None)
         if picks.empty:
             continue
         for symbols, side in ((picks.longs, "long"), (picks.shorts, "short")):
             side_sign = 1 if side == "long" else -1
             for symbol in symbols:
-                bars = built.get(symbol, {}).get("bars") or []
+                bars = view.get(symbol, {}).get("bars") or []
                 atr = crosssection.average_true_range(list(bars))
-                price = (built.get(symbol, {}).get("closes") or [None])[-1]
+                price = (view.get(symbol, {}).get("closes") or [None])[-1]
                 if not atr or price is None:
                     continue
                 result = journal_log.record_with_control(
