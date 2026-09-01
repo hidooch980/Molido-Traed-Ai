@@ -23,6 +23,7 @@ from app.models.instruments import BrokerSymbol, Instrument, Provider
 from app.models.journal import JournalEntry
 from app.models.login_attempts import LoginAttempt
 from app.models.market_data import Bar, Tick
+from app.models.policy_rates import PolicyRateObservation
 from app.models.recovery_codes import RecoveryCode
 from app.models.symbol_dna import SymbolProfile
 from app.models.tenancy import ApiKey, Tenant, User
@@ -33,6 +34,7 @@ __all__ = [
     "Incident",
     "JournalEntry",
     "LoginAttempt",
+    "PolicyRateObservation",
     "RecoveryCode",
     "ChallengeAccount",
     "ApiKey",

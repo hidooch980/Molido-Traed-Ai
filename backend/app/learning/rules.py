@@ -207,6 +207,142 @@ class ShortHorizonReversal:
         )
 
 
+def _pair_currencies(symbol: str) -> tuple[str, str] | None:
+    """EURUSD -> (EUR, USD). Anything that is not two 3-letter codes is None.
+
+    Metals and indices in the universe (XAUUSD, .DE40Cash) are not funding
+    trades between two central banks, and pretending XAU has a policy rate
+    would hand gold a differential nobody sets.
+    """
+    if len(symbol) != 6 or not symbol.isalpha():
+        return None
+    return symbol[:3].upper(), symbol[3:].upper()
+
+
+class CarryDifferential:
+    """Long the currencies that pay, short the ones that charge.
+
+    The oldest documented return in FX: a position is paid the policy-rate
+    gap every night it is held, and historically the price has not fallen
+    fast enough, on average, to give it all back. Deutsche Bank has run an
+    investable index of exactly this since 1993 - the prior is published,
+    not invented here.
+
+    The score is the pair's rate differential at the decision instant, read
+    from the stored BIS history strictly *before* the instant - the live
+    reader refuses replays for exactly this reason. No differential, no
+    score: a missing rate is not a rate of zero, and a stale one (no
+    observation for `max_stale_days`) is treated as missing rather than
+    carried forward into an era it knows nothing about.
+
+    Sized by rank, not by magnitude, like every other candidate: the brains
+    must differ only in what they choose.
+    """
+
+    name: str = "carry-differential"
+    lookback: int = 0
+    per_side: int = 3
+    max_stale_days: int = 35
+
+    def __init__(self, table: dict[str, list[tuple[Any, float]]] | None = None):
+        #: currency -> [(observed date, rate), ...] ascending. Injectable so
+        #: tests need no database; loaded once from the stored history
+        #: otherwise. None after a failed load means "could not read", and
+        #: the rule declines by name rather than caching an empty answer.
+        self._table = table or None
+        self._tried = table is not None
+
+    def _load(self) -> dict[str, list[tuple[Any, float]]] | None:
+        if self._tried:
+            return self._table
+        self._tried = True
+        try:
+            from sqlalchemy import select as sa_select
+
+            from app.db.session import session_scope
+            from app.models.policy_rates import PolicyRateObservation
+
+            with session_scope() as session:
+                rows = session.execute(
+                    sa_select(
+                        PolicyRateObservation.currency,
+                        PolicyRateObservation.observed,
+                        PolicyRateObservation.rate,
+                    ).order_by(
+                        PolicyRateObservation.currency,
+                        PolicyRateObservation.observed,
+                    )
+                ).all()
+            table: dict[str, list[tuple[Any, float]]] = {}
+            for currency, observed, rate in rows:
+                table.setdefault(currency, []).append((observed, float(rate)))
+            self._table = table or None
+        except Exception:  # noqa: BLE001 - a broken read declines, never raises
+            self._table = None
+        return self._table
+
+    def _rate_before(self, currency: str, day: Any) -> float | None:
+        table = self._table or {}
+        series = table.get(currency)
+        if not series:
+            return None
+        import bisect
+
+        index = bisect.bisect_left(series, (day,)) - 1
+        if index < 0:
+            return None
+        observed, rate = series[index]
+        if (day - observed).days > self.max_stale_days:
+            return None
+        return rate
+
+    def __call__(
+        self, snapshot: dict[str, dict[str, Any]], *, universe: frozenset[str] | None
+    ) -> Picks:
+        if self._load() is None:
+            return Picks(
+                declined=(
+                    "no policy rate history is stored, so no differential "
+                    "can be read - a missing rate is not a rate of zero"
+                )
+            )
+
+        instants = [
+            stamp
+            for stamp in (v.get("last_at") for v in snapshot.values())
+            if stamp is not None
+        ]
+        if not instants:
+            return Picks(declined="the snapshot carries no instant to read rates at")
+        day = max(instants).date()
+
+        scored: list[tuple[float, str]] = []
+        for symbol in _eligible(snapshot, universe):
+            pair = _pair_currencies(symbol)
+            if pair is None:
+                continue
+            base = self._rate_before(pair[0], day)
+            quote = self._rate_before(pair[1], day)
+            if base is None or quote is None:
+                continue
+            scored.append((base - quote, symbol))
+
+        if len(scored) < self.per_side * 2:
+            return Picks(
+                declined=(
+                    f"only {len(scored)} pairs have a readable differential "
+                    "at this instant"
+                )
+            )
+
+        scored.sort()
+        return Picks(
+            longs=tuple(symbol for _, symbol in scored[-self.per_side :]),
+            shorts=tuple(symbol for _, symbol in scored[: self.per_side]),
+        )
+
+
+
 #: Every candidate, by name. Adding one here is the whole cost of testing it.
 CANDIDATES: dict[str, Rule] = {
     rule.name: rule  # type: ignore[misc]
@@ -214,6 +350,7 @@ CANDIDATES: dict[str, Rule] = {
         CrossSectionalStretch(),
         TimeSeriesMomentum(),
         ShortHorizonReversal(),
+        CarryDifferential(),
     )
 }
 

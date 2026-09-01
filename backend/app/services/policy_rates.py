@@ -275,3 +275,124 @@ def differential(
         )
 
     return round(known[base].rate - known[quote].rate, 4)
+
+
+#: The same dataset with its history. BIS publishes the policy-rate series
+#: daily-frequency from the start of each bank's record; `startPeriod` keeps
+#: the download to the era the measurements cover.
+HISTORY_FEED = (
+    "https://stats.bis.org/api/v2/data/dataflow/BIS/WS_CBPOL/1.0/D.*"
+    "?format=csv&startPeriod={start}"
+)
+
+
+def fetch_history(
+    *, start: date, timeout: float = 120.0, opener: Any = None
+) -> str:
+    """The full daily series from `start`, uncached.
+
+    Uncached on purpose: this is a backfill somebody runs once from a
+    command, not a page-load path, and a cache here would only hide a
+    partial download behind a success from last week.
+    """
+    url = HISTORY_FEED.format(start=start.isoformat())
+    request = urllib.request.Request(  # noqa: S310 - constant https URL
+        url, headers={"User-Agent": "molido/1.0 (policy rate history)"}
+    )
+    try:
+        open_url = opener or urllib.request.urlopen
+        with open_url(request, timeout=timeout) as response:
+            return str(response.read().decode("utf-8", "replace"))
+    except urllib.error.HTTPError as problem:
+        raise ProviderError(
+            f"the policy rate history answered {problem.code}", status=problem.code
+        ) from problem
+    except OSError as problem:
+        raise ProviderError(
+            f"the policy rate history could not be read: {problem}"
+        ) from problem
+
+
+def parse_history(body: str) -> list[tuple[str, date, float]]:
+    """Every (currency, day, rate) observation for the areas this platform maps.
+
+    The same dropping rule as the live parser: an area outside `AREAS` is a
+    rate nobody can attribute to a currency, and a row with no observation is
+    a bank that has not reported, which is not a bank at zero.
+    """
+    out: list[tuple[str, date, float]] = []
+    for row in csv.DictReader(io.StringIO(body)):
+        area = (row.get("REF_AREA") or "").strip()
+        mapping = AREAS.get(area)
+        if mapping is None:
+            continue
+        raw_value = (row.get("OBS_VALUE") or "").strip()
+        raw_period = (row.get("TIME_PERIOD") or "").strip()
+        if not raw_value or not raw_period:
+            continue
+        try:
+            observed = date.fromisoformat(raw_period[:10])
+            rate = float(raw_value)
+        except ValueError:
+            continue
+        out.append((mapping[0], observed, rate))
+    return out
+
+
+def store_history(session: Any, rows: list[tuple[str, date, float]]) -> int:
+    """Upsert observations; returns how many were new. Safe to re-run."""
+    from sqlalchemy import select as sa_select
+
+    from app.models.policy_rates import PolicyRateObservation
+
+    if not rows:
+        return 0
+    existing = {
+        (r.currency, r.observed)
+        for r in session.scalars(sa_select(PolicyRateObservation)).all()
+    }
+    written = 0
+    for currency, observed, rate in rows:
+        if (currency, observed) in existing:
+            continue
+        session.add(
+            PolicyRateObservation(currency=currency, observed=observed, rate=rate)
+        )
+        existing.add((currency, observed))
+        written += 1
+    session.flush()
+    return written
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Backfill the historical series: `python -m app.services.policy_rates`.
+
+    A command for the same reason `measure` is one: the carry measurement
+    rests on this table, and a table nobody can rebuild from a typed command
+    is a measurement nobody can check.
+    """
+    import argparse
+
+    from app.db.session import session_scope
+
+    parser = argparse.ArgumentParser(description="Backfill BIS policy rates.")
+    parser.add_argument("--from", dest="start_year", type=int, default=2004)
+    args = parser.parse_args(argv)
+
+    body = fetch_history(start=date(args.start_year, 1, 1))
+    rows = parse_history(body)
+    with session_scope() as session:
+        written = store_history(session, rows)
+    currencies = sorted({c for c, _, _ in rows})
+    print(
+        f"parsed {len(rows)} observations for {len(currencies)} currencies "
+        f"({', '.join(currencies)}); wrote {written} new"
+    )
+    if not rows:
+        print("nothing parsed - this is a feed or mapping problem, not zero rates")
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
