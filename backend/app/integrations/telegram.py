@@ -104,7 +104,11 @@ def configured(session: Session | None = None) -> tuple[bool, str | None]:
 
 
 def api_call(
-    method: str, payload: dict[str, Any], *, token: str | None = None
+    method: str,
+    payload: dict[str, Any],
+    *,
+    token: str | None = None,
+    timeout: float | None = None,
 ) -> tuple[bool, Any]:
     """Like `_post`, but returns the API's own body instead of a verdict.
 
@@ -137,8 +141,10 @@ def api_call(
         method="POST",
     )
     try:
+        # A long poll holds the socket open on purpose, so the caller
+        # sets its own ceiling: the shared one would abort every wait.
         with urllib.request.urlopen(  # noqa: S310 - scheme checked above
-            request, timeout=TIMEOUT_SECONDS
+            request, timeout=timeout or TIMEOUT_SECONDS
         ) as response:
             answer = json.loads(response.read())
         if answer.get("ok"):

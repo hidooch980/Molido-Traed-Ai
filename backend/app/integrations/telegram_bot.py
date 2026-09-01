@@ -360,7 +360,9 @@ def _write_offset(value: int) -> bool:
         return False
 
 
-def poll(session: Session, *, limit: int = BATCH) -> dict[str, Any]:
+def poll(
+    session: Session, *, limit: int = BATCH, wait: int = 0
+) -> dict[str, Any]:
     """Read pending updates, answer the admins, ignore everybody else.
 
     Returns what it did rather than logging only: a poll that answered nothing
@@ -387,10 +389,16 @@ def poll(session: Session, *, limit: int = BATCH) -> dict[str, Any]:
             ),
         }
 
+    # `wait` is Telegram's long poll: the request is held open until an
+    # update arrives or the wait expires. Asking and leaving is what made
+    # the bot feel broken - a question typed at 18:29:10 waited for the
+    # next minute mark to be looked at, so the answer arrived up to a
+    # minute later and the operator had already given up.
     ok, payload = telegram.api_call(
         "getUpdates",
-        {"offset": _read_offset(), "limit": limit, "timeout": 0},
+        {"offset": _read_offset(), "limit": limit, "timeout": wait},
         token=channel.token,
+        timeout=wait + 10 if wait else None,
     )
     if not ok:
         return {"polled": 0, "reason": str(payload)}
@@ -477,3 +485,51 @@ def poll(session: Session, *, limit: int = BATCH) -> dict[str, Any]:
         _write_offset(highest + 1)
 
     return {"polled": len(updates), "answered": answered, "refused": refused}
+
+
+#: How long one scheduled pass keeps listening. Just under the minute between
+#: passes, so the channel is attended almost continuously without two passes
+#: ever overlapping.
+PUMP_SECONDS = 50
+
+#: How long a single long poll waits before returning empty. Short enough that
+#: a shutdown is not held up by a whole minute, long enough that the pump is
+#: not spinning through requests.
+WAIT_SECONDS = 20
+
+
+def pump(session: Session, *, budget: float = PUMP_SECONDS) -> dict[str, Any]:
+    """Keep listening for most of the minute, answering the moment one lands.
+
+    One poll per minute meant a question could sit unread for fifty-nine
+    seconds before anything looked at it. This holds the connection open
+    instead, so the answer goes out as the question arrives, and the schedule
+    stays one job a minute - the waiting happens inside the job rather than
+    between them.
+    """
+    import time
+
+    started = time.monotonic()
+    polled = answered = refused = 0
+    reason: str | None = None
+
+    while time.monotonic() - started < budget:
+        left = budget - (time.monotonic() - started)
+        report = poll(session, wait=max(1, min(WAIT_SECONDS, int(left))))
+        polled += int(report.get("polled") or 0)
+        answered += int(report.get("answered") or 0)
+        refused += int(report.get("refused") or 0)
+        if report.get("reason"):
+            # A configuration problem does not improve by being retried for
+            # another forty seconds.
+            reason = str(report["reason"])
+            break
+
+    out: dict[str, Any] = {
+        "polled": polled,
+        "answered": answered,
+        "refused": refused,
+    }
+    if reason:
+        out["reason"] = reason
+    return out

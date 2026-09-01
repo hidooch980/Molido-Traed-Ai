@@ -238,7 +238,39 @@ def materialize(
             written += 1
 
     if pending:
-        session.add_all(pending)
+        # Inserted with the conflict allowed for, not just pre-checked.
+        #
+        # `existing` is read once at the top, so anything written between that
+        # read and this insert collides - two cycles overlapping on one
+        # instrument, or a retry of a cycle that already got half way. The
+        # collision is not an error worth having: the row it would write is
+        # the row already there, because a feature is a pure function of the
+        # bars and the version.
+        #
+        # It surfaced when ten new indicators were added: every existing bar
+        # suddenly needed new feature rows, the passes overlapped, and one
+        # duplicate key aborted the whole collection cycle - which runs the
+        # order step last, so the system stopped trading and said nothing
+        # about why.
+        from sqlalchemy.dialects.postgresql import insert as _pg_insert
+
+        rows = [
+            {
+                "instrument_id": row.instrument_id,
+                "timeframe": row.timeframe,
+                "name": row.name,
+                "feature_version": row.feature_version,
+                "event_time": row.event_time,
+                "computed_at": row.computed_at,
+                "value": row.value,
+                "source_revision": row.source_revision,
+                "quality_score": row.quality_score,
+            }
+            for row in pending
+        ]
+        session.execute(
+            _pg_insert(FeatureValue).values(rows).on_conflict_do_nothing()
+        )
 
     session.flush()
     log.info(

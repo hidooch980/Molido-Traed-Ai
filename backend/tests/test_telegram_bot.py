@@ -62,7 +62,7 @@ class TestOnlyAdminsAreAnswered:
     def poll_with(self, session, monkeypatch, update):
         calls = []
 
-        def fake_api(method, payload, *, token=None):
+        def fake_api(method, payload, *, token=None, timeout=None):
             calls.append((method, payload))
             if method == "getUpdates":
                 return True, {"ok": True, "result": [update]}

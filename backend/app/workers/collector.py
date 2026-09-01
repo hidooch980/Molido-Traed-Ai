@@ -1016,11 +1016,17 @@ async def telegram_poll_job(ctx: dict) -> dict[str, Any]:
     holding state between requests. Its failure is reported and never fatal:
     a broken chat channel must not stop the thing that collects market data.
     """
-    from app.integrations.telegram_bot import poll
+    from app.integrations.telegram_bot import pump
+
+    def listen() -> dict[str, Any]:
+        with session_scope() as session:
+            return pump(session)
 
     try:
-        with session_scope() as session:
-            report = poll(session)
+        # In a thread, because the pump blocks for most of the minute on
+        # purpose and the event loop it would otherwise hold is the one
+        # collecting market data.
+        report = await asyncio.to_thread(listen)
     except Exception as problem:  # noqa: BLE001 - reported, never fatal
         return {"polled": 0, "reason": f"{type(problem).__name__} while polling"}
     if report.get("answered") or report.get("refused"):
