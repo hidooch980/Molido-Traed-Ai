@@ -113,6 +113,22 @@ class Scorecard:
     realised_reward_risk: float | None = None
     required_hit_rate: float | None = None
     expectancy_r: float | None = None
+    #: Gross winnings divided by gross losses. Expectancy says what the
+    #: average trade returns; this says how much was won for every unit
+    #: lost, and the two disagree in the case that matters - a strategy
+    #: with a positive average carried by one outlier has a profit
+    #: factor barely above one, and the average alone hides that.
+    profit_factor: float | None = None
+    #: The worst peak-to-trough fall of the cumulative R curve, in R.
+    #:
+    #: A strategy is not described by its total. Two with the same
+    #: expectancy are different instruments if one reached it through a
+    #: 12 R hole - on a challenge account the hole is what ends the
+    #: attempt, whatever the total would have been.
+    max_drawdown_r: float | None = None
+    #: The longest run of consecutive losers. The number an account
+    #: holder actually has to sit through.
+    longest_losing_run: int = 0
     comparisons: int = 1
     verdict: str = "insufficient"
     reason: str = ""
@@ -137,6 +153,9 @@ class Scorecard:
             "realised_reward_risk": _round(self.realised_reward_risk),
             "required_hit_rate": _round(self.required_hit_rate),
             "expectancy_r": _round(self.expectancy_r),
+            "profit_factor": _round(self.profit_factor),
+            "max_drawdown_r": _round(self.max_drawdown_r),
+            "longest_losing_run": self.longest_losing_run,
             "comparisons": self.comparisons,
             "notes": self.notes,
             # An edge measured in a backtest is a hypothesis about the future.
@@ -248,6 +267,34 @@ def score(
     card.expectancy_r = statistics.fmean(
         [t.r_multiple for t in resolved]  # type: ignore[misc]
     )
+
+    # Gross win over gross loss. Infinite when nothing lost is reported
+    # as None rather than as a huge number: a strategy with no losing
+    # trade yet has not been measured against losing, and a printed
+    # 999 would be read as a result.
+    gross_win = sum((t.r_multiple or 0.0) for t in resolved if (t.r_multiple or 0.0) > 0)
+    gross_loss = -sum((t.r_multiple or 0.0) for t in resolved if (t.r_multiple or 0.0) < 0)
+    card.profit_factor = (gross_win / gross_loss) if gross_loss > 0 else None
+
+    # The R curve in the order the trades resolved, and its worst fall
+    # from a peak. Order matters here and nowhere else on this card,
+    # which is why it is computed from the sequence rather than from
+    # the aggregates above.
+    running = peak = 0.0
+    worst = 0.0
+    losing_run = longest_run = 0
+    for trade in resolved:
+        value = trade.r_multiple or 0.0
+        running += value
+        peak = max(peak, running)
+        worst = max(worst, peak - running)
+        if value < 0:
+            losing_run += 1
+            longest_run = max(longest_run, losing_run)
+        else:
+            losing_run = 0
+    card.max_drawdown_r = worst
+    card.longest_losing_run = longest_run
 
     z = _bonferroni_z(comparisons)
     card.hit_rate_low, card.hit_rate_high = wilson_interval(len(wins), len(resolved), z)

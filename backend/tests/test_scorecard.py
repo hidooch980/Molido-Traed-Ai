@@ -191,3 +191,59 @@ class TestReporting:
         payload = sc.score(trials(wins=300, losses=300), strategy="x").as_dict()
 
         assert payload["hit_rate_95ci"][0] < payload["hit_rate"] < payload["hit_rate_95ci"][1]
+
+
+class TestProfitFactorAndTheShapeOfTheCurve:
+    """Expectancy says what the average trade returns. These say how much was
+    won per unit lost, how deep the hole got on the way, and how many losses
+    in a row somebody had to sit through - and a strategy is not described by
+    its total."""
+
+    def card(self, rs):
+        from app.learning.scorecard import Trial, score
+
+        return score(
+            [Trial(strategy="s", r_multiple=r) for r in rs],
+            strategy="s",
+            min_trials=1,
+        )
+
+    def test_profit_factor_is_gross_win_over_gross_loss(self):
+        card = self.card([2.0, -1.0, 1.0, -1.0])
+
+        assert card.profit_factor == 1.5
+
+    def test_no_loss_yet_is_not_an_enormous_profit_factor(self):
+        """A strategy with no losing trade has not been measured against
+        losing, and a printed 999 would be read as a result."""
+        card = self.card([1.0, 2.0])
+
+        assert card.profit_factor is None
+
+    def test_an_outlier_carried_average_shows_in_the_profit_factor(self):
+        """Positive expectancy carried by one winner has a profit factor
+        barely above one, and the average alone hides that."""
+        card = self.card([10.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0])
+
+        assert card.expectancy_r > 0
+        assert card.profit_factor < 1.3
+
+    def test_the_drawdown_is_measured_along_the_curve(self):
+        """Order matters here and nowhere else on the card."""
+        card = self.card([3.0, -1.0, -1.0, -1.0, 2.0])
+
+        # Peak 3, trough 0: a 3 R hole, even though the total ends positive.
+        assert card.max_drawdown_r == 3.0
+        assert card.expectancy_r > 0
+
+    def test_the_longest_losing_run_is_counted(self):
+        card = self.card([-1.0, -1.0, 1.0, -1.0, -1.0, -1.0, 1.0])
+
+        assert card.longest_losing_run == 3
+
+    def test_all_three_reach_the_payload(self):
+        payload = self.card([2.0, -1.0]).as_dict()
+
+        assert "profit_factor" in payload
+        assert "max_drawdown_r" in payload
+        assert "longest_losing_run" in payload

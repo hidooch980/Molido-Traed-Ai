@@ -113,6 +113,13 @@ MAX_SPREAD_COST_R = 0.25
 #: hours, which is the delay being traded rather than the rule.
 DECISION_BAR_MINUTES = 60
 
+#: The frame that supplies context, and the frames that are details
+#: inside it. An entry on a fast frame is refused when the context frame
+#: has a fresh decision the other way - not when it is silent, which is
+#: most instants.
+CONTEXT_TIMEFRAME = "H1"
+FAST_TIMEFRAMES: frozenset[str] = frozenset({"M1", "M5", "M15"})
+
 
 def _number(value: Any) -> float:
     """A published field as a float, raising on anything that is not one.
@@ -1143,7 +1150,8 @@ def run_cycle(
     # Always built, not only when a majority is demanded: the votes are
     # what tell agreement from contradiction, and contradiction is worth
     # acting on even when one brain is enough to act.
-    votes = _fresh_votes(session, moment)
+    sides_by_timeframe: dict[tuple[str, str], set[str]] = {}
+    votes = _fresh_votes(session, moment, sides_by_timeframe)
 
     for entry in candidates:
         # Resolved before the per-symbol cap, because the cap is about the
@@ -1195,6 +1203,30 @@ def run_cycle(
                 f"({', '.join(sorted(against))})"
             )
             continue
+
+        # A fast entry must not fight the hourly picture.
+        #
+        # The recorder writes a decision per timeframe and nothing ever
+        # compared them, so an M5 long and an H1 short on the same
+        # instrument were two independent trades rather than one
+        # contradiction. The slower frame is the context the faster one
+        # is a detail inside: entering against it is trading the noise
+        # and paying the spread for the privilege.
+        #
+        # Only opposition blocks. An hourly frame with no opinion is not
+        # a refusal - most instants it has none, and demanding agreement
+        # from a frame that is silent would stop nearly everything.
+        if str(entry.timeframe) in FAST_TIMEFRAMES:
+            slower = sides_by_timeframe.get(
+                (entry.symbol, CONTEXT_TIMEFRAME), set()
+            )
+            if slower and entry.decision not in slower:
+                skipped.append(
+                    f"{entry.symbol}: the {CONTEXT_TIMEFRAME} decision is "
+                    f"{'/'.join(sorted(slower))} and this is "
+                    f"{entry.decision} on {entry.timeframe}"
+                )
+                continue
 
         if required > 1:
             agreeing = votes.get((entry.symbol, entry.decision), set())
@@ -1421,7 +1453,9 @@ def _consensus_required() -> int:
 
 
 def _fresh_votes(
-    session: Session, moment: datetime
+    session: Session,
+    moment: datetime,
+    by_timeframe: dict[tuple[str, str], set[str]] | None = None,
 ) -> dict[tuple[str, str], set[str]]:
     """(symbol, side) -> the brains with a fresh decision saying exactly that.
 
@@ -1444,12 +1478,20 @@ def _fresh_votes(
     ).all()
 
     votes: dict[tuple[str, str], set[str]] = {}
+    # Filled for the caller when one is supplied: which sides exist on
+    # each timeframe, which is a different question from how many brains
+    # are on each side.
+    if by_timeframe is None:
+        by_timeframe = {}
     for row in rows:
         if row.opened_at < moment - timedelta(
             minutes=MAX_DECISION_AGE_MINUTES + _bar_minutes(row)
         ):
             continue
         votes.setdefault((row.symbol, row.decision), set()).add(row.strategy)
+        by_timeframe.setdefault((row.symbol, row.timeframe), set()).add(
+            row.decision
+        )
     return votes
 
 

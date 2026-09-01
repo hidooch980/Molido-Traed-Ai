@@ -186,6 +186,11 @@ def decide(
         price_source=source,
         before=before,
         during=during or {},
+        # The column, not only the reasoning payload. The freshness
+        # window reads the payload and the timeframe gates read the
+        # column, so a fixture that set one and not the other tested
+        # half the rule.
+        **({"timeframe": timeframe} if timeframe else {}),
         **({"strategy": strategy} if strategy else {}),
     )
     session.add(row)
@@ -2287,3 +2292,77 @@ class TestTheMajorityDecides:
         # Two shorts against one long: the long is refused, and the shorts
         # are free to trade.
         assert any("want the other side" in note for note in report["skipped"])
+
+
+class TestTheFastFrameRespectsTheSlowOne:
+    """The recorder writes a decision per timeframe and nothing compared
+    them, so an M5 long and an H1 short on the same instrument were two
+    independent trades rather than one contradiction."""
+
+    def test_a_fast_entry_against_the_hourly_decision_is_refused(
+        self, session, live
+    ):
+        # The hourly frame says short; two brains say long on faster
+        # frames, so the majority gate passes and the timeframe rule is the
+        # one being tested.
+        decide(
+            session,
+            symbol="EURUSD",
+            timeframe="H1",
+            decision="short",
+            strategy="time-series-momentum",
+        )
+        decide(
+            session,
+            symbol="EURUSD",
+            timeframe="M5",
+            at=NOW - timedelta(minutes=4),
+            decision="long",
+            strategy="cross-sectional-stretch",
+        )
+        decide(
+            session,
+            symbol="EURUSD",
+            timeframe="M15",
+            at=NOW - timedelta(minutes=4),
+            decision="long",
+            strategy="trend-following",
+        )
+
+        broker = FakeBroker()
+
+        report = autotrade.run_cycle(
+            session, now=NOW, broker=broker, bridge=FakeBridge()
+        )
+
+        assert any("H1 decision is" in note for note in report["skipped"])
+
+    def test_a_silent_hourly_frame_does_not_block(self, session, live):
+        """Most instants it has no opinion, and demanding agreement from a
+        frame that is silent would stop nearly everything."""
+        decide(
+            session,
+            symbol="EURUSD",
+            timeframe="M5",
+            at=NOW - timedelta(minutes=4),
+            strategy="cross-sectional-stretch",
+        )
+        broker = FakeBroker()
+
+        report = autotrade.run_cycle(
+            session, now=NOW, broker=broker, bridge=FakeBridge()
+        )
+
+        assert report["orders"] == 1
+
+    def test_the_hourly_frame_itself_is_never_blocked_by_this(
+        self, session, live
+    ):
+        decide(session, symbol="EURUSD", timeframe="H1")
+        broker = FakeBroker()
+
+        report = autotrade.run_cycle(
+            session, now=NOW, broker=broker, bridge=FakeBridge()
+        )
+
+        assert report["orders"] == 1
