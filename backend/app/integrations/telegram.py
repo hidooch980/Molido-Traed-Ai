@@ -103,6 +103,57 @@ def configured(session: Session | None = None) -> tuple[bool, str | None]:
     return True, None
 
 
+def api_call(
+    method: str, payload: dict[str, Any], *, token: str | None = None
+) -> tuple[bool, Any]:
+    """Like `_post`, but returns the API's own body instead of a verdict.
+
+    `_post` answers "did it go" and is what the alert path needs. Reading
+    updates needs the payload itself, and re-implementing the request beside
+    it would be a second HTTP path with its own scheme check to forget - so
+    both go through the same request with the same refusals, and this one
+    hands back what came home.
+
+    Nested JSON values are encoded as JSON strings because Telegram's
+    form-encoded API expects them that way; `reply_markup` is the one that
+    matters, and sending it as a Python repr produces a silent no-keyboard.
+    """
+    if token is None:
+        settings = get_settings()
+        token = (getattr(settings, "telegram_bot_token", "") or "").strip()
+    url = f"{API_ROOT}/bot{token}/{method}"
+    if not url.startswith("https://"):
+        return False, "refusing to send over anything but https"
+
+    flat = {
+        key: json.dumps(value) if isinstance(value, (dict, list)) else value
+        for key, value in payload.items()
+    }
+    body = urllib.parse.urlencode(flat).encode("utf-8")
+    request = urllib.request.Request(  # noqa: S310 - scheme checked above
+        url,
+        data=body,
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(  # noqa: S310 - scheme checked above
+            request, timeout=TIMEOUT_SECONDS
+        ) as response:
+            answer = json.loads(response.read())
+        if answer.get("ok"):
+            return True, answer
+        return False, str(answer.get("description") or "the API refused the call")
+    except urllib.error.HTTPError as exc:
+        try:
+            detail = json.loads(exc.read()).get("description")
+        except (ValueError, OSError):
+            detail = None
+        return False, f"HTTP {exc.code}: {detail or 'no detail'}"
+    except OSError as problem:
+        return False, f"the API could not be reached: {problem}"
+
+
 def _post(
     method: str, payload: dict[str, Any], *, token: str | None = None
 ) -> tuple[bool, str]:
