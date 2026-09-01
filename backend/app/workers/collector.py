@@ -1126,7 +1126,18 @@ class WorkerSettings:
     ]
     on_startup = startup
     max_jobs = 2
-    job_timeout = 900
+    #: One cycle now collects 150 watchlist entries, materialises their
+    #: features, ingests four broker timeframes, records two price series on
+    #: three timeframes each, sends orders and resolves what closed. At 900s
+    #: that cycle began timing out - and a timed-out cycle is worse than a
+    #: slow one: the orders step never runs, so the system stops trading and
+    #: the only evidence is one line in a log nobody greps.
+    #:
+    #: Raised rather than trimmed, because every step in that list is load
+    #: somebody asked for. The interval is fifteen minutes and arq will not
+    #: start a second copy of a cron job, so a long cycle delays the next one
+    #: rather than overlapping it.
+    job_timeout = 1500
     keep_result = 3600
     cron_jobs = _cron_jobs()
     redis_settings = _redis_settings()
