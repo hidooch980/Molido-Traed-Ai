@@ -259,9 +259,21 @@ services:
     restart: unless-stopped
     environment: *backend-env
     volumes:
-      # Only the update offset, which lives beside the kill switch on the
-      # host so a redeploy does not replay a day of questions.
+      # The update offset, beside the kill switch on the host so a redeploy
+      # does not replay a day of questions.
       - ${MOLIDO_KILL_SWITCH_HOST:-/var/lib/molido}:/var/lib/molido
+      # Every terminal's bridge, read-only. Without these the bot answers
+      # "no heartbeat file" for every account while the collector reads them
+      # perfectly - a channel reporting an outage that exists only inside
+      # its own container, which is worse than no answer.
+      - ${MOLIDO_MT5_BRIDGE_HOST:-/home/ubuntu/.mt5/drive_c/users/ubuntu/AppData/Roaming/MetaQuotes/Terminal/Common/Files}:/home/ubuntu/.mt5/drive_c/users/ubuntu/AppData/Roaming/MetaQuotes/Terminal/Common/Files:ro
+      - ${MOLIDO_MT5_BRIDGE_B:-/root/.mt5b/drive_c/users/root/AppData/Roaming/MetaQuotes/Terminal/Common/Files}:/bridges/b:ro
+      - ${MOLIDO_MT5_BRIDGE_C:-/root/.mt5c/drive_c/users/root/AppData/Roaming/MetaQuotes/Terminal/Common/Files}:/bridges/c:ro
+      - ${MOLIDO_MT5_BRIDGE_D:-/root/.mt5d/drive_c/users/root/AppData/Roaming/MetaQuotes/Terminal/Common/Files}:/bridges/d:ro
+      - ${MOLIDO_MT5_BRIDGE_E:-/root/.mt5e/drive_c/users/root/AppData/Roaming/MetaQuotes/Terminal/Common/Files}:/bridges/e:ro
+      - ${MOLIDO_MT5_BRIDGE_F:-/root/.mt5f/drive_c/users/root/AppData/Roaming/MetaQuotes/Terminal/Common/Files}:/bridges/f:ro
+      - ${MOLIDO_MT5_BRIDGE_G:-/root/.mt5g/drive_c/users/root/AppData/Roaming/MetaQuotes/Terminal/Common/Files}:/bridges/g:ro
+      - ${MOLIDO_MT5_BRIDGE_H:-/root/.mt5h/drive_c/users/root/AppData/Roaming/MetaQuotes/Terminal/Common/Files}:/bridges/h:ro
     depends_on:
       postgres:
         condition: service_healthy
