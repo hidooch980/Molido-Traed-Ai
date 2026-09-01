@@ -19,6 +19,7 @@ come from the same read-only allowlist a typed command goes through.
 
 from __future__ import annotations
 
+import pathlib
 import signal
 import sys
 import time
@@ -37,6 +38,37 @@ WAIT_SECONDS = 25
 #: How long to wait after an error before trying again. A misconfigured token
 #: or an unreachable API should not become a request flood.
 BACKOFF_SECONDS = 30
+
+#: Touched once per pass, so something outside this process can tell a loop
+#: that is turning from one that is wedged inside a poll that will never
+#: return. Beside the offset, in the one directory this process can write.
+#:
+#: The container's healthcheck was `pgrep -f app.workers.chat`, and the image
+#: has no procps - so it exited 127 every minute and the channel was marked
+#: unhealthy for its entire life while answering every question put to it. A
+#: check that cannot pass is worse than no check: it trains whoever reads the
+#: status to ignore the column.
+#:
+#: This says the loop is turning, which is the honest claim. A channel that
+#: is running but refused by Telegram logs `chat.idle` and says why - that is
+#: a different question and a restart is not its answer.
+HEARTBEAT_FILE = "/var/lib/molido/state/chat-heartbeat"
+
+
+def _beat() -> None:
+    """Record that the loop came round again. Never fatal.
+
+    An unwritable state directory is what put the offset in a loop replaying
+    the same ten messages every minute, so this refuses to be the reason the
+    channel stops: the worst an unwritable heartbeat can do is make the
+    healthcheck pessimistic.
+    """
+    try:
+        path = pathlib.Path(HEARTBEAT_FILE)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.touch()
+    except OSError:
+        pass
 
 _running = True
 
@@ -61,6 +93,7 @@ def run() -> int:
 
     log.info("chat.started", wait_seconds=WAIT_SECONDS)
     while _running:
+        _beat()
         try:
             with session_scope() as session:
                 report = poll(session, wait=WAIT_SECONDS)

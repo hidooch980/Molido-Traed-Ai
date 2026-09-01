@@ -641,6 +641,38 @@ async def collect(ctx: dict) -> dict[str, Any]:
         resolved=resolved.get("resolved", 0),
     )
 
+    # And the same for orders, for exactly the same reason.
+    #
+    # The comment above says the forward result used to travel only as arq's
+    # return value and so reached nobody. Orders were doing that still: the
+    # log said 22 decisions recorded and 220 resolved and never once said
+    # whether any of them became a position. "Did it trade?" was answerable
+    # only by opening a terminal, which is not a thing anybody does at four
+    # in the morning.
+    #
+    # Per account rather than as a fleet total, because zero is the common
+    # answer and the whole question is *which* account and *why* - a paused
+    # one, a logged-out one and one whose brains all disagreed are the same
+    # zero and want three different responses. The first named refusal is
+    # carried rather than the whole list: it is the one that will be read.
+    orders = payload.get("orders") or {}
+    by_account = orders.get("by_account") or {}
+    log.info(
+        "collector.orders_complete",
+        orders=orders.get("orders", 0),
+        accounts=orders.get("accounts", 0),
+        reason=orders.get("reason"),
+        per_account={
+            str(key): (
+                report.get("refused")
+                or report.get("skipped")
+                or report.get("orders", 0)
+            )
+            for key, report in by_account.items()
+            if isinstance(report, dict)
+        },
+    )
+
     return payload
 
 

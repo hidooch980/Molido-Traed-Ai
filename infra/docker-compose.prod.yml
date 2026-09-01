@@ -281,7 +281,12 @@ services:
         condition: service_completed_successfully
     command: ["python", "-m", "app.workers.chat"]
     healthcheck:
-      test: ["CMD-SHELL", "pgrep -f app.workers.chat > /dev/null"]
+      # Not pgrep: this image has no procps and the check exited 127 every
+      # minute for the life of the container. Python is guaranteed here
+      # because Python is what the container runs.
+      test:
+        [ "CMD-SHELL",
+          "python -c \"import os,sys,time; p='/var/lib/molido/state/chat-heartbeat'; sys.exit(0 if os.path.exists(p) and time.time()-os.path.getmtime(p) < 180 else 1)\"" ]
       interval: 60s
       timeout: 10s
       retries: 3

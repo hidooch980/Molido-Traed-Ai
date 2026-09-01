@@ -2366,3 +2366,80 @@ class TestTheFastFrameRespectsTheSlowOne:
         )
 
         assert report["orders"] == 1
+
+
+class TestAnAccountMayHoldSeveralBrains:
+    """Five of seven registered brains had never produced a single order,
+    because an account could name exactly one and nobody had named them.
+    They were deciding into a drawer."""
+
+    @staticmethod
+    def assign(monkeypatch, value):
+        from app.core.config import get_settings
+
+        monkeypatch.setattr(
+            get_settings(), "account_strategies", value, raising=False
+        )
+
+    def test_both_assigned_brains_reach_the_broker(
+        self, session, live, monkeypatch
+    ):
+        self.assign(
+            monkeypatch,
+            "68345601=cross-sectional-stretch+trend-following",
+        )
+        decide(session, symbol="EURUSD", strategy="cross-sectional-stretch")
+        decide(session, symbol="AUDUSD", strategy="trend-following")
+        broker = FakeBroker()
+
+        report = autotrade.run_cycle(
+            session, now=NOW, broker=broker, bridge=FakeBridge()
+        )
+
+        assert report["orders"] == 2
+
+    def test_a_brain_the_account_does_not_hold_is_still_ignored(
+        self, session, live, monkeypatch
+    ):
+        """Widening the list is not the same as dropping the list."""
+        self.assign(monkeypatch, "68345601=trend-following")
+        decide(session, symbol="EURUSD", strategy="cross-sectional-stretch")
+        broker = FakeBroker()
+
+        report = autotrade.run_cycle(
+            session, now=NOW, broker=broker, bridge=FakeBridge()
+        )
+
+        assert report["orders"] == 0
+
+    def test_one_unknown_name_refuses_the_whole_account(
+        self, session, live, monkeypatch
+    ):
+        """A typo that silently drops one brain and trades the rest is an
+        account running a strategy nobody wrote down."""
+        self.assign(
+            monkeypatch, "68345601=trend-following+not-a-real-brain"
+        )
+        decide(session, symbol="EURUSD", strategy="trend-following")
+        broker = FakeBroker()
+
+        report = autotrade.run_cycle(
+            session, now=NOW, broker=broker, bridge=FakeBridge()
+        )
+
+        assert report["orders"] == 0
+        assert "not one this build knows" in report["refused"]
+
+    def test_an_empty_assignment_refuses_rather_than_falling_back(
+        self, session, live, monkeypatch
+    ):
+        self.assign(monkeypatch, "68345601=")
+        decide(session, symbol="EURUSD")
+        broker = FakeBroker()
+
+        report = autotrade.run_cycle(
+            session, now=NOW, broker=broker, bridge=FakeBridge()
+        )
+
+        assert report["orders"] == 0
+        assert "empty strategy" in report["refused"]

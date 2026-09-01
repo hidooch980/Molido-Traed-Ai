@@ -1139,10 +1139,10 @@ def run_cycle(
         str(s.get("name")): s for s in (feed.symbols().get("symbols") or [])
     }
 
-    strategy, strategy_refusal = _strategy_for(login)
-    if strategy is None:
+    strategies, strategy_refusal = _strategy_for(login)
+    if strategies is None:
         return _report(mode=mode, refused=strategy_refusal)
-    candidates = _pending(session, moment, login=login, strategy=strategy)
+    candidates = _pending(session, moment, login=login, strategies=strategies)
     sent: list[dict[str, Any]] = []
     skipped: list[str] = []
 
@@ -1495,13 +1495,26 @@ def _fresh_votes(
     return votes
 
 
-def _strategy_for(login: str) -> tuple[str | None, str]:
-    """Which brain this account trades, or why it must not trade at all.
+def _strategy_for(login: str) -> tuple[frozenset[str] | None, str]:
+    """Which brains this account trades, or why it must not trade at all.
 
     Unassigned means the incumbent - the behaviour every account had before
     brains were separable. Assigned to a name nothing registered means no
     trading, stated: an account trading a brain nobody wrote is worse than
     one that sits out and says why.
+
+    An account may hold several, written `login=first+second`. One brain per
+    account was a rule about accounts pretending to be a rule about brains:
+    seven brains were registered and recording, three of them added on
+    request, and five of the seven had never produced a single order because
+    no account named them. They were deciding into a drawer. Trading a brain
+    is a property of the fleet, not a scarce slot, and the number of demo
+    accounts somebody has opened is the wrong thing to ration it by.
+
+    What still bounds the account is what always did - the position cap, the
+    per-symbol cap, the daily loss limit and the portfolio brain - and those
+    are counted per account rather than per brain, so adding a second brain
+    widens what may be considered without widening what may be held.
     """
     from app.core.config import get_settings
     from app.learning import rules as rules_module
@@ -1514,17 +1527,40 @@ def _strategy_for(login: str) -> tuple[str | None, str]:
             key, _, value = piece.partition("=")
             assigned[key.strip()] = value.strip()
 
-    name = assigned.get(login, STRATEGY_INCUMBENT)
-    if name != STRATEGY_INCUMBENT and rules_module.get(name) is None:
+    names = [
+        piece.strip()
+        for piece in assigned.get(login, STRATEGY_INCUMBENT).split("+")
+        if piece.strip()
+    ]
+    # An assignment of nothing at all is a typo, not an instruction to trade
+    # the incumbent: `login=` reads as somebody meaning to name a brain.
+    if not names:
         return None, (
-            f"account {login} is assigned strategy {name!r}, which is not one "
+            f"account {login} is assigned an empty strategy - refusing to "
+            "trade rather than falling back to a brain nobody chose"
+        )
+
+    unknown = sorted(
+        {
+            name
+            for name in names
+            if name != STRATEGY_INCUMBENT and rules_module.get(name) is None
+        }
+    )
+    if unknown:
+        # Any unknown name refuses the whole account rather than only that
+        # brain. A typo silently dropping one brain and trading the rest is
+        # the same account running a strategy nobody wrote down.
+        listed = ", ".join(repr(name) for name in unknown)
+        return None, (
+            f"account {login} is assigned strategy {listed}, which is not one "
             "this build knows - refusing to trade rather than guessing a brain"
         )
-    return name, ""
+    return frozenset(names), ""
 
 
 def _pending(
-    session: Session, moment: datetime, *, login: str, strategy: str
+    session: Session, moment: datetime, *, login: str, strategies: frozenset[str]
 ) -> list[JournalEntry]:
     """Fresh rule decisions on the broker series that have no order yet.
 
@@ -1558,9 +1594,11 @@ def _pending(
                 JournalEntry.symbol.in_(sorted(REANCHORED_SYMBOLS)),
             ),
             JournalEntry.closed_at.is_(None),
-            # This account's brain only. The whole point of separable brains
-            # is that an account never trades a blend nobody designed.
-            JournalEntry.strategy == strategy,
+            # This account's brains only. The whole point of separable
+            # brains is that an account never trades a blend nobody designed
+            # - which is a statement about the blend being written down, not
+            # about it having exactly one member.
+            JournalEntry.strategy.in_(sorted(strategies)),
             JournalEntry.opened_at >= cutoff,
         )
         .order_by(JournalEntry.opened_at)
