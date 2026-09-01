@@ -2151,6 +2151,13 @@ class TestTheBookIsCountedInCurrencies:
         assert autotrade._currencies("EURUSD") == ("EUR", "USD")
         assert autotrade._currencies("gbpjpy") == ("GBP", "JPY")
 
+    def test_a_six_letter_name_is_not_evidence_of_two_currencies(self):
+        """COPPER divides cleanly into COP and PER, and COP is the Colombian
+        peso - so a length check alone puts a position in the book in a
+        currency nobody holds."""
+        assert autotrade._currencies("COPPER") == (None, None)
+        assert autotrade._currencies("XAUUSD") == ("XAU", "USD")
+
     def test_an_unsplittable_symbol_claims_nothing(self):
         """XAUUSD does carry dollar exposure and ".US500Cash" carries none.
         Guessing either way invents a currency position nobody holds."""

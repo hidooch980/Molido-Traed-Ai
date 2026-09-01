@@ -719,6 +719,22 @@ EXECUTION_SYMBOL: dict[str, str] = {
 }
 
 
+#: The codes a pair may be built from. An allowlist rather than a length
+#: check, because a six-letter symbol is not evidence of two currencies -
+#: COPPER divides into COP and PER, and COP is a real currency code.
+#:
+#: XAU, XAG and XPT are here deliberately: metals priced against a currency
+#: behave as one for exposure, and three long metal positions against the
+#: dollar are the same concentrated bet three FX pairs would be.
+TRADED_CURRENCIES: frozenset[str] = frozenset({
+    "AUD", "CAD", "CHF", "CNH", "CZK", "DKK", "EUR", "GBP", "HKD", "HUF",
+    "ILS", "INR", "JPY", "MXN", "NOK", "NZD", "PLN", "SEK", "SGD", "THB",
+    "TRY", "USD", "ZAR",
+    "XAU", "XAG", "XPT",
+    "BTC", "ETH",
+})
+
+
 def _currencies(symbol: str) -> tuple[str | None, str | None]:
     """The two currencies a pair is exposure to, or (None, None).
 
@@ -738,7 +754,15 @@ def _currencies(symbol: str) -> tuple[str | None, str | None]:
     name = _tradeable_symbol(symbol).upper()
     if len(name) != 6 or not name.isalpha():
         return None, None
-    return name[:3], name[3:]
+    base, quote = name[:3], name[3:]
+    # Both halves have to be codes this platform actually trades, or the
+    # split is arithmetic rather than meaning: COPPER is six letters and
+    # divides cleanly into COP and PER - and COP is the Colombian peso, so
+    # the book would carry a position in a currency nobody holds and the
+    # concentration check would count it.
+    if base not in TRADED_CURRENCIES or quote not in TRADED_CURRENCIES:
+        return None, None
+    return base, quote
 
 
 def _tradeable_symbol(symbol: str) -> str:
