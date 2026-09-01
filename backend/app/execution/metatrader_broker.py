@@ -96,6 +96,38 @@ class MetaTraderBroker:
                 ),
             )
 
+        # The shape, as distances as well as levels.
+        #
+        # Levels alone anchor the trade to a price nobody got. The backend
+        # reads a quote the expert published some seconds ago, computes a stop
+        # and a target from it, and by the time the deal fills the market has
+        # moved - so the stop sits at its intended distance from a price that
+        # no longer exists, and at some other distance from the one actually
+        # paid. Measured across twenty-eight live fills, a geometry designed
+        # for one unit of reward per unit of risk was arriving at 0.77, and
+        # eighteen of the twenty-eight were below parity. The worst was 0.15:
+        # a trade needing an 87% win rate to break even, taken by a system
+        # that believed it had taken an even-money bet.
+        #
+        # It is worse than a return problem. Size is computed from the
+        # intended stop distance, so a fill that lands adverse risks more than
+        # the budget allowed - the 0.15 trade risked 1.75 times what the risk
+        # brain had authorised. The limit was not being honoured, and nothing
+        # said so.
+        #
+        # Distances travel correctly because they are volatility, and the
+        # expert can re-derive the levels from the price it actually got.
+        # Levels are still sent: an expert that does not understand distances
+        # keeps working exactly as before.
+        stop_distance = (
+            abs(intent.entry - intent.stop) if intent.entry is not None else None
+        )
+        target_distance = (
+            abs(intent.target - intent.entry)
+            if intent.target is not None and intent.entry is not None
+            else None
+        )
+
         payload = {
             "id": client_order_id,
             "symbol": intent.symbol,
@@ -105,6 +137,13 @@ class MetaTraderBroker:
             "target": intent.target if intent.target is not None else 0.0,
             "account": intent.account_id,
         }
+        # Omitted rather than sent as zero when they cannot be computed. Zero
+        # is a distance the expert would have to treat as "no stop", and a
+        # position with no stop is the one thing this system must never open.
+        if stop_distance:
+            payload["stop_distance"] = stop_distance
+        if target_distance:
+            payload["target_distance"] = target_distance
 
         try:
             self.directory.mkdir(parents=True, exist_ok=True)

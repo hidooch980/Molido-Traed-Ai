@@ -103,6 +103,21 @@ MAX_DECISION_AGE_MINUTES = 90
 #: risk before the trade has an opinion.
 MAX_SPREAD_COST_R = 0.25
 
+#: The expert's own `MaxSlippagePts`, used when it does not publish one.
+#:
+#: The ceiling above counted the spread and nothing else, and the spread is
+#: about half of what getting in costs. The other half is the fill landing
+#: away from the quote, and across twenty-eight live fills that was the larger
+#: half: a geometry designed for one unit of reward per unit of risk arrived
+#: at 0.77, and the worst of them at 0.15.
+#:
+#: Counting it here is not a new tolerance. 0.25 R was already the deployment's
+#: answer to "how much may execution cost", and it was being enforced against
+#: an understatement. A worst case rather than an average, because the expert
+#: enforces this exact number as its deviation limit - so it is a bound the
+#: venue will honour, not an estimate somebody has to keep re-fitting.
+DEFAULT_SLIPPAGE_POINTS = 30.0
+
 #: How long the bar the decision was taken on lasts. The decision happened at
 #: its close, not at its label.
 #:
@@ -843,12 +858,26 @@ def _levels_from_broker(
 def _spread_cost_r(
     specification: dict[str, Any], stop_distance: float
 ) -> tuple[float | None, str]:
-    """What crossing this symbol's spread costs, in R, right now.
+    """What getting into this symbol costs, in R, right now.
 
-    R is defined by the stop distance, so the cost in R is the broker's live
-    bid-ask measured against that distance. Read per send rather than cached:
-    the spread widens on news and at rollover, which is exactly when a rule is
-    most likely to want to trade and exactly when a stale number is most wrong.
+    R is defined by the stop distance, so the cost in R is what the venue
+    charges to open measured against that distance. Read per send rather than
+    cached: the spread widens on news and at rollover, which is exactly when a
+    rule is most likely to want to trade and exactly when a stale number is
+    most wrong.
+
+    Two costs, not one. The spread is the visible half; the other is the fill
+    landing away from the quote it was priced against, and on a short
+    timeframe that half is the larger. A 2.5x ATR stop is around forty pips at
+    H1 and seven at M5, while the fill lands three or four pips off either
+    way - noise in the first case and most of the trade in the second. Charging
+    only the spread made the fast frames look affordable, and the realised
+    reward-to-risk across twenty-eight live fills said otherwise.
+
+    The slippage figure is a bound rather than an estimate: it is the expert's
+    own deviation limit, which the venue enforces on every order. Published by
+    the expert where it can be, so changing it there does not quietly
+    invalidate the arithmetic here.
 
     Returns None rather than a default when the terminal has not published a
     usable quote. A missing spread is not a free one, and treating it as zero
@@ -872,7 +901,40 @@ def _spread_cost_r(
         )
     if stop_distance <= 0:
         return None, "the decision recorded a zero stop, so R is undefined"
-    return spread / stop_distance, ""
+
+    # `point` is what a deviation limit is counted in. `tick_size` stands in
+    # where a terminal publishes only that: the two are equal on every
+    # instrument traded here, and where they are not, the tick is the larger -
+    # which overstates the allowance and so refuses rather than admits. That
+    # is the safe direction for a check whose whole job is refusing.
+    point = _maybe_number(specification.get("point"))
+    if point is None or point <= 0:
+        point = _maybe_number(specification.get("tick_size"))
+    if point is None or point <= 0:
+        return None, (
+            "the terminal publishes no point or tick size for it, so the "
+            "slippage allowance cannot be priced - and an unpriced allowance "
+            "is not a zero one"
+        )
+
+    allowed_points = _maybe_number(specification.get("slippage_points"))
+    if allowed_points is None or allowed_points < 0:
+        allowed_points = DEFAULT_SLIPPAGE_POINTS
+    return (spread + allowed_points * point) / stop_distance, ""
+
+
+def _maybe_number(value: Any) -> float | None:
+    """A float, or None. `_number` raises, which is right for its callers.
+
+    This one is for the checks that treat an absent field as a question to
+    answer rather than a failure to propagate.
+    """
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _bar_minutes(entry: JournalEntry) -> int:
@@ -1304,7 +1366,7 @@ def run_cycle(
             continue
         if spread_cost > MAX_SPREAD_COST_R:
             skipped.append(
-                f"{entry.symbol}: crossing the spread costs {spread_cost:.3f} R, "
+                f"{entry.symbol}: spread and slippage cost {spread_cost:.3f} R, "
                 f"over the {MAX_SPREAD_COST_R} R ceiling. The trade starts that "
                 "far behind before it has an opinion"
             )

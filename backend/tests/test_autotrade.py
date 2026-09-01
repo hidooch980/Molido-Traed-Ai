@@ -785,19 +785,26 @@ class FakeBridgeHolding(FakeBridge):
 
 
 class TestTheSpreadIsPricedFromTheBrokerAtSendTime:
-    """R is the stop distance, so what crossing the spread costs in R is the
-    broker's own bid-ask measured against it. Read per send: the spread widens
-    on news and at rollover, which is when a rule most wants to trade and when
-    a stale number is most wrong."""
+    """R is the stop distance, so what getting in costs in R is what the venue
+    charges measured against it. Read per send: the spread widens on news and
+    at rollover, which is when a rule most wants to trade and when a stale
+    number is most wrong.
 
-    SPEC = {"bid": 1.15890, "ask": 1.15904}  # live EURUSD, 1.4 pips
+    Two costs. The spread is the visible half and the fill landing away from
+    the quote is the other, which on a short timeframe is the larger - the
+    stop is seven pips there and the fill lands three or four off either way.
+    Charging only the spread made the fast frames look affordable."""
+
+    #: Live EURUSD: 1.4 pips of spread, and the point a deviation is counted in.
+    SPEC = {"bid": 1.15890, "ask": 1.15904, "point": 0.00001}
 
     def test_a_tighter_stop_costs_more_of_its_own_r(self):
         wide, _ = autotrade._spread_cost_r(self.SPEC, 0.00225)   # H1 geometry
         tight, _ = autotrade._spread_cost_r(self.SPEC, 0.00027)  # M1 geometry
 
-        assert round(wide, 3) == 0.062
-        assert round(tight, 3) == 0.519
+        # 1.4 pips of spread plus 3.0 of allowed deviation, over the stop.
+        assert round(wide, 3) == 0.196
+        assert round(tight, 3) == 1.630
         assert tight > wide
 
     def test_the_ceiling_lets_the_hourly_geometry_through(self):
@@ -810,6 +817,44 @@ class TestTheSpreadIsPricedFromTheBrokerAtSendTime:
         cost, _ = autotrade._spread_cost_r(self.SPEC, 0.00027)
 
         assert cost > autotrade.MAX_SPREAD_COST_R
+
+    def test_slippage_is_counted_even_where_the_spread_is_nothing(self):
+        """A zero spread is not a free entry. The measured failure was fills
+        landing away from the quote, which a spread of zero says nothing
+        about - and a check that reads zero there is the check that let the
+        seven pip stops through."""
+        cost, _ = autotrade._spread_cost_r(
+            {"bid": 1.1, "ask": 1.1, "point": 0.00001}, 0.0006
+        )
+
+        assert cost == pytest.approx(0.5)
+        assert cost > autotrade.MAX_SPREAD_COST_R
+
+    def test_the_expert_may_publish_its_own_deviation_limit(self):
+        """So changing it on the expert does not quietly invalidate this."""
+        loose, _ = autotrade._spread_cost_r(
+            {**self.SPEC, "slippage_points": 100.0}, 0.00225
+        )
+        tight, _ = autotrade._spread_cost_r(
+            {**self.SPEC, "slippage_points": 0.0}, 0.00225
+        )
+
+        assert loose > tight
+        # With no deviation allowed at all, only the spread remains.
+        assert round(tight, 3) == 0.062
+
+    def test_tick_size_stands_in_for_a_missing_point(self):
+        cost, _ = autotrade._spread_cost_r(
+            {"bid": 1.15890, "ask": 1.15904, "tick_size": 0.00001}, 0.00225
+        )
+
+        assert round(cost, 3) == 0.196
+
+    def test_an_unpriceable_allowance_is_not_a_zero_one(self):
+        cost, why = autotrade._spread_cost_r({"bid": 1.1, "ask": 1.2}, 0.002)
+
+        assert cost is None
+        assert "is not a zero one" in why
 
     def test_a_missing_quote_is_not_a_free_one(self):
         """Treating an unpublished spread as zero would let the one trade
@@ -838,10 +883,15 @@ class TestTheSpreadIsPricedFromTheBrokerAtSendTime:
         assert cost is None
         assert "R is undefined" in why
 
-    def test_a_zero_spread_is_free_rather_than_an_error(self):
-        cost, _ = autotrade._spread_cost_r({"bid": 1.1, "ask": 1.1}, 0.002)
+    def test_a_zero_spread_is_not_an_error(self):
+        """It is a real quote, and it prices to whatever the deviation costs
+        rather than refusing."""
+        cost, why = autotrade._spread_cost_r(
+            {"bid": 1.1, "ask": 1.1, "point": 0.00001}, 0.002
+        )
 
-        assert cost == 0.0
+        assert why == ""
+        assert cost == pytest.approx(0.15)
 
 
 class TestTheKillSwitchIsTheFirstGate:

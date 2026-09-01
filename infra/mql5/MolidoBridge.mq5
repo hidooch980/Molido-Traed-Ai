@@ -191,7 +191,16 @@ void WriteSymbols()
       json += "\"volume_max\":" + DoubleToString(SymbolInfoDouble(name, SYMBOL_VOLUME_MAX), 4) + ",";
       json += "\"volume_step\":" + DoubleToString(SymbolInfoDouble(name, SYMBOL_VOLUME_STEP), 4) + ",";
       json += "\"bid\":" + DoubleToString(SymbolInfoDouble(name, SYMBOL_BID), 8) + ",";
-      json += "\"ask\":" + DoubleToString(SymbolInfoDouble(name, SYMBOL_ASK), 8);
+      json += "\"ask\":" + DoubleToString(SymbolInfoDouble(name, SYMBOL_ASK), 8) + ",";
+      //--- The nearest a stop may sit, as this broker allows it. A request
+      //--- inside this distance is rejected outright, which reads downstream
+      //--- as a broken order rather than as a stop the venue will not hold.
+      json += "\"stops_level\":" + IntegerToString(SymbolInfoInteger(name, SYMBOL_TRADE_STOPS_LEVEL)) + ",";
+      //--- What this expert will let a fill wander from the quote. The
+      //--- backend charges it against the stop distance before deciding a
+      //--- trade is affordable, so publishing it keeps that arithmetic true
+      //--- when somebody changes the input here.
+      json += "\"slippage_points\":" + IntegerToString(MaxSlippagePts);
       json += "}";
      }
    json += "]}";
@@ -499,6 +508,85 @@ void WriteResult(string id, bool ok, ulong ticket, double price, string reason)
 //| it is the mode the flag does not advertise: the mask covers FOK  |
 //| and IOC only, and a symbol offering neither takes RETURN.        |
 //+------------------------------------------------------------------+
+//| Put the stop and target at their intended distances from the      |
+//| price actually paid.                                              |
+//|                                                                   |
+//| The backend prices a trade from a quote this expert published     |
+//| some seconds earlier. By the time the deal fills the market has   |
+//| moved, so a stop sent as an absolute level sits at its intended   |
+//| distance from a price nobody got and at some other distance from  |
+//| the one paid. Across twenty-eight live fills a geometry built for |
+//| one unit of reward per unit of risk was arriving at 0.77, and the |
+//| worst at 0.15 - a trade needing an 87% win rate, taken by a       |
+//| system that believed it had an even-money bet.                    |
+//|                                                                   |
+//| It is a risk failure before it is a return one. Size is computed  |
+//| from the intended stop distance, so an adverse fill risks more    |
+//| than was authorised: that 0.15 trade carried 1.75 times its       |
+//| budget, and nothing anywhere said so.                             |
+//|                                                                   |
+//| Done after the deal rather than before it, because the price      |
+//| paid is not knowable until it is paid. The order already carries  |
+//| the old levels, so the position is never unprotected - this moves |
+//| a stop that exists, it does not add a missing one.                |
+//+------------------------------------------------------------------+
+string Reanchor(const string symbol, const string side, const ulong ticket,
+                const double fill, const double sl_gap, const double tp_gap)
+  {
+   //--- Only the position this deal opened. On a netting account a second
+   //--- deal in the same symbol merges into the existing position, and
+   //--- moving that position's stop would re-shape a trade this request did
+   //--- not open. In hedging mode the position carries the opening order's
+   //--- ticket, so failing to select it is the netting case and is left
+   //--- alone rather than guessed at.
+   if(!PositionSelectByTicket(ticket))
+      return("filled; levels left as sent - no position with this ticket");
+
+   int    digits = (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS);
+   double point  = SymbolInfoDouble(symbol, SYMBOL_POINT);
+   long   stops  = SymbolInfoInteger(symbol, SYMBOL_TRADE_STOPS_LEVEL);
+   double nearest = stops * point;
+
+   //--- A distance the broker will not hold is not a stop. Reported rather
+   //--- than clamped: a stop quietly widened to the venue's minimum is a
+   //--- position risking more than the size was computed for, which is the
+   //--- exact failure this function exists to end.
+   if(nearest > 0.0 && sl_gap < nearest)
+      return("filled; levels left as sent - stop " + DoubleToString(sl_gap, digits) +
+             " is inside the broker minimum " + DoubleToString(nearest, digits));
+
+   double sl, tp;
+   if(side == "sell")
+     {
+      sl = fill + sl_gap;
+      tp = (tp_gap > 0.0) ? fill - tp_gap : 0.0;
+     }
+   else
+     {
+      sl = fill - sl_gap;
+      tp = (tp_gap > 0.0) ? fill + tp_gap : 0.0;
+     }
+   if(sl <= 0.0 || (tp_gap > 0.0 && tp <= 0.0))
+      return("filled; levels left as sent - re-anchoring put a level at or below zero");
+
+   MqlTradeRequest amend;
+   MqlTradeResult  answer;
+   ZeroMemory(amend);
+   ZeroMemory(answer);
+   amend.action   = TRADE_ACTION_SLTP;
+   amend.symbol   = symbol;
+   amend.position = ticket;
+   amend.sl       = NormalizeDouble(sl, digits);
+   amend.tp       = NormalizeDouble(tp, digits);
+
+   if(!OrderSend(amend, answer) || answer.retcode != TRADE_RETCODE_DONE)
+      return("filled; levels left as sent - re-anchor retcode " +
+             IntegerToString(answer.retcode));
+   return("filled and re-anchored");
+  }
+
+
+//+------------------------------------------------------------------+
 ENUM_ORDER_TYPE_FILLING MolidoFilling(const string symbol)
   {
    long allowed = 0;
@@ -544,6 +632,10 @@ void ExecuteOne(string filename)
    double lots   = StringToDouble(JsonField(body, "lots"));
    double sl     = StringToDouble(JsonField(body, "stop"));
    double tp     = StringToDouble(JsonField(body, "target"));
+   //--- The same shape as distances. Absent on requests from an older
+   //--- backend, and then the levels above are used exactly as before.
+   double sl_gap = StringToDouble(JsonField(body, "stop_distance"));
+   double tp_gap = StringToDouble(JsonField(body, "target_distance"));
 
    if(!AllowTrading)
      {
@@ -594,7 +686,11 @@ void ExecuteOne(string filename)
       return;
      }
 
-   WriteResult(id, true, result.order, result.price, "filled");
+   string note = "filled";
+   if(sl_gap > 0.0 && result.price > 0.0)
+      note = Reanchor(symbol, side, result.order, result.price, sl_gap, tp_gap);
+
+   WriteResult(id, true, result.order, result.price, note);
    Print("MolidoBridge: executed ", side, " ", lots, " ", symbol, " ticket ", result.order);
   }
 
