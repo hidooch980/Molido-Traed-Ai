@@ -25,6 +25,7 @@ import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -344,6 +345,7 @@ def ingest_ohlcv(
                 [bar.event_time for bar in normalized],
             )
             seen_in_batch: set[datetime] = set()
+            pending_bars: list[dict[str, Any]] = []
 
             for bar in normalized:
                 if bar.event_time in seen_in_batch:
@@ -356,25 +358,53 @@ def ingest_ohlcv(
                     duplicates += 1
                     continue
 
-                session.add(
-                    Bar(
-                        instrument_id=instrument.id,
-                        provider_id=provider_row.id,
-                        timeframe=timeframe,
-                        event_time=bar.event_time,
-                        revision=(previous.revision + 1) if previous else 1,
-                        ingested_at=now,
-                        open=bar.open,
-                        high=bar.high,
-                        low=bar.low,
-                        close=bar.close,
-                        volume=bar.volume,
-                        tick_volume=bar.tick_volume,
-                        spread=bar.spread,
-                        source_ref=bar.source_ref,
-                    )
+                # Written with the conflict allowed for, not just pre-checked.
+                #
+                # `stored` is read once at the top of the window, so two passes
+                # that overlap on one instrument both compute the same next
+                # revision and the second one aborts its transaction - taking
+                # that symbol's features down with it and logging a crash for
+                # a bar that had already arrived correctly. The row the loser
+                # would write is the row the winner wrote: same provider, same
+                # fetch, same instant.
+                #
+                # DO NOTHING rather than DO UPDATE, because a revision is a
+                # claim that the provider changed its mind. Overwriting one
+                # concurrent revision with an identical one would invent a
+                # revision history nobody produced.
+                pending_bars.append(
+                    {
+                        "instrument_id": instrument.id,
+                        "provider_id": provider_row.id,
+                        "timeframe": timeframe.value,
+                        "event_time": bar.event_time,
+                        "revision": (previous.revision + 1) if previous else 1,
+                        "ingested_at": now,
+                        "open": bar.open,
+                        "high": bar.high,
+                        "low": bar.low,
+                        "close": bar.close,
+                        "volume": bar.volume,
+                        "tick_volume": bar.tick_volume,
+                        "spread": bar.spread,
+                        "quality_score": 1.0,
+                        "source_ref": bar.source_ref,
+                    }
                 )
                 written += 1
+
+            if pending_bars:
+                from sqlalchemy.dialects.postgresql import insert as _pg_insert
+
+                # Chunked: nine hundred bound parameters is under SQLite's old
+                # ceiling, and a single statement for a long backfill is a
+                # statement no planner enjoys.
+                for start_at in range(0, len(pending_bars), 100):
+                    session.execute(
+                        _pg_insert(Bar)
+                        .values(pending_bars[start_at : start_at + 100])
+                        .on_conflict_do_nothing()
+                    )
 
             session.flush()
             _save_checkpoint(
