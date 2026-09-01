@@ -2012,3 +2012,61 @@ class TestTheCouncil:
         )
 
         assert report["orders"] == 1
+
+
+class TestARulebookBindsItsOwnAccount:
+    """One prop registration must not turn every other terminal into a prop
+    account. Three demo balances were each measured against a $15,000
+    challenge's floor and refused for a drawdown none of them had."""
+
+    def register(self, session, label, balance="15000"):
+        from decimal import Decimal
+
+        from app.services import challenge_accounts
+
+        return challenge_accounts.create(
+            session,
+            tenant_id=challenge_accounts.default_tenant(session),
+            label=label,
+            rulebook_key="fundednext-free-trial",
+            starting_balance=Decimal(balance),
+            rules_confirmed=True,
+        )
+
+    def gate(self, session, login, equity):
+        from datetime import date as _date
+
+        return autotrade._challenge_gate(
+            session,
+            {"login": login, "equity": equity, "balance": equity},
+            0,
+            0.25,
+            today=_date(2026, 9, 1),
+            moment=NOW,
+        )
+
+    def test_another_accounts_registration_does_not_bind_this_one(self, session):
+        self.register(session, "34838666")
+
+        allowed, reason, _ = self.gate(session, "5055261836", 100.0)
+
+        assert allowed is True, reason
+
+    def test_its_own_registration_still_binds(self, session):
+        self.register(session, "34838666")
+
+        allowed, reason, _ = self.gate(session, "34838666", 100.0)
+
+        # A $15,000 challenge sitting at $100 is far below its floor, and
+        # this is the account the rulebook was registered for.
+        assert allowed is False
+        assert "drawdown" in reason or "challenge" in reason
+
+    def test_a_named_registration_still_applies_to_everyone(self, session):
+        """A label like "my challenge" is not a claim about a login, so the
+        old behaviour is kept rather than silently narrowed."""
+        self.register(session, "my challenge")
+
+        allowed, _, _ = self.gate(session, "5055261836", 100.0)
+
+        assert allowed is False

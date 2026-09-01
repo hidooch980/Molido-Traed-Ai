@@ -445,6 +445,34 @@ def _challenge_gate(
 
     if not registered:
         return True, "", None
+
+    # Which registration governs *this* money.
+    #
+    # A registration labelled with an account number binds that account and
+    # no other. Without this, one prop account made every other terminal a
+    # prop account: three demo balances of $100, $500 and $959 were each
+    # measured against a $15,000 challenge's $13,500 floor and refused for a
+    # drawdown none of them had. The rulebook was right, the account it was
+    # applied to was not.
+    #
+    # An exact digit-for-digit match with the login is not a coincidence, so
+    # it wins outright. A bare number that matches some *other* account is
+    # somebody else's registration and is dropped. Anything else - a label
+    # like "my challenge" - keeps the old behaviour, because a name is not a
+    # claim about which login it belongs to.
+    login = str(published.get("login") or "").strip()
+    mine = [v for v in registered if v.account.label.strip() == login]
+    if mine:
+        registered = mine
+    else:
+        registered = [
+            v
+            for v in registered
+            if not (v.account.label.strip().isdigit() and v.account.label.strip() != login)
+        ]
+        if not registered:
+            return True, "", None
+
     if len(registered) > 1:
         return (
             False,
