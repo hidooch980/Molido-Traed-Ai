@@ -2141,3 +2141,52 @@ class TestTheBrainsMustNotContradictEachOther:
         )
 
         assert report["orders"] == 1
+
+
+class TestTheBookIsCountedInCurrencies:
+    """Three long positions in EURUSD, GBPUSD and AUDUSD are not three bets.
+    They are one bet against the dollar, taken three times."""
+
+    def test_a_pair_splits_into_its_two_currencies(self):
+        assert autotrade._currencies("EURUSD") == ("EUR", "USD")
+        assert autotrade._currencies("gbpjpy") == ("GBP", "JPY")
+
+    def test_an_unsplittable_symbol_claims_nothing(self):
+        """XAUUSD does carry dollar exposure and ".US500Cash" carries none.
+        Guessing either way invents a currency position nobody holds."""
+        assert autotrade._currencies(".US500Cash") == (None, None)
+        assert autotrade._currencies("NVDA") == (None, None)
+
+    def test_the_analysis_symbol_is_resolved_first(self):
+        """The book holds what the broker filled, not what the rule ranked -
+        and for gold those are different names."""
+        traded = autotrade._tradeable_symbol("GCFUT")
+        assert autotrade._currencies("GCFUT") == autotrade._currencies(traded)
+
+    def test_open_positions_reach_the_brain_with_their_currencies(
+        self, session, live, monkeypatch
+    ):
+        seen: dict = {}
+
+        from app.brain import portfolio as portfolio_brain
+
+        real = portfolio_brain.evaluate
+
+        def spy(**kwargs):
+            seen.update(kwargs)
+            return real(**kwargs)
+
+        monkeypatch.setattr(portfolio_brain, "evaluate", spy)
+        decide(session)
+
+        autotrade.run_cycle(
+            session, now=NOW, broker=FakeBroker(), bridge=FakeBridge(positions=2)
+        )
+
+        assert seen.get("base_currency") == "EUR"
+        assert seen.get("quote_currency") == "USD"
+        # The open book is GBPNZD in the fixture, and it arrives split too -
+        # without this the concentration check has nothing to count.
+        assert all(
+            p.base_currency and p.quote_currency for p in seen.get("positions", [])
+        )

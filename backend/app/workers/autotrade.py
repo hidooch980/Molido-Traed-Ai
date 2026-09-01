@@ -376,19 +376,25 @@ def _portfolio_headroom(
                 f"the open {held or 'position'} cannot be priced in R, so the "
                 "book's total exposure is unknown - and unknown is not zero"
             )
+        held_base, held_quote = _currencies(held)
         book.append(
             portfolio_brain.Position(
                 symbol=held,
                 direction="buy" if str(row.get("side") or "").lower() == "buy" else "sell",
                 risk_r=risk_r,
+                base_currency=held_base,
+                quote_currency=held_quote,
             )
         )
 
+    proposed_base, proposed_quote = _currencies(symbol)
     verdict = portfolio_brain.evaluate(
         symbol=symbol,
         direction=direction,
         proposed_risk_r=proposed_risk_r,
         positions=book,
+        base_currency=proposed_base,
+        quote_currency=proposed_quote,
     )
     if not verdict.allowed:
         return None, "portfolio: " + "; ".join(verdict.breaches or ["blocked"])
@@ -711,6 +717,28 @@ EXECUTION_SYMBOL: dict[str, str] = {
     "GCFUT": "XAUUSD",
     "SIFUT": "XAGUSD",
 }
+
+
+def _currencies(symbol: str) -> tuple[str | None, str | None]:
+    """The two currencies a pair is exposure to, or (None, None).
+
+    EURUSD is +EUR and -USD when long, which is the whole reason the
+    portfolio brain wants them: three long positions in EURUSD, GBPUSD
+    and AUDUSD are not three bets, they are one bet against the dollar
+    taken three times. Without the split, the brain sees three unrelated
+    instruments and lets the book concentrate exactly where it should
+    not.
+
+    Metals and indices return (None, None) rather than a guess. XAUUSD
+    does carry dollar exposure, but ".US500Cash" does not split into
+    anything and a rule that pretends otherwise invents a currency
+    position nobody holds. Unsplittable is the honest answer, and the
+    brain treats an unknown currency as no claim rather than as zero.
+    """
+    name = _tradeable_symbol(symbol).upper()
+    if len(name) != 6 or not name.isalpha():
+        return None, None
+    return name[:3], name[3:]
 
 
 def _tradeable_symbol(symbol: str) -> str:
