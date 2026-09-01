@@ -1,3 +1,4 @@
+import AccountBarcode from "@/components/AccountBarcode";
 import { Offline, Panel, Stat, StatusBadge } from "@/components/ui";
 import { AddBrokerAccount } from "@/components/AddBrokerAccount";
 import { TerminalUnlink } from "@/components/TerminalUnlink";
@@ -146,7 +147,23 @@ export default async function BrokersPage() {
               {Object.entries(b.metatrader.terminals).map(([key, term]) => (
                 <tr key={key}>
                   <td className="font-semibold" dir="ltr">{key}</td>
-                  <td dir="ltr">{term.available ? term.login : "—"}</td>
+                  <td dir="ltr">
+                    {term.available ? (
+                      <span className="inline-flex flex-col gap-1 items-start">
+                        <span>{term.login}</span>
+                        {/* Seven logins that differ by one digit in the
+                            middle read as one number down a column. The
+                            barcode is a different shape for each, so the
+                            rows separate before a digit has been read. */}
+                        <AccountBarcode
+                          value={String(term.login)}
+                          title={`${key} · ${term.login}`}
+                        />
+                      </span>
+                    ) : (
+                      "—"
+                    )}
+                  </td>
                   <td dir="ltr">{term.available ? (term.server ?? "—") : "—"}</td>
                   <td className="num" dir="ltr">
                     {term.available && term.balance !== undefined
