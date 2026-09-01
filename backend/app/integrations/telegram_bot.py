@@ -101,15 +101,6 @@ def _reply_keyboard() -> dict[str, Any]:
     }
 
 
-def _keyboard_payload() -> dict[str, Any]:
-    return {
-        "inline_keyboard": [
-            [{"text": label, "callback_data": command} for label, command in row]
-            for row in KEYBOARD
-        ]
-    }
-
-
 def _fmt_money(value: Any, currency: str = "") -> str:
     try:
         number = float(value)
@@ -451,21 +442,24 @@ def poll(session: Session, *, limit: int = BATCH) -> dict[str, Any]:
         text = LABEL_TO_COMMAND.get(text.strip(), text)
 
         if text.strip().lstrip("/").lower() in {"start", "menu"}:
-            opening = True
             reply = Reply(
                 "*MolidoTrade AI*\n\nیکی را انتخاب کنید. این کانال فقط پاسخ "
                 "می‌دهد و هرگز سفارشی ثبت نمی‌کند."
             )
         else:
-            opening = False
             reply = answer_command(session, text)
 
         # The persistent keyboard is installed once, with the welcome.
         # Sending it on every reply would redraw the menu under each
         # answer and push the answer itself off the screen.
-        markup: dict[str, Any] = (
-            _reply_keyboard() if opening else _keyboard_payload()
-        )
+        # Always the persistent keyboard, never the inline one.
+        #
+        # Inline buttons hang off the message that carried them: they
+        # scroll away, they leave the last answer looking clickable when
+        # it is not, and on a phone they sit in the middle of the
+        # history rather than under the thumb. A reply keyboard is
+        # where a keyboard belongs and stays there between questions.
+        markup: dict[str, Any] = _reply_keyboard()
         telegram.api_call(
             "sendMessage",
             {

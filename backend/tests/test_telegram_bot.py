@@ -106,7 +106,8 @@ class TestOnlyAdminsAreAnswered:
         assert report["answered"] == 1
         sent = [p for m, p in calls if m == "sendMessage"][0]
         assert "reply_markup" in sent
-        assert "inline_keyboard" in sent["reply_markup"]
+        assert "keyboard" in sent["reply_markup"]
+        assert sent["reply_markup"]["is_persistent"] is True
 
     def test_a_button_press_is_answered_like_a_typed_command(
         self, session, monkeypatch
