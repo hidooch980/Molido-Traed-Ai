@@ -247,6 +247,34 @@ services:
       retries: 3
     logging: *logging
 
+  # The chat channel, deliberately alone on a process.
+  #
+  # It was a job on the collector's schedule and arrived twenty-five minutes
+  # late, because one collection cycle takes minutes and the queue behind it
+  # waits. A channel that goes quiet whenever the system is busy is quiet
+  # exactly when somebody is asking because the system is busy.
+  chat:
+    build:
+      context: ../backend
+    restart: unless-stopped
+    environment: *backend-env
+    volumes:
+      # Only the update offset, which lives beside the kill switch on the
+      # host so a redeploy does not replay a day of questions.
+      - ${MOLIDO_KILL_SWITCH_HOST:-/var/lib/molido}:/var/lib/molido
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    command: ["python", "-m", "app.workers.chat"]
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f app.workers.chat > /dev/null"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+    logging: *logging
+
   web:
     build:
       context: ../frontend

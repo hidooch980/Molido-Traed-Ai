@@ -1014,32 +1014,6 @@ def run_deep_history() -> dict[str, Any]:
     return {k: v for k, v in report.items() if k != "periods_with_no_file"}
 
 
-async def telegram_poll_job(ctx: dict) -> dict[str, Any]:
-    """Answer whatever the admins asked since the last minute.
-
-    On the collector rather than the API because it is a loop with a stored
-    offset, and a web process that answers chat messages is a web process
-    holding state between requests. Its failure is reported and never fatal:
-    a broken chat channel must not stop the thing that collects market data.
-    """
-    from app.integrations.telegram_bot import pump
-
-    def listen() -> dict[str, Any]:
-        with session_scope() as session:
-            return pump(session)
-
-    try:
-        # In a thread, because the pump blocks for most of the minute on
-        # purpose and the event loop it would otherwise hold is the one
-        # collecting market data.
-        report = await asyncio.to_thread(listen)
-    except Exception as problem:  # noqa: BLE001 - reported, never fatal
-        return {"polled": 0, "reason": f"{type(problem).__name__} while polling"}
-    if report.get("answered") or report.get("refused"):
-        log.info("telegram.poll", **report)
-    return report
-
-
 async def weekly_scorecard_job(ctx: dict) -> dict[str, Any]:
     """Log every brain's week beside its own control, Sunday mornings.
 
@@ -1081,9 +1055,11 @@ def _cron_jobs() -> list:
         # Ten minutes after the day it folds has ended, so the decision it
         # produces is inside its freshness window rather than a day past it.
         cron(aggregate_daily_job, hour={AGGREGATE_HOUR}, minute={10}, max_tries=1),
-        # Every minute: a chat question that waits a quarter of an hour for an
-        # answer is a chat nobody asks twice.
-        cron(telegram_poll_job, minute=set(range(60)), max_tries=1),
+        # The chat channel is NOT here. It ran on this schedule and arrived
+        # twenty-five minutes late, because one collection cycle takes
+        # minutes and everything behind it waits - so an operator got
+        # silence and then nine answers at once. It has its own process
+        # now: app.workers.chat.
         # Sunday, before the week opens: the standing answer to "which brain
         # is earning its vote", from the journal the week just filled.
         cron(
