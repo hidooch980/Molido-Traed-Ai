@@ -42,6 +42,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from app.brain import crosssection
+from app.core.errors import ValidationFailedError
 from app.learning import control as control_module
 from app.workers.forward import STOP_MULTIPLE, TARGET_MULTIPLE
 from app.workers.resolve import HORIZON, _outcome
@@ -109,6 +110,13 @@ class Measurement:
     #: the series once per slice; the slicer recomputes its own paired t
     #: from these rows rather than trusting any pre-aggregated number.
     instant_rows: tuple[tuple[datetime, float, float], ...] | None = None
+    #: The geometry this run used, not the module's current one. A result
+    #: read months later has to say which stop produced it: a rule
+    #: re-measured under a different stop is a different rule, and a payload
+    #: that describes itself with today's constants is a payload that lies
+    #: about every earlier run.
+    stop_multiple: float = STOP_MULTIPLE
+    target_multiple: float = TARGET_MULTIPLE
 
     @property
     def edge_r(self) -> float:
@@ -154,8 +162,8 @@ class Measurement:
                 else None
             ),
             "geometry": {
-                "stop_multiple": STOP_MULTIPLE,
-                "target_multiple": TARGET_MULTIPLE,
+                "stop_multiple": self.stop_multiple,
+                "target_multiple": self.target_multiple,
                 "horizon_bars": HORIZON,
                 "cost_r": COST_R,
             },
@@ -216,6 +224,8 @@ def measure(
     only: frozenset[str] | None = None,
     rule: Any = None,
     keep_instants: bool = False,
+    stop_multiple: float | None = None,
+    target_multiple: float | None = None,
 ) -> Measurement:
     """Walk every instant in a stored series and score both arms.
 
@@ -231,7 +241,28 @@ def measure(
     answer is a confident zero. To ask what one instrument contributed, rank
     over the real universe and count that instrument's trades: `universe` wide,
     `only` narrow. Omitted, everything the rule picks is counted.
+
+    The geometry defaults to the deployment's own and can be overridden, which
+    is how the one question this lab could not previously be asked gets asked:
+    the journal says M15 decisions earn 0.108 R gross while entry on M15 costs
+    0.19, so the edge is real and smaller than collecting it. A wider stop
+    divides that cost - the same signal, four times the distance, a quarter of
+    the cost per R - and whether the edge survives the wider stop is a
+    measurement, not an opinion. Overriding it here rather than moving the
+    constants keeps every existing result comparable: a rule re-measured under
+    a different stop is a different rule, and both numbers have to stay
+    readable side by side.
     """
+    stop_mult = STOP_MULTIPLE if stop_multiple is None else float(stop_multiple)
+    target_mult = (
+        TARGET_MULTIPLE if target_multiple is None else float(target_multiple)
+    )
+    if stop_mult <= 0 or target_mult <= 0:
+        raise ValidationFailedError(
+            "a geometry needs a positive stop and target; "
+            f"{stop_mult} and {target_mult} describe no trade"
+        )
+
     index_of: dict[str, dict[datetime, int]] = {
         symbol: {bar.at: i for i, bar in enumerate(bars)}
         for symbol, bars in series.items()
@@ -307,7 +338,7 @@ def measure(
                     continue
                 price_here = bars[position].close
                 pick = _Pick(symbol=symbol, price=price_here, atr=atr_here)
-                distance = pick.atr * STOP_MULTIPLE
+                distance = pick.atr * stop_mult
 
                 outcome = _resolve(
                     bars,
@@ -315,7 +346,7 @@ def measure(
                     side=side,
                     entry=pick.price,
                     stop=pick.price - distance * side,
-                    target=pick.price + distance * TARGET_MULTIPLE * side,
+                    target=pick.price + distance * target_mult * side,
                 )
 
                 entry = control_module.entry_for(
@@ -323,7 +354,7 @@ def measure(
                     at=moment,
                     price=pick.price,
                     stop_distance=distance,
-                    target_multiple=TARGET_MULTIPLE,
+                    target_multiple=target_mult,
                 )
                 control_outcome = (
                     None
@@ -370,6 +401,8 @@ def measure(
         trades=trades,
         dropped=dropped,
         window=(instants[0], instants[-1]) if instants else None,
+        stop_multiple=stop_mult,
+        target_multiple=target_mult,
     )
     if keep_instants:
         from dataclasses import replace as _replace
@@ -404,6 +437,8 @@ def _summarise(
     trades: int,
     dropped: int,
     window: tuple[datetime, datetime] | None,
+    stop_multiple: float = STOP_MULTIPLE,
+    target_multiple: float = TARGET_MULTIPLE,
 ) -> Measurement:
     if not rule:
         return Measurement(
@@ -416,6 +451,8 @@ def _summarise(
             unclustered_t=0.0,
             dropped_undecided=dropped,
             window=window,
+            stop_multiple=stop_multiple,
+            target_multiple=target_multiple,
         )
 
     differences = [r - c for r, c in zip(rule, control, strict=True)]
@@ -432,6 +469,8 @@ def _summarise(
         unclustered_t=unclustered,
         dropped_undecided=dropped,
         window=window,
+        stop_multiple=stop_multiple,
+        target_multiple=target_multiple,
     )
 
 
