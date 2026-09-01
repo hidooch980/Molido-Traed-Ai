@@ -1,4 +1,5 @@
 import { AccountPhaseMove } from "@/components/AccountPhaseMove";
+import { AccountConfirm } from "@/components/AccountConfirm";
 import { AccountDelete } from "@/components/AccountDelete";
 import { AccountSwitch } from "@/components/AccountSwitch";
 import { ChallengeAccountForm } from "@/components/ChallengeAccountForm";
@@ -287,11 +288,32 @@ export default async function ChallengePage() {
                       {account.kind === "live" ? (
                         <Pill tone="neutral">{t("challenge.ownAccount")}</Pill>
                       ) : (
-                        <Pill tone={account.rules_confirmed ? "good" : "warning"}>
-                          {account.rules_confirmed
-                            ? t("challenge.tracked")
-                            : t("challenge.unconfirmed")}
-                        </Pill>
+                        <>
+                          <Pill
+                            tone={account.rules_confirmed ? "good" : "warning"}
+                          >
+                            {account.rules_confirmed
+                              ? t("challenge.tracked")
+                              : t("challenge.unconfirmed")}
+                          </Pill>
+                        {/* The page reported this state and offered no
+                            way to change it, so the holder was told to
+                            press a button that did not exist. */}
+                        {!account.rules_confirmed && (
+                          <AccountConfirm
+                            id={account.id}
+                            labels={{
+                              confirm: t("challenge.confirmRules"),
+                              question: t("challenge.confirmQuestion"),
+                              yes: t("challenge.confirmYes"),
+                              cancel: t("challenge.deleteCancel"),
+                              working: t("challenge.confirmWorking"),
+                              failed: t("challenge.confirmFailed"),
+                              signInFirst: t("challenge.signInFirst"),
+                            }}
+                          />
+                          )}
+                        </>
                       )}
                     </td>
                     <td>
