@@ -732,3 +732,52 @@ class TestTheDailySeriesComesFromWhatCanReachToday:
         )
 
         assert run <= closed + timedelta(minutes=MAX_DECISION_AGE_MINUTES)
+
+
+class TestTheOrdersLineIsReadable:
+    """The first version carried the whole skip list and one cycle wrote a
+    hundred and sixty-one entries for a single account - the same four
+    symbols once per brain per timeframe. A log nobody can read is what this
+    line was added to fix."""
+
+    def test_a_refusal_is_carried_whole(self):
+        note = collector._account_note(
+            {"orders": 0, "refused": "the bridge cannot describe the account"}
+        )
+
+        assert note == "the bridge cannot describe the account"
+
+    def test_an_account_that_traded_says_so(self):
+        assert collector._account_note({"orders": 3}) == 3
+
+    def test_a_skip_list_becomes_a_count_and_its_commonest_reasons(self):
+        note = collector._account_note(
+            {
+                "orders": 1,
+                "skipped": [
+                    "EURGBP: the account already holds a position in it",
+                    "USDSEK: the account already holds a position in it",
+                    "GBPCAD: the account already holds a position in it",
+                    "XAUUSD: portfolio: total limit already reached",
+                    "NZDCAD: portfolio: total limit already reached",
+                    "AUDUSD: 3 brains want the other side",
+                ],
+            }
+        )
+
+        assert note["orders"] == 1
+        assert note["skipped"] == 6
+        # Counted by reason, not by instrument - the symbol is what makes two
+        # identical diagnoses look like two findings.
+        assert note["mostly"]["the account already holds a position in it"] == 3
+
+    def test_only_the_top_reasons_survive(self):
+        note = collector._account_note(
+            {
+                "orders": 0,
+                "skipped": [f"SYM{i}: reason number {i}" for i in range(10)],
+            }
+        )
+
+        assert note["skipped"] == 10
+        assert len(note["mostly"]) == collector.TOP_REASONS

@@ -550,6 +550,42 @@ def ingest_broker_bars() -> dict[str, Any]:
     }
 
 
+#: How many distinct refusal reasons one account contributes to the cycle log.
+#: Three is enough to tell "the account is full" from "the brains disagreed"
+#: and short enough that eight accounts still fit on a screen.
+TOP_REASONS = 3
+
+
+def _account_note(report: dict[str, Any]) -> Any:
+    """One account's line in the orders log: what it did, or why it did not.
+
+    A refusal is a single sentence and is carried whole - it is the answer.
+    A skip list is not: it is one entry per decision per brain per timeframe,
+    so the same four symbols appear dozens of times and the interesting part
+    is which *kind* of gate dominated, not the roll call.
+    """
+    refused = report.get("refused") or report.get("skipped_reason")
+    if refused:
+        return refused
+    skipped = report.get("skipped")
+    if not skipped:
+        return report.get("orders", 0)
+
+    # The reason, not the instrument. Entries read "SYMBOL: because", and the
+    # symbol is what makes two identical diagnoses look like two findings.
+    counts: dict[str, int] = {}
+    for entry in skipped:
+        _, _, reason = str(entry).partition(": ")
+        key = (reason or str(entry)).strip()[:70]
+        counts[key] = counts.get(key, 0) + 1
+    ranked = sorted(counts.items(), key=lambda pair: (-pair[1], pair[0]))
+    return {
+        "orders": report.get("orders", 0),
+        "skipped": len(skipped),
+        "mostly": {reason: count for reason, count in ranked[:TOP_REASONS]},
+    }
+
+
 async def collect(ctx: dict) -> dict[str, Any]:
     """ARQ task wrapper.
 
@@ -653,8 +689,20 @@ async def collect(ctx: dict) -> dict[str, Any]:
     # Per account rather than as a fleet total, because zero is the common
     # answer and the whole question is *which* account and *why* - a paused
     # one, a logged-out one and one whose brains all disagreed are the same
-    # zero and want three different responses. The first named refusal is
-    # carried rather than the whole list: it is the one that will be read.
+    # zero and want three different responses.
+    #
+    # Summarised, not listed. The first version of this line carried the
+    # whole `skipped` list and one cycle wrote a hundred and sixty-one
+    # entries for a single account - the same four symbols repeated once per
+    # brain per timeframe, in a line too long for anybody to read and long
+    # enough to bury the seven other accounts beside it. A log nobody can
+    # read is the failure this line was added to fix, so producing a
+    # different unreadable line would have been no progress at all.
+    #
+    # The count plus the commonest reasons is what the question actually
+    # wants: "the account is full" and "the brains disagreed" are different
+    # answers, and which one dominates is the whole diagnosis. The full list
+    # is still on the cycle's return value for anything that wants it.
     orders = payload.get("orders") or {}
     by_account = orders.get("by_account") or {}
     log.info(
@@ -663,11 +711,7 @@ async def collect(ctx: dict) -> dict[str, Any]:
         accounts=orders.get("accounts", 0),
         reason=orders.get("reason"),
         per_account={
-            str(key): (
-                report.get("refused")
-                or report.get("skipped")
-                or report.get("orders", 0)
-            )
+            str(key): _account_note(report)
             for key, report in by_account.items()
             if isinstance(report, dict)
         },
