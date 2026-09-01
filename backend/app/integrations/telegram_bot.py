@@ -282,10 +282,19 @@ def answer_command(session: Session, command: str) -> Reply:
     return Reply(f"*{TITLES.get(name, name)}*\n\n{body}")
 
 
+#: Where the last-seen update id is kept. Under `state/` because the parent
+#: is root-owned on the host and this worker is not root: the first version
+#: wrote to the parent, silently failed the write, and re-answered the same
+#: ten messages every minute - a bot that spams the operator it exists to
+#: inform. The failure was invisible because "could not persist" was a
+#: warning nobody was reading and the replies looked like fresh ones.
+OFFSET_FILE = "/var/lib/molido/state/telegram-offset"
+
+
 def _offset_path() -> Any:
     import pathlib
 
-    return pathlib.Path("/var/lib/molido/telegram-offset")
+    return pathlib.Path(OFFSET_FILE)
 
 
 def _read_offset() -> int:
@@ -295,15 +304,22 @@ def _read_offset() -> int:
         return 0
 
 
-def _write_offset(value: int) -> None:
+def _write_offset(value: int) -> bool:
+    """True when the offset is safely stored. False is not cosmetic.
+
+    A poller that cannot remember where it got to replays every update on the
+    next pass, forever. The caller uses this answer to stop rather than to
+    log: repeating an answer once is a glitch, repeating it every minute is
+    the channel becoming unusable.
+    """
     try:
         path = _offset_path()
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(str(value), encoding="utf-8")
+        return True
     except OSError:
-        # A worker that cannot persist its offset still answers; it would
-        # replay on restart, which is noise rather than damage.
-        log.warning("telegram.offset_unwritable")
+        log.warning("telegram.offset_unwritable", path=OFFSET_FILE)
+        return False
 
 
 def poll(session: Session, *, limit: int = BATCH) -> dict[str, Any]:
@@ -319,6 +335,19 @@ def poll(session: Session, *, limit: int = BATCH) -> dict[str, Any]:
     channel = telegram_settings.load(session)
     if not channel.ready:
         return {"polled": 0, "reason": "the channel is not configured"}
+
+    # Checked before reading, not after answering. A poller whose offset does
+    # not survive the call answers the same messages on every pass - so it
+    # declines to answer at all rather than turn the alert channel into a
+    # source of noise the operator learns to mute.
+    if not _write_offset(_read_offset()):
+        return {
+            "polled": 0,
+            "reason": (
+                f"{OFFSET_FILE} is not writable, so answering would replay "
+                "the same updates every pass"
+            ),
+        }
 
     ok, payload = telegram.api_call(
         "getUpdates",

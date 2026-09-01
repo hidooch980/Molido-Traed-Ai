@@ -71,7 +71,7 @@ class TestOnlyAdminsAreAnswered:
         from app.integrations import telegram
 
         monkeypatch.setattr(telegram, "api_call", fake_api)
-        monkeypatch.setattr(telegram_bot, "_write_offset", lambda _v: None)
+        monkeypatch.setattr(telegram_bot, "_write_offset", lambda _v: True)
         monkeypatch.setattr(telegram_bot, "_read_offset", lambda: 0)
         telegram_settings.save(session, token="1:AA", chat_ids=["500"])
         report = telegram_bot.poll(session)
@@ -132,3 +132,31 @@ class TestOnlyAdminsAreAnswered:
 
         assert report["polled"] == 0
         assert "not configured" in report["reason"]
+
+
+class TestItRefusesToReplayItself:
+    """A poller that cannot remember where it got to answers the same
+    messages every pass - the bot spamming the operator it exists to
+    inform."""
+
+    def test_an_unwritable_offset_stops_the_poll(self, session, monkeypatch):
+        from app.services import telegram_settings
+
+        telegram_settings.save(session, token="1:AA", chat_ids=["500"])
+        monkeypatch.setattr(telegram_bot, "_write_offset", lambda _v: False)
+
+        called = []
+        from app.integrations import telegram
+
+        monkeypatch.setattr(
+            telegram,
+            "api_call",
+            lambda *a, **k: (called.append(a) or (True, {"ok": True, "result": []})),
+        )
+
+        report = telegram_bot.poll(session)
+
+        assert report["polled"] == 0
+        assert "replay" in report["reason"]
+        # Nothing was even fetched: the refusal happens before the call.
+        assert called == []
