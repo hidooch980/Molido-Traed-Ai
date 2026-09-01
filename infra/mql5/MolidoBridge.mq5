@@ -486,6 +486,31 @@ void WriteResult(string id, bool ok, ulong ticket, double price, string reason)
    FileClose(handle);
   }
 
+//+------------------------------------------------------------------+
+//| The filling mode this symbol will actually accept.               |
+//|                                                                  |
+//| IOC was hardcoded, and a broker that does not offer it on a      |
+//| symbol answers 10030 "Unsupported filling mode" - an order that  |
+//| never reaches the market and reads, from outside, exactly like a |
+//| rejected trade. FundedNext refused every order this way.         |
+//|                                                                  |
+//| SYMBOL_FILLING_MODE is a bitmask of what the symbol permits, so  |
+//| it is asked rather than assumed. RETURN is the fallback because  |
+//| it is the mode the flag does not advertise: the mask covers FOK  |
+//| and IOC only, and a symbol offering neither takes RETURN.        |
+//+------------------------------------------------------------------+
+ENUM_ORDER_TYPE_FILLING MolidoFilling(const string symbol)
+  {
+   long allowed = 0;
+   if(!SymbolInfoInteger(symbol, SYMBOL_FILLING_MODE, allowed))
+      return(ORDER_FILLING_RETURN);
+   if((allowed & SYMBOL_FILLING_IOC) != 0)
+      return(ORDER_FILLING_IOC);
+   if((allowed & SYMBOL_FILLING_FOK) != 0)
+      return(ORDER_FILLING_FOK);
+   return(ORDER_FILLING_RETURN);
+  }
+
 void ExecuteOne(string filename)
   {
    //--- The id is whatever sits between the prefix and the extension.
@@ -558,7 +583,7 @@ void ExecuteOne(string filename)
    request.sl           = sl;
    request.tp           = tp;
    request.deviation    = MaxSlippagePts;
-   request.type_filling = ORDER_FILLING_IOC;
+   request.type_filling = MolidoFilling(symbol);
    request.comment      = "molido:" + id;
 
    bool sent = OrderSend(request, result);
