@@ -96,6 +96,17 @@ class TestLiveEngineWithOneBlockerEach:
         assert not decision.order_authorized
         assert any("treated as real money and refused" in r for r in decision.blocking_reasons)
 
+    def test_an_unobserved_account_blocks_and_says_it_was_not_looked_at(self):
+        """A report from a process that never asked a bridge must not print a
+        diagnosis about the bridge. Both still block; they say which is which."""
+        decision = decide(facts(account_available=None, risk_approved=None), now=NOW)
+
+        assert not decision.order_authorized
+        assert any("not observed here" in r for r in decision.blocking_reasons)
+        assert not any("cannot describe the account" in r for r in decision.blocking_reasons)
+        assert decision.gate("account_known").observed is None
+        assert decision.gate("risk_approved").observed is None
+
     def test_no_proven_edge_blocks(self):
         decision = decide(
             facts(proven_edge=False, proven_edge_reason="no registered edge clears the bar"),

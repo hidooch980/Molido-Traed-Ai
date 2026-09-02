@@ -260,19 +260,35 @@ def decide(facts: Facts, *, now: datetime | None = None) -> Decision:
             )
         )
 
-    gates.append(
-        Gate(
-            "account_known",
-            facts.account_available is True,
-            (
-                facts.account_reason or "the terminal describes the account"
-                if facts.account_available
-                else facts.account_reason
-                or "the bridge cannot describe the account, so it is treated as real money and refused"
-            ),
-            observed=facts.account_available,
+    # Unobserved is not refused, and the difference matters to whoever reads
+    # this. Only the trading cycle holds a terminal's publication and the risk
+    # brain's verdict; the API route leaves both None, and a report that said
+    # "the bridge cannot describe the account" from a process that never asked
+    # a bridge would be inventing a diagnosis. Both still block - an order may
+    # not go on a fact nobody checked - but they say which of the two it is.
+    if facts.account_available is None:
+        gates.append(
+            Gate(
+                "account_known",
+                False,
+                "not observed here: only the trading cycle reads a terminal's account",
+                observed=None,
+            )
         )
-    )
+    else:
+        gates.append(
+            Gate(
+                "account_known",
+                facts.account_available,
+                (
+                    facts.account_reason or "the terminal describes the account"
+                    if facts.account_available
+                    else facts.account_reason
+                    or "the bridge cannot describe the account, so it is treated as real money and refused"
+                ),
+                observed=facts.account_available,
+            )
+        )
 
     if facts.proven_edge:
         gates.append(
@@ -302,15 +318,25 @@ def decide(facts: Facts, *, now: datetime | None = None) -> Decision:
             )
         )
 
-    gates.append(
-        Gate(
-            "risk_approved",
-            facts.risk_approved is True,
-            facts.risk_reason
-            or ("the risk brain approves" if facts.risk_approved else "the risk brain has not approved"),
-            observed=facts.risk_approved,
+    if facts.risk_approved is None:
+        gates.append(
+            Gate(
+                "risk_approved",
+                False,
+                "not observed here: the risk brain is asked once per cycle, against an account",
+                observed=None,
+            )
         )
-    )
+    else:
+        gates.append(
+            Gate(
+                "risk_approved",
+                facts.risk_approved,
+                facts.risk_reason
+                or ("the risk brain approves" if facts.risk_approved else "the risk brain has not approved"),
+                observed=facts.risk_approved,
+            )
+        )
 
     if facts.execution_mode is not None:
         gates.append(
