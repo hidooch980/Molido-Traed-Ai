@@ -63,6 +63,73 @@ export default async function PosturePage() {
         />
       </div>
 
+      {readiness.ok && readiness.data.authorization && (
+        <Panel title={t("posture.states")} subtitle={t("posture.statesSubtitle")}>
+          <div className="p-4 space-y-4">
+            <div className="grid gap-3 sm:grid-cols-3">
+              <Stat
+                label={t("posture.engineState")}
+                value={
+                  readiness.data.authorization.engine_running
+                    ? t("posture.running")
+                    : t("posture.stopped")
+                }
+                // Running is the intended state: the engine keeps collecting,
+                // deciding and measuring whether or not orders may go.
+                tone={readiness.data.authorization.engine_running ? "good" : "warning"}
+              />
+              <Stat
+                label={t("posture.killSwitchState")}
+                value={
+                  readiness.data.authorization.kill_switch_released
+                    ? t("posture.released")
+                    : t("posture.engaged")
+                }
+                tone={readiness.data.authorization.kill_switch_released ? "warning" : "good"}
+              />
+              <Stat
+                label={t("posture.orderAuth")}
+                value={
+                  readiness.data.authorization.order_authorized
+                    ? t("posture.authorized")
+                    : t("posture.blocked")
+                }
+                tone={readiness.data.authorization.order_authorized ? "warning" : "good"}
+              />
+            </div>
+
+            {readiness.data.authorization.blocking_reasons.length > 0 && (
+              <div>
+                <div className="eyebrow mb-1.5">{t("posture.whyBlocked")}</div>
+                <ul className="space-y-1.5 text-xs ink-2">
+                  {readiness.data.authorization.blocking_reasons.map((reason) => (
+                    <li key={reason} className="flex gap-2.5">
+                      <span style={{ color: "var(--bad)" }} aria-hidden="true">
+                        ●
+                      </span>
+                      <span>{reason}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {readiness.data.authorization.advisories.length > 0 && (
+              <div>
+                <div className="eyebrow mb-1.5">{t("posture.advisories")}</div>
+                <ul className="space-y-1.5 text-xs ink-3">
+                  {readiness.data.authorization.advisories.map((note) => (
+                    <li key={note}>{note}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            <p className="text-xs ink-3">{readiness.data.authorization.note}</p>
+          </div>
+        </Panel>
+      )}
+
       <Panel title={t("posture.blockers")} subtitle={t("posture.blockersSubtitle")}>
         {blockers.length === 0 ? (
           <p className="p-4 text-xs ink-3">{t("posture.noBlockers")}</p>

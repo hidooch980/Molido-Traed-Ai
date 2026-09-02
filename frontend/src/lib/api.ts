@@ -801,6 +801,28 @@ export interface ReadinessCheck {
   rationale: string;
 }
 
+/**
+ * The three states the backend refuses to conflate. An engine that is running
+ * is not an order that is authorised, and a page that shows one and implies
+ * the other is what this shape exists to prevent.
+ */
+export interface OrderAuthorization {
+  engine_state: "running" | "stopped";
+  kill_switch_state: "engaged" | "released";
+  order_authorization_state: "authorized" | "blocked";
+  engine_running: boolean;
+  kill_switch_released: boolean;
+  order_authorized: boolean;
+  operational_ready: boolean | null;
+  data_fresh: boolean | null;
+  account_ready: boolean | null;
+  proven_edge: boolean | null;
+  risk_approved: boolean | null;
+  blocking_reasons: string[];
+  advisories: string[];
+  note: string;
+}
+
 export interface Readiness {
   checked_at: string;
   safe_to_trade: boolean;
@@ -809,6 +831,8 @@ export interface Readiness {
   passed: number;
   total: number;
   checks: ReadinessCheck[];
+  /** Absent on a deployment older than the authorization decision. */
+  authorization?: OrderAuthorization;
   note: string;
 }
 
