@@ -1672,6 +1672,39 @@ def _fresh_votes(
         )
     return votes
 
+#: Brains an unassigned account may be given, in a fixed order.
+#:
+#: Measured on this deployment's own journal rather than chosen by taste:
+#:
+#:     cross-sectional-stretch  1878 resolved  +0.124 R  56% win
+#:     carry-differential        312 resolved  +0.218 R  61% win
+#:     short-horizon-reversal   1040 resolved  +0.056 R  53% win
+#:
+#: `time-series-momentum` is absent because it measured -0.119 R over 377
+#: resolved decisions, and the three brains added later are absent because
+#: they have no resolved decisions at all yet. A default is not the place to
+#: put something unmeasured - assign those by hand, deliberately, when
+#: somebody wants to start measuring them.
+DEFAULT_STRATEGIES: tuple[str, ...] = (
+    "cross-sectional-stretch",
+    "carry-differential",
+    "short-horizon-reversal",
+)
+
+
+def _default_strategy(login: str) -> str:
+    """Which brain an account nobody assigned should trade.
+
+    From the login's digits, so it is stable without storing anything: the
+    same account gets the same brain after a restart, a redeploy, or a
+    rebuild of this container. A counter would drift; a random pick would
+    make two runs of the same fleet incomparable.
+    """
+    digits = "".join(ch for ch in str(login) if ch.isdigit())
+    if not digits:
+        return DEFAULT_STRATEGIES[0]
+    return DEFAULT_STRATEGIES[int(digits[-4:]) % len(DEFAULT_STRATEGIES)]
+
 
 def _strategy_for(login: str) -> tuple[frozenset[str] | None, str]:
     """Which brains this account trades, or why it must not trade at all.
@@ -1705,11 +1738,22 @@ def _strategy_for(login: str) -> tuple[frozenset[str] | None, str]:
             key, _, value = piece.partition("=")
             assigned[key.strip()] = value.strip()
 
-    names = [
-        piece.strip()
-        for piece in assigned.get(login, STRATEGY_INCUMBENT).split("+")
-        if piece.strip()
-    ]
+    raw_names = assigned.get(login)
+    if raw_names is None:
+        # Nobody assigned this account, and that is the normal case: an
+        # account is registered on a web page by somebody who should not have
+        # to also edit an environment variable, and until now that meant every
+        # unassigned account silently traded the incumbent. Eight terminals
+        # all running one brain measures that brain eight times and the other
+        # six not at all.
+        #
+        # So the fleet spreads itself. The order is fixed and the choice is
+        # the login's own digits, so the same account always lands on the same
+        # brain - across restarts, across redeploys, and without any state to
+        # keep. Two accounts can collide, which is fine: they are two samples
+        # of one brain, not a lost one.
+        raw_names = _default_strategy(login)
+    names = [piece.strip() for piece in str(raw_names).split("+") if piece.strip()]
     # An assignment of nothing at all is a typo, not an instruction to trade
     # the incumbent: `login=` reads as somebody meaning to name a brain.
     if not names:

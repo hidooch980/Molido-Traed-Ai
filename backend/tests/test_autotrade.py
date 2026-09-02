@@ -2563,3 +2563,70 @@ class TestATradeMayNotCostMoreThanItEarns:
         edges = autotrade._measured_edge(session)
 
         assert edges["M15"] == pytest.approx(0.25)
+
+
+class TestAnUnassignedAccountStillGetsABrainSomebodyChose:
+    """An account is registered on a web page by somebody who should not have
+    to also edit an environment variable. Until this, every unassigned account
+    silently traded the incumbent - eight terminals measuring one brain eight
+    times and the other six not at all."""
+
+    def test_the_choice_is_stable_across_restarts(self):
+        """From the login's own digits, so no state has to survive a redeploy
+        for the same account to keep the same brain."""
+        first = autotrade._default_strategy("10012494599")
+        again = autotrade._default_strategy("10012494599")
+
+        assert first == again
+
+    def test_different_accounts_spread_across_the_brains(self):
+        chosen = {
+            autotrade._default_strategy(str(login))
+            for login in range(5055372630, 5055372630 + 12)
+        }
+
+        assert len(chosen) == len(autotrade.DEFAULT_STRATEGIES)
+
+    def test_every_default_is_one_this_build_knows(self):
+        from app.learning import rules as rules_module
+
+        for name in autotrade.DEFAULT_STRATEGIES:
+            assert rules_module.get(name) is not None, name
+
+    def test_the_brain_measured_negative_is_not_a_default(self):
+        """time-series-momentum measured -0.119 R over 377 resolved
+        decisions. A default is not where an account should land on that."""
+        assert "time-series-momentum" not in autotrade.DEFAULT_STRATEGIES
+
+    def test_unmeasured_brains_are_not_defaults_either(self):
+        """The three added later have no resolved decisions at all. A default
+        is not the place to put something unmeasured - those get assigned by
+        hand, when somebody wants to start measuring them."""
+        for name in ("trend-following", "rsi-mean-reversion", "donchian-breakout"):
+            assert name not in autotrade.DEFAULT_STRATEGIES
+
+    def test_a_login_with_no_digits_still_gets_a_brain(self):
+        assert autotrade._default_strategy("main") in autotrade.DEFAULT_STRATEGIES
+
+    def test_an_explicit_assignment_still_wins(self, monkeypatch):
+        from app.core.config import get_settings
+
+        monkeypatch.setattr(
+            get_settings(),
+            "account_strategies",
+            "10012494599=donchian-breakout",
+            raising=False,
+        )
+        chosen, why = autotrade._strategy_for("10012494599")
+
+        assert chosen == frozenset({"donchian-breakout"})
+        assert why == ""
+
+    def test_an_unassigned_login_is_not_refused(self, monkeypatch):
+        from app.core.config import get_settings
+
+        monkeypatch.setattr(get_settings(), "account_strategies", "", raising=False)
+        chosen, why = autotrade._strategy_for("5055372630")
+
+        assert chosen is not None
+        assert why == ""

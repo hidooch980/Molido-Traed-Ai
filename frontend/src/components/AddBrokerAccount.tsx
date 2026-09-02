@@ -57,6 +57,31 @@ export interface BrokerFormLabels {
 //: itself on every reload turns three interruptions into three restarts.
 const DRAFT_KEY = "molido.broker.draft";
 
+//: Server names with a successful authorization on this deployment.
+//:
+//: This page refuses to publish a directory of brokers and is right to: a
+//: guessed server name produces a connection that never establishes and a
+//: search that goes everywhere except the list that looked authoritative.
+//: These are not guesses. Each was read out of a terminal's own journal,
+//: from a line saying the broker accepted a login against it:
+//:
+//:     MetaQuotes-Demo       124 successful authorizations
+//:     RoboForex-Pro          88
+//:     FundedNext-Server 3     4
+//:
+//: The third is the entire argument for having this at all. Its real name
+//: carries a space, `FundedNext-Server3` was typed instead, and the result
+//: was days spent hunting a connection that had never reached a broker.
+//:
+//: They are merged with whatever is connected right now, and typing stays
+//: free - the first suggestion sourced only from live terminals was empty
+//: exactly when somebody had none connected, which is when the list is for.
+const PROVEN_SERVERS = [
+  "MetaQuotes-Demo",
+  "RoboForex-Pro",
+  "FundedNext-Server 3",
+];
+
 //: The password is deliberately absent from what is saved. Everything else
 //: here is on the page already - the login shows in the terminals table the
 //: moment it connects - but a password in browser storage is a password on a
@@ -278,13 +303,13 @@ export function AddBrokerAccount({
             spellCheck={false}
           />
           <datalist id="known-servers">
-            {knownServers.map((name) => (
-              <option key={name} value={name} />
-            ))}
+            {Array.from(new Set([...PROVEN_SERVERS, ...knownServers]))
+              .sort()
+              .map((name) => (
+                <option key={name} value={name} />
+              ))}
           </datalist>
-          {knownServers.length > 0 && (
-            <span className="text-xs ink-3 block">{labels.serverHint}</span>
-          )}
+          <span className="text-xs ink-3 block">{labels.serverHint}</span>
         </label>
       </div>
 

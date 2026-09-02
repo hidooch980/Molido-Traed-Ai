@@ -454,6 +454,16 @@ input int    MaxSlippagePts  = 30;
 //--- bars. It keeps publishing account, positions, deals and heartbeat -
 //--- everything that makes it a usable trading endpoint - and skips the six
 //--- hundred writes that only one terminal's worth of is ever read.
+//--- How many timer ticks between full bar publications.
+//---
+//--- At twenty seconds a tick that is one bar sweep every five minutes,
+//--- which is faster than the collector ingests them, while the account and
+//--- heartbeat refresh every twenty seconds regardless of how long a sweep
+//--- takes. Before this the two were the same loop, so the freshness of "is
+//--- this terminal alive" was decided by how long it took to write a hundred
+//--- and thirty two CSV files.
+#define BARS_EVERY 15
+
 #define BARS_OFF_MARKER "molido_bars_off"
 
 #define REQUEST_PREFIX "molido_order_"
@@ -997,8 +1007,42 @@ void Publish()
    cycle++;
 
    WriteAccount();
-   WriteSymbols();
+   //--- Immediately after the account, not at the end of the pass.
+   //---
+   //--- The platform treats a missing or stale heartbeat as "the expert is
+   //--- not attached, or the terminal is not running", which is the right
+   //--- rule and was being fed the wrong evidence: the account file was
+   //--- written first and the heartbeat last, with a hundred and thirty two
+   //--- bar files between them. A connected, funded, trading-enabled account
+   //--- with a ninety-eight second old account file read as absent, because
+   //--- the only thing that said the terminal was alive was ten minutes
+   //--- behind it.
+   //---
+   //--- They describe the same fact - this terminal is running and here is
+   //--- its account - so they are written together. It is written again at
+   //--- the end of the pass, where its cycle count still means "a full pass
+   //--- completed".
+   WriteHeartbeat(cycle);
    WritePositions();
+
+   //--- Everything above is cheap and runs every tick. Everything below is
+   //--- not, and runs every BARS_EVERY ticks.
+   //---
+   //--- Moving the heartbeat to the top of the pass was not enough: the pass
+   //--- itself takes ten minutes on this host, so the heartbeat was fresh for
+   //--- twenty seconds in every six hundred and the platform spent the rest
+   //--- of the time reporting a live, funded, trading account as absent. The
+   //--- website said "not publishing" about two terminals that were.
+   //---
+   //--- So the fast facts are decoupled from the slow ones. Account,
+   //--- heartbeat and positions are what the platform reads to decide a
+   //--- terminal is alive and what it holds, and they are three small files.
+   //--- Symbols, deals and bars are reference data that nothing checks for
+   //--- freshness in seconds.
+   if(cycle > 1 && (cycle % BARS_EVERY) != 0)
+      return;
+
+   WriteSymbols();
    WriteDeals();
 
    //--- Bars are the expensive half of a cycle and only one terminal's are
@@ -1042,7 +1086,17 @@ void Publish()
       //--- the edge does. Publishing the data settles that with evidence
       //--- rather than with either of our opinions.
       WriteBars(name, PERIOD_M5);
-      WriteBars(name, PERIOD_M1);
+      //--- M1 is not published, and its absence is a measurement rather than
+      //--- a preference. `collector._broker_timeframes` stopped ingesting it
+      //--- for a reason it states: the round trip costs about 0.52 R at one
+      //--- minute against a 0.25 R ceiling, so no M1 decision can pass the
+      //--- spread gate however good the signal is.
+      //---
+      //--- The backend stopped reading them and this kept writing them. A
+      //--- quarter of every cycle went to files nothing opens, and a cycle
+      //--- here is the interval at which the account file refreshes - so the
+      //--- cost was not disk, it was a freshly connected account looking
+      //--- dead for ten minutes.
      }
 
    WriteHeartbeat(cycle);
