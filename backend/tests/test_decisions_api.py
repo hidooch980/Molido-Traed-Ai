@@ -80,19 +80,45 @@ class TestReadiness:
         assert health.status_code == 200
         assert readiness.json()["safe_to_trade"] is False
 
-    def test_what_the_process_cannot_see_is_graded_as_unknown(self, client):
-        """Guessing the host's disk or restore history is the one thing the
-        readiness module refuses to do."""
+    def test_a_fact_with_no_evidence_note_is_unknown_and_never_passes(self, client):
+        """The host writes what a container cannot see (`app.ops.evidence`).
+
+        No evidence directory here, so those checks have nothing to read -
+        and the one thing this module refuses is to read silence as "fine".
+        The disk is deliberately not in this list any more: the container's
+        root *is* the host's volume, that assumption went untested for
+        months while the disk reached 82%, and it is now measured.
+        """
         checks = {c["name"]: c for c in client.get("/api/v1/decisions/readiness").json()["checks"]}
 
-        assert "could not be determined" in checks["disk_headroom"]["detail"]
-        assert "could not be determined" in checks["restore_drill_recent"]["detail"]
+        for name in ("restore_drill_recent", "log_rotation", "no_secrets_in_repository"):
+            assert "could not be determined" in checks[name]["detail"], name
+            assert checks[name]["passed"] is False, name
 
-    def test_what_it_can_see_is_graded_properly(self, client):
+    def test_what_it_can_measure_itself_is_graded_from_the_measurement(self, client):
         checks = {c["name"]: c for c in client.get("/api/v1/decisions/readiness").json()["checks"]}
 
         assert checks["no_ungated_mutating_routes"]["passed"] is True
         assert checks["kill_switch_defaults_engaged"]["passed"] is True
+        # Measured, not guessed and not skipped: it reports a ratio either way.
+        assert "could not be determined" not in checks["disk_headroom"]["detail"]
+
+    def test_the_three_states_are_reported_separately(self, client):
+        """Engine running, kill switch released and order authorised are three
+        facts. A page that shows one and implies the others is the failure
+        `app.ops.authorization` exists to end."""
+        payload = client.get("/api/v1/decisions/readiness").json()
+
+        authorization = payload["authorization"]
+        assert set(authorization) >= {
+            "engine_state",
+            "kill_switch_state",
+            "order_authorization_state",
+            "blocking_reasons",
+        }
+        assert authorization["order_authorized"] is False
+        assert authorization["blocking_reasons"]
+        assert "engine running is not order authorized" in authorization["note"]
 
     def test_it_never_grades_the_strategy(self, client):
         payload = client.get("/api/v1/decisions/readiness").json()
