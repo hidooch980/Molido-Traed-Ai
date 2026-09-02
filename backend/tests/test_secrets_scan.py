@@ -8,6 +8,14 @@ import pathlib
 
 from app.ops import secrets_scan as scan
 
+# Built from parts, never written out whole. A scanner whose own test file
+# trips it is a scanner somebody turns off - and the alternative, exempting
+# the test directory, would weaken the scanner rather than the fixture.
+PEM_BEGIN = "-----BEGIN " + "RSA PRIVATE KEY" + "-----"
+REAL_KEY = PEM_BEGIN + "\n" + "MIIEow" + "IBAAKCAQEA" + "x" * 64 + "\n"
+TELEGRAM = "1234567890" + ":" + "AAF-" + "abcdefghijklmnopqrstuvwxyz012345"
+PASSWORD_VALUE = "q7Vh2" + "LmZp9" + "Xs4Tb" + "R8wYc"
+
 
 def repo(tmp_path: pathlib.Path, files: dict[str, str]) -> pathlib.Path:
     for name, body in files.items():
@@ -19,17 +27,23 @@ def repo(tmp_path: pathlib.Path, files: dict[str, str]) -> pathlib.Path:
 
 class TestValues:
     def test_a_private_key_block_is_a_secret(self, tmp_path):
-        root = repo(tmp_path, {"deploy/id.pem": "-----BEGIN RSA PRIVATE KEY-----\nabc\n"})
+        root = repo(tmp_path, {"deploy/id.pem": REAL_KEY})
         result = scan.scan_paths(root, ["deploy/id.pem"])
         assert [f.category for f in result.secrets] == ["private-key"]
         assert not result.passed
 
+    def test_a_begin_line_with_no_key_material_is_not(self, tmp_path):
+        """It appears in documentation, in error messages and in this file."""
+        root = repo(tmp_path, {"README.md": "Paste your " + PEM_BEGIN + " here\n"})
+
+        assert scan.scan_paths(root, ["README.md"]).passed
+
     def test_a_telegram_token_is_a_secret(self, tmp_path):
-        root = repo(tmp_path, {"notes.txt": "bot: 1234567890:AAF-abcdefghijklmnopqrstuvwxyz0123456\n"})
+        root = repo(tmp_path, {"notes.txt": "bot: " + TELEGRAM + "\n"})
         assert [f.category for f in scan.scan_paths(root, ["notes.txt"]).secrets] == ["telegram-bot-token"]
 
     def test_a_random_looking_password_assignment_is_a_secret(self, tmp_path):
-        root = repo(tmp_path, {"settings.ini": "password = q7Vh2LmZp9Xs4TbR8wYc\n"})
+        root = repo(tmp_path, {"settings.ini": "password = " + PASSWORD_VALUE + "\n"})
         assert [f.category for f in scan.scan_paths(root, ["settings.ini"]).secrets] == ["credential-assignment"]
 
     def test_a_placeholder_is_not(self, tmp_path):
@@ -42,7 +56,7 @@ class TestValues:
         assert scan.scan_paths(root, ["tests/test_login.py"]).passed
 
     def test_but_a_real_key_in_a_test_is(self, tmp_path):
-        root = repo(tmp_path, {"tests/fixture.pem": "-----BEGIN EC PRIVATE KEY-----\n"})
+        root = repo(tmp_path, {"tests/fixture.pem": REAL_KEY})
         assert not scan.scan_paths(root, ["tests/fixture.pem"]).passed
 
 
@@ -61,7 +75,7 @@ class TestNames:
 
 class TestTheNoteIsSafe:
     def test_values_never_appear_in_the_output(self, tmp_path):
-        secret = "q7Vh2LmZp9Xs4TbR8wYc"
+        secret = PASSWORD_VALUE
         root = repo(tmp_path, {"a.cfg": f"api_key = {secret}\n"})
         body = json.dumps(scan.scan_paths(root, ["a.cfg"]).as_dict())
         assert secret not in body

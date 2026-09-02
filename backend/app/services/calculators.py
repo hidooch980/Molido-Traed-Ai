@@ -112,6 +112,18 @@ def pip_value(
     }
 
 
+def quote_currency(symbol: str) -> str | None:
+    """The currency a price of this symbol is expressed in, or None.
+
+    Six alphabetic characters is the only shape this can be read from with
+    certainty - EURUSD, XAUUSD, CADJPY - and an index or a CFD with a broker's
+    own naming is left as None rather than guessed. A guess here would be a
+    guess about how much money a position risks.
+    """
+    name = str(symbol or "").upper()
+    return name[3:] if len(name) == 6 and name.isalpha() else None
+
+
 def lot_size(
     *,
     symbol: str,
@@ -122,12 +134,39 @@ def lot_size(
     tick_size: float | None,
     volume_min: float | None = None,
     volume_step: float | None = None,
+    contract_size: float | None = None,
+    account_currency: str | None = None,
 ) -> dict[str, Any]:
     """How many lots put exactly `risk_percent` of equity behind this stop.
 
     Rounded **down** to the broker's volume step, always. Rounding up to the
     nearest tradeable size silently exceeds the risk the caller asked for, and
     it does so on every trade rather than occasionally.
+
+    **The tick value is checked against the contract size, because a broker
+    can publish a wrong one.** On 2026-09-02 this account's terminal reported
+    XAUUSD `tick_value` 0.1 per 0.01 tick - ten dollars per point per lot -
+    while the position's own profit and loss proved a hundred. The system
+    sized 1.22 lots believing it risked $373; it risked $3,731, which is 1.87%
+    of a 200k account against a configured 0.75%. CADJPY and XAUEUR on the
+    same terminal read correctly to four figures, so this is one symbol's
+    specification being wrong rather than a formula being wrong.
+
+    The cross-check works because of an identity, not a heuristic: when the
+    price is quoted in the account's own currency, one whole unit of price
+    movement is worth exactly `contract_size` of that currency per lot. That
+    is what a contract size *is*. So for XAUUSD on a USD account the honest
+    figure is 100, whatever the tick value says.
+
+    It applies only when the quote currency is the account currency. CADJPY
+    pays in yen and XAUEUR in euro, and their contract sizes say nothing about
+    dollars without a conversion this function does not have - so for those,
+    the tick value stands.
+
+    And it only ever *raises* the loss per lot, never lowers it: a disagreement
+    resolves toward the smaller position. If the currency reading above is ever
+    wrong, the cost is a position smaller than intended, which is the direction
+    a sizing bug should fail in.
     """
     if tick_value is None or tick_value <= 0 or tick_size is None or tick_size <= 0:
         return Unavailable(
@@ -154,6 +193,28 @@ def lot_size(
     money_at_risk = equity * (risk_percent / 100.0)
     ticks_at_risk = stop_distance_price / tick_size
     loss_per_lot = ticks_at_risk * tick_value
+
+    # The cross-check. Only where the identity holds, and only upward.
+    spec_disagreement: str | None = None
+    quote = quote_currency(symbol)
+    same_currency = bool(
+        quote and account_currency and quote == str(account_currency).upper()
+    )
+    if same_currency and contract_size and contract_size > 0:
+        from_contract = stop_distance_price * float(contract_size)
+        # Five per cent of slack for rounding and for a broker that quotes a
+        # tick value including a fee. Ten times is not slack.
+        if from_contract > loss_per_lot * 1.05:
+            spec_disagreement = (
+                f"the broker's tick value implies {loss_per_lot:.2f} "
+                f"{account_currency} per lot behind this stop, and its own "
+                f"contract size implies {from_contract:.2f}. The price is quoted "
+                f"in {quote}, so one unit of price is worth exactly the contract "
+                f"size per lot - the tick value is understated by "
+                f"{from_contract / loss_per_lot:.1f}x. Sized on the larger figure"
+            )
+            loss_per_lot = from_contract
+
     if loss_per_lot <= 0:
         return Unavailable(
             reason="the stop distance is smaller than one tick",
@@ -186,6 +247,9 @@ def lot_size(
         "actual_risk_percent": round(rounded * loss_per_lot / equity * 100, 4)
         if tradeable
         else 0.0,
+        # Named when the broker's two published figures did not agree, so the
+        # smaller position has a reason attached rather than looking arbitrary.
+        "spec_disagreement": spec_disagreement,
         "reason": None
         if tradeable
         else (

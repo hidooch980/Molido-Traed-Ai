@@ -62,7 +62,16 @@ TEMPLATE_SUFFIXES = (".example", ".template", ".sample", ".dist")
 #: is worth a human's minute; a scanner that cries on every hex string is one
 #: that gets ignored.
 VALUE_PATTERNS: tuple[tuple[str, re.Pattern[bytes]], ...] = (
-    ("private-key", re.compile(rb"-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP |)PRIVATE KEY-----")),
+    # The marker *and* key material after it. A bare BEGIN line appears in
+    # documentation, in this scanner's own tests and in error messages, and
+    # none of those is a key; a key has a base64 body.
+    (
+        "private-key",
+        re.compile(
+            rb"-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP |)PRIVATE KEY-----[\r\n]+"
+            rb"(?:[A-Za-z0-9+/=:,. -]*[\r\n]+)*?[A-Za-z0-9+/=]{60,}"
+        ),
+    ),
     ("aws-access-key", re.compile(rb"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b")),
     ("github-token", re.compile(rb"\bgh[pousr]_[A-Za-z0-9]{36,}\b")),
     ("slack-token", re.compile(rb"\bxox[abpr]-[0-9A-Za-z-]{10,}\b")),

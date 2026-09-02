@@ -1046,6 +1046,7 @@ def _lots(
     stop_distance: float,
     specification: dict[str, Any],
     risk_percent: float | None = None,
+    account_currency: str | None = None,
 ) -> tuple[float | None, str]:
     """How many lots put this much of equity behind this stop.
 
@@ -1069,9 +1070,27 @@ def _lots(
         tick_size=specification.get("tick_size"),
         volume_min=specification.get("volume_min"),
         volume_step=specification.get("volume_step"),
+        # So the calculator can catch a broker publishing a tick value that
+        # disagrees with its own contract size. This account's terminal
+        # understated XAUUSD by ten times, and the position it sized carried
+        # 1.87% of equity against a configured 0.75%.
+        contract_size=specification.get("contract_size"),
+        account_currency=account_currency,
     )
     if not sized.get("available"):
         return None, str(sized.get("reason") or "the size could not be computed")
+    disagreement = sized.get("spec_disagreement")
+    if disagreement:
+        # Logged every time rather than once: a broker that fixes its
+        # specification should make this stop, and silence is how nobody
+        # notices it never did.
+        log.warning(
+            "autotrade.specification_disagreement",
+            symbol=specification.get("name"),
+            detail=disagreement,
+            lots=sized.get("lots"),
+            actual_risk_percent=sized.get("actual_risk_percent"),
+        )
     lots = float(sized.get("lots") or 0.0)
     if lots <= 0:
         return None, "the computed size rounds to zero lots at this risk"
@@ -1483,6 +1502,11 @@ def run_cycle(
             # can still absorb at this correlation. Consulting three limits
             # and obeying the loosest is consulting none.
             risk_percent=risk_for_this * 100.0,
+            # The account's own currency, from what the terminal published.
+            # It is what makes the contract-size cross-check meaningful: a
+            # price quoted in the account's currency moves the account by
+            # exactly the contract size per lot.
+            account_currency=str(published.get("currency") or "") or None,
         )
         if lots is None:
             skipped.append(f"{entry.symbol}: {problem}")
