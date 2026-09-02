@@ -161,3 +161,64 @@ class TestItRefusesToReplayItself:
         assert "replay" in report["reason"]
         # Nothing was even fetched: the refusal happens before the call.
         assert called == []
+
+
+class TestTheJumpMenuIsTheSameDoor:
+    """Two keyboards now: the persistent one under the thumb and an inline
+    one attached to each answer. A second keyboard is a second way in, and
+    the whole safety argument for this channel is that there is only one."""
+
+    def test_every_inline_button_is_a_read_only_command(self):
+        from app.integrations import notify
+
+        menu = telegram_bot._inline_keyboard()
+        for row in menu["inline_keyboard"]:
+            for button in row:
+                assert button["callback_data"] in notify.READ_ONLY_COMMANDS
+
+    def test_the_current_view_is_not_offered_a_button_to_itself(self):
+        """A button for the screen somebody is looking at does nothing, and a
+        menu with a dead key reads as broken."""
+        menu = telegram_bot._inline_keyboard("positions")
+        commands = [
+            b["callback_data"] for row in menu["inline_keyboard"] for b in row
+        ]
+
+        assert "positions" not in commands
+        assert "status" in commands
+
+    def test_an_empty_row_is_dropped_rather_than_sent(self):
+        """Telegram renders an empty row as a gap nobody can tap."""
+        menu = telegram_bot._inline_keyboard("status")
+
+        assert all(row for row in menu["inline_keyboard"])
+
+    def test_both_keyboards_offer_the_same_commands(self):
+        inline = {
+            b["callback_data"]
+            for row in telegram_bot._inline_keyboard()["inline_keyboard"]
+            for b in row
+        }
+        persistent = set(telegram_bot.LABEL_TO_COMMAND.values())
+
+        assert inline == persistent
+
+    def test_help_installs_the_persistent_keyboard(self, session, monkeypatch):
+        _report, calls = TestOnlyAdminsAreAnswered().poll_with(
+            session,
+            monkeypatch,
+            {"update_id": 9, "message": {"chat": {"id": 500}, "text": "/help"}},
+        )
+        sent = [p for m, p in calls if m == "sendMessage"][0]
+
+        assert sent["reply_markup"]["is_persistent"] is True
+
+    def test_another_view_carries_the_jump_menu_instead(self, session, monkeypatch):
+        _report, calls = TestOnlyAdminsAreAnswered().poll_with(
+            session,
+            monkeypatch,
+            {"update_id": 10, "message": {"chat": {"id": 500}, "text": "/status"}},
+        )
+        sent = [p for m, p in calls if m == "sendMessage"][0]
+
+        assert "inline_keyboard" in sent["reply_markup"]

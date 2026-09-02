@@ -1039,7 +1039,17 @@ void Publish()
    //--- terminal is alive and what it holds, and they are three small files.
    //--- Symbols, deals and bars are reference data that nothing checks for
    //--- freshness in seconds.
-   if(cycle > 1 && (cycle % BARS_EVERY) != 0)
+   //--- The first pass is not special, and treating it as special is what
+   //--- broke this. `cycle > 1` here meant pass one still swept every bar,
+   //--- and MetaTrader serialises timer events - so for the ten minutes that
+   //--- sweep took, no heartbeat was written at all. A terminal that had just
+   //--- connected sat invisible for exactly as long as the thing meant to
+   //--- make it visible sooner.
+   //---
+   //--- Now the account and heartbeat land twenty seconds after the expert
+   //--- loads, and the first bar sweep happens at pass fifteen, five minutes
+   //--- later, when nobody is waiting to see whether the login worked.
+   if((cycle % BARS_EVERY) != 0)
       return;
 
    WriteSymbols();

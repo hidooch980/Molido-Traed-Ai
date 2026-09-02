@@ -87,6 +87,9 @@ class Reply:
 
     text: str
     keyboard: bool = True
+    #: Which view this is, so its own button can be left out of the inline
+    #: menu attached to it.
+    view: str = ""
 
 
 def _reply_keyboard() -> dict[str, Any]:
@@ -99,6 +102,40 @@ def _reply_keyboard() -> dict[str, Any]:
         "is_persistent": True,
         "input_field_placeholder": "یک دکمه را بزنید",
     }
+
+
+#: Views answered with the persistent keyboard rather than the inline menu.
+#:
+#: `help` is where somebody lands when they are lost and where `/start`
+#: resolves to, so installing the keyboard there means it is under the thumb
+#: for every answer after it - a reply keyboard survives until replaced.
+KEYBOARD_VIEWS: frozenset[str] = frozenset({"help", ""})
+
+
+def _inline_keyboard(current: str = "") -> dict[str, Any]:
+    """The same twelve doors, attached to the answer itself.
+
+    The reply keyboard below the chat never scrolls away, which is why it is
+    there. Its cost is distance: reading an answer and wanting the next view
+    means leaving the message, finding the keyboard, tapping. Attaching the
+    menu to the answer removes that, and keeping both means neither failure -
+    the answer carries the menu, and the menu is still there once the answer
+    has scrolled off.
+
+    The view being shown is left out of its own menu. A button for the screen
+    somebody is already looking at does nothing, and a menu with a dead key
+    in it reads as broken.
+    """
+    rows: list[list[dict[str, str]]] = []
+    for row in KEYBOARD:
+        buttons = [
+            {"text": label, "callback_data": command}
+            for label, command in row
+            if command != current
+        ]
+        if buttons:
+            rows.append(buttons)
+    return {"inline_keyboard": rows}
 
 
 def _fmt_money(value: Any, currency: str = "") -> str:
@@ -317,7 +354,7 @@ def answer_command(session: Session, command: str) -> Reply:
         log.warning("telegram.answer_failed", command=name, error=str(problem))
         return Reply(f"«{TITLES.get(name, name)}» را نتوانستم بخوانم: {problem}")
 
-    return Reply(f"*{TITLES.get(name, name)}*\n\n{body}")
+    return Reply(f"*{TITLES.get(name, name)}*\n\n{body}", view=name)
 
 
 #: Where the last-seen update id is kept. Under `state/` because the parent
@@ -462,12 +499,34 @@ def poll(
         # answer and push the answer itself off the screen.
         # Always the persistent keyboard, never the inline one.
         #
-        # Inline buttons hang off the message that carried them: they
-        # scroll away, they leave the last answer looking clickable when
-        # it is not, and on a phone they sit in the middle of the
-        # history rather than under the thumb. A reply keyboard is
-        # where a keyboard belongs and stays there between questions.
-        markup: dict[str, Any] = _reply_keyboard()
+        # Both keyboards, because they fail in opposite directions.
+        #
+        # Inline buttons hang off the message that carried them: they scroll
+        # away, and an old answer is left looking clickable when its buttons
+        # are five screens up. A reply keyboard stays under the thumb but is
+        # a journey from the answer somebody is reading.
+        #
+        # So the answer carries an inline menu for the next hop, and the
+        # reply keyboard stays where a keyboard belongs. Two keyboards, one
+        # door: both send the same callback through the same allowlist, and
+        # the test that pins every label to `READ_ONLY_COMMANDS` covers both.
+        #
+        # Telegram allows exactly one `reply_markup` per message, so the two
+        # cannot ride together and one has to be chosen per answer.
+        #
+        # `help` carries the persistent one. It is the view somebody opens
+        # when they are lost, it is what `/start` resolves to, and a keyboard
+        # that installs itself there is a keyboard that is present for every
+        # answer afterwards - it survives until something replaces it.
+        #
+        # Every other answer carries the inline menu, which is the one that
+        # matters while reading: the next view is a tap away instead of a
+        # journey to the bottom of the chat.
+        markup: dict[str, Any] = (
+            _reply_keyboard()
+            if reply.view in KEYBOARD_VIEWS
+            else _inline_keyboard(reply.view)
+        )
         telegram.api_call(
             "sendMessage",
             {
