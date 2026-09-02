@@ -1,4 +1,4 @@
-import { Vazirmatn } from "next/font/google";
+import localFont from "next/font/local";
 import type { Metadata, Viewport } from "next";
 
 import Shell from "@/components/Shell";
@@ -46,12 +46,21 @@ export const viewport: Viewport = {
   viewportFit: "cover",
 };
 
-// Self-hosted by Next at build time: no request to Google at runtime, no
-// flash of the wrong face, and a Persian family with tabular numerals for a
-// site that is mostly Persian numbers in tables. Exposed as a CSS variable
-// so Tailwind's `font-sans` picks it up without any component naming it.
-const vazirmatn = Vazirmatn({
-  subsets: ["arabic", "latin"],
+// The file lives in the repo, not on Google.
+//
+// `next/font/google` downloads the family while the site is being built,
+// and the production build runs inside a container on a host that cannot
+// reach fonts.googleapis.com - the first 2026 build spent five minutes
+// retrying that fetch and never finished, while the live site went on
+// serving the old face. A font the build has to go and get is a build that
+// needs the internet, and this one must not.
+//
+// One variable file, weights 100-900, Arabic and Latin in it. Exposed as a
+// CSS variable so Tailwind's `font-sans` picks it up without any component
+// naming the family.
+const vazirmatn = localFont({
+  src: "../fonts/Vazirmatn-Variable.woff2",
+  weight: "100 900",
   variable: "--font-vazirmatn",
   display: "swap",
 });
