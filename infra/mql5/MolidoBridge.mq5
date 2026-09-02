@@ -219,6 +219,15 @@ void WriteSymbols()
 //+------------------------------------------------------------------+
 void WriteBars(string symbol, ENUM_TIMEFRAMES period)
   {
+   //--- Only what the terminal already holds. CopyRates on a series that
+   //--- has not synchronised yet triggers a download and waits for it, and
+   //--- on this host that wait was fourteen minutes with the timer held the
+   //--- whole way: the heartbeat stopped, the account went stale, and a
+   //--- funded, trading terminal read as absent. A symbol that is not ready
+   //--- is skipped this pass and picked up on a later one, once it is.
+   if(!SeriesInfoInteger(symbol, period, SERIES_SYNCHRONIZED))
+      return;
+
    MqlRates rates[];
    ArraySetAsSeries(rates, true);
    int wanted = (period <= PERIOD_M5) ? IntradayBarCount : BarCount;
@@ -463,6 +472,11 @@ input int    MaxSlippagePts  = 30;
 //--- this terminal alive" was decided by how long it took to write a hundred
 //--- and thirty two CSV files.
 #define BARS_EVERY 15
+
+//--- Symbols written per sweep pass. Twelve symbols is thirty-six files,
+//--- which returns in well under a tick on this host; the forty-four in the
+//--- watchlist are covered in four sweeps, twenty minutes at BARS_EVERY.
+#define BARS_PER_PASS 12
 
 #define BARS_OFF_MARKER "molido_bars_off"
 
@@ -1049,8 +1063,9 @@ void Publish()
    //--- Now the account and heartbeat land twenty seconds after the expert
    //--- loads, and the first bar sweep happens at pass fifteen, five minutes
    //--- later, when nobody is waiting to see whether the login worked.
-   if((cycle % BARS_EVERY) != 0)
-      return;
+   //--- No every-Nth gate any more: the slice above is the throttle, and a
+   //--- sweep that runs every pass in twelve-symbol pieces covers the list
+   //--- faster than one that runs every fifteenth pass whole.
 
    WriteSymbols();
    WriteDeals();
@@ -1082,8 +1097,20 @@ void Publish()
       return;
      }
 
+   //--- A bounded slice per pass, resumed where the last one stopped.
+   //---
+   //--- Even with the synchronised guard above, a full sweep is a hundred
+   //--- and thirty-odd files and MetaTrader serialises timer events, so the
+   //--- heartbeat cannot fire until the sweep returns. Slicing it means a
+   //--- pass returns in seconds whatever the host is doing, the heartbeat
+   //--- keeps its twenty-second cadence, and the whole watchlist still gets
+   //--- covered - just across several passes instead of one.
+   static int cursor = 0;
    int total = SymbolsTotal(true);
-   for(int i = 0; i < total; i++)
+   if(cursor >= total)
+      cursor = 0;
+   int stop_at = MathMin(cursor + BARS_PER_PASS, total);
+   for(int i = cursor; i < stop_at; i++)
      {
       string name = SymbolName(i, true);
       WriteBars(name, PERIOD_H1);
@@ -1096,6 +1123,7 @@ void Publish()
       //--- the edge does. Publishing the data settles that with evidence
       //--- rather than with either of our opinions.
       WriteBars(name, PERIOD_M5);
+      cursor = i + 1;
       //--- M1 is not published, and its absence is a measurement rather than
       //--- a preference. `collector._broker_timeframes` stopped ingesting it
       //--- for a reason it states: the round trip costs about 0.52 R at one
