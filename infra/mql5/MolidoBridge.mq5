@@ -450,6 +450,12 @@ input int    MaxSlippagePts  = 30;
 
 //--- Where requests arrive and results are written. Common folder, same as
 //--- everything else the bridge exchanges with the platform.
+//--- Drop this file into a terminal's Common\Files to stop it publishing
+//--- bars. It keeps publishing account, positions, deals and heartbeat -
+//--- everything that makes it a usable trading endpoint - and skips the six
+//--- hundred writes that only one terminal's worth of is ever read.
+#define BARS_OFF_MARKER "molido_bars_off"
+
 #define REQUEST_PREFIX "molido_order_"
 #define RESULT_PREFIX  "molido_result_"
 #define CLAIM_PREFIX   "molido_claimed_"
@@ -994,6 +1000,33 @@ void Publish()
    WriteSymbols();
    WritePositions();
    WriteDeals();
+
+   //--- Bars are the expensive half of a cycle and only one terminal's are
+   //--- ever read.
+   //---
+   //--- A hundred and fifty symbols across four timeframes is six hundred
+   //--- files per pass. With seven terminals awake that is four thousand two
+   //--- hundred writes, and the backend ingests exactly one terminal's worth
+   //--- - it picks whichever is signed in and ignores the rest. The other six
+   //--- were spending the whole cycle producing data nobody reads.
+   //---
+   //--- The cost is not the disk. `WriteAccount` runs at the top of a pass,
+   //--- so a pass that takes ten minutes means an account file ten minutes
+   //--- stale, and the platform reads that as a terminal publishing nothing.
+   //--- A freshly connected account looked broken for ten minutes for exactly
+   //--- this reason.
+   //---
+   //--- Off by file rather than by input: a marker the host can drop in
+   //--- needs no MT5 preset plumbing and no restart to change. Absent means
+   //--- publish, so a terminal nobody has configured behaves as it always
+   //--- did and the price feed cannot be switched off by forgetting to
+   //--- create something.
+   if(FileIsExist(BARS_OFF_MARKER, FILE_COMMON))
+     {
+      WriteHeartbeat(cycle);
+      PostToPlatform();
+      return;
+     }
 
    int total = SymbolsTotal(true);
    for(int i = 0; i < total; i++)

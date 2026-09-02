@@ -1563,6 +1563,48 @@ def run_cycle(
                 ),
             }
         )
+        # Said out loud, on the channel somebody reads.
+        #
+        # The bot could answer questions and could not tell anybody anything,
+        # so learning that an order had filled meant thinking to ask - and
+        # what came back was every open position at once, which answers "what
+        # do I hold" and never "what just happened". Announced per fill, with
+        # the account named, because eight terminals and a notice that does
+        # not say which one traded is a notice that starts a hunt.
+        #
+        # Never fatal. The order is already at the broker by the time this
+        # runs, and a telegram outage must not raise into a loop that would
+        # then forget a position the account genuinely holds.
+        try:
+            from app.integrations import trade_notice
+
+            trade_notice.announce(
+                session,
+                trade_notice.position_opened(
+                    terminal=str(published.get("server") or "terminal"),
+                    login=login,
+                    symbol=traded_as,
+                    side=entry.decision,
+                    lots=lots,
+                    # What the broker returned, not what was asked for. A
+                    # notice quoting the intended price is right almost
+                    # always and wrong exactly when somebody needs to look.
+                    fill=report.average_price,
+                    stop=stop,
+                    target=target,
+                    risk_money=(
+                        equity * risk_for_this if equity else None
+                    ),
+                    currency=str(published.get("currency") or ""),
+                    risk_percent=round(risk_for_this * 100.0, 3),
+                    strategy=entry.strategy,
+                    ticket=report.broker_order_id,
+                    at=moment,
+                ),
+            )
+        except Exception:  # noqa: BLE001, S110 - a channel is not the trade
+            pass
+
         # Held from this cycle on, so two decisions on one symbol inside a
         # single pass cannot both go through either.
         held.add(entry.symbol)

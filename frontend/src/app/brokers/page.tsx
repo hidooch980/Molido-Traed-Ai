@@ -1,4 +1,5 @@
 import AccountBarcode from "@/components/AccountBarcode";
+import AccountQr from "@/components/AccountQr";
 import { Offline, Panel, Stat, StatusBadge } from "@/components/ui";
 import { AddBrokerAccount } from "@/components/AddBrokerAccount";
 import { TerminalControls } from "@/components/TerminalControls";
@@ -155,10 +156,20 @@ export default async function BrokersPage() {
                             middle read as one number down a column. The
                             barcode is a different shape for each, so the
                             rows separate before a digit has been read. */}
-                        <AccountBarcode
-                          value={String(term.login)}
-                          title={`${key} · ${term.login}`}
-                        />
+                        <span className="inline-flex gap-3 items-center">
+                          <AccountBarcode
+                            value={String(term.login)}
+                            title={`${key} · ${term.login}`}
+                          />
+                          {/* The barcode is for the eye and this is for the
+                              phone: reading ten digits off a screen into a
+                              broker's app is where a transposed digit
+                              becomes an order on the wrong account. */}
+                          <AccountQr
+                            value={String(term.login)}
+                            title={`${key} · ${term.login}`}
+                          />
+                        </span>
                       </span>
                     ) : (
                       "—"
@@ -270,14 +281,26 @@ export default async function BrokersPage() {
 
       <Panel title={t("broker.add")} subtitle={t("broker.howTo")}>
         <div className="p-4">
+          {/* Server suggestions with proof behind them: every name offered
+              has authorized on this host. Typing is still free, so a broker
+              nobody here has used is not blocked by a list that has never
+              heard of it. */}
           <AddBrokerAccount
             terminals={Object.keys(b.metatrader.terminals)}
+            knownServers={Array.from(
+              new Set(
+                Object.values(b.metatrader.terminals)
+                  .map((term) => term.server)
+                  .filter((name): name is string => Boolean(name)),
+              ),
+            ).sort()}
             labels={{
               add: t("broker.add"),
               login: t("broker.login"),
               server: t("broker.server"),
               password: t("broker.password"),
               passwordHint: t("broker.passwordHint"),
+              serverHint: t("broker.serverHint"),
               connect: t("broker.connect"),
               cancel: t("broker.cancel"),
               submitting: t("broker.submitting"),

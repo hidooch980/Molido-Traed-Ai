@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 /**
  * The form that connects a broker account, and the one place in this
@@ -33,6 +33,7 @@ export interface BrokerFormLabels {
   server: string;
   password: string;
   passwordHint: string;
+  serverHint: string;
   connect: string;
   cancel: string;
   submitting: string;
@@ -48,20 +49,77 @@ export interface BrokerFormLabels {
   terminalHint: string;
 }
 
+//: Where the half-filled form lives between visits.
+//:
+//: Setting up an account means reading a number off a broker's email, a
+//: server name off a different page, and finding the password somewhere
+//: else. Doing that in one sitting is the exception, and a form that empties
+//: itself on every reload turns three interruptions into three restarts.
+const DRAFT_KEY = "molido.broker.draft";
+
+//: The password is deliberately absent from what is saved. Everything else
+//: here is on the page already - the login shows in the terminals table the
+//: moment it connects - but a password in browser storage is a password on a
+//: shared laptop, in a backup, and in whatever else reads that origin. The
+//: one field worth protecting is the one field not kept.
+type Draft = { login: string; server: string; terminal: string };
+
+function readDraft(): Draft | null {
+  try {
+    const raw = window.localStorage.getItem(DRAFT_KEY);
+    return raw ? (JSON.parse(raw) as Draft) : null;
+  } catch {
+    // Private windows, cleared site data and browsers set to refuse storage
+    // all land here. A form that cannot remember still has to work.
+    return null;
+  }
+}
+
 export function AddBrokerAccount({
   labels,
   terminals = [],
+  knownServers = [],
 }: {
   labels: BrokerFormLabels;
   /** Terminal keys from the live map, for the optional selector. Empty keeps
    *  the selector hidden and the agent picking the first free terminal. */
   terminals?: string[];
+  /** Server names with a proven authorization on this host. Suggestions, not
+   *  a catalogue - see the field itself for why that distinction matters. */
+  knownServers?: string[];
 }) {
   const [open, setOpen] = useState(false);
   const [login, setLogin] = useState("");
   const [server, setServer] = useState("");
   const [password, setPassword] = useState("");
   const [terminal, setTerminal] = useState("");
+  const [restored, setRestored] = useState(false);
+
+  // Restored when the form opens rather than on mount: reading storage for a
+  // panel nobody has opened is work for nothing, and the effect would run on
+  // every page view.
+  useEffect(() => {
+    if (!open || restored) return;
+    const draft = readDraft();
+    if (draft) {
+      if (draft.login) setLogin(draft.login);
+      if (draft.server) setServer(draft.server);
+      if (draft.terminal) setTerminal(draft.terminal);
+    }
+    setRestored(true);
+  }, [open, restored]);
+
+  useEffect(() => {
+    if (!open) return;
+    try {
+      window.localStorage.setItem(
+        DRAFT_KEY,
+        JSON.stringify({ login, server, terminal }),
+      );
+    } catch {
+      // Saving is a convenience. Losing it must not stop the registration.
+    }
+  }, [open, login, server, terminal]);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [tone, setTone] = useState<"good" | "warning" | "critical">("warning");
@@ -118,11 +176,14 @@ export function AddBrokerAccount({
       const id: string = body.request_id;
       setStatus(labels.queued);
 
-      // The agent restarts the terminal and then waits for it to report a
-      // live account, so a real answer takes up to a minute and a half.
-      // Forty-five tries at two seconds covers that; past it, saying "still
-      // waiting" is more honest than spinning forever.
-      for (let attempt = 0; attempt < 45; attempt++) {
+      // The agent restarts the terminal and waits for it to publish a live
+      // account. Ninety seconds was the old budget on both sides and it was
+      // wrong here: a real registration published ten minutes after it was
+      // applied, on a host running eight terminals under Wine. This has to
+      // outlast the agent's own wait or the page reports "still waiting" for
+      // an account that connects perfectly a few minutes later.
+      const tries = 400; // 400 x 2s = ~13 min, just past the agent's 12
+      for (let attempt = 0; attempt < tries; attempt++) {
         await new Promise((resolve) => setTimeout(resolve, 2000));
         const check = await fetch(`/api/v1/brokers/link/${id}`);
         const result = await check.json();
@@ -133,6 +194,16 @@ export function AddBrokerAccount({
           const ok = result.applied && result.connected;
           setTone(ok ? "good" : "critical");
           setStatus(ok ? labels.connected : `${labels.failed}: ${result.reason ?? ""}`);
+          if (ok) {
+            // The draft has served its purpose. Left behind, the next
+            // registration opens pre-filled with the account just connected,
+            // which is the one account it cannot be for.
+            try {
+              window.localStorage.removeItem(DRAFT_KEY);
+            } catch {
+              // Nothing to clean up if nothing could be stored.
+            }
+          }
           return;
         }
       }
@@ -185,13 +256,35 @@ export function AddBrokerAccount({
         </label>
         <label className="space-y-1 block">
           <span className="eyebrow">{labels.server}</span>
+          {/* A suggestion list, not a catalogue.
+              This page refuses to publish a directory of brokers, and it is
+              right to: a guessed server name produces a connection that never
+              establishes and a search that goes everywhere except the list
+              that looked authoritative. `FundedNext-Server3` cost days here,
+              because the real name has a space in it.
+              What is offered below is the opposite of a guess - every entry
+              is a name that has successfully authorized on this host, taken
+              from the terminals' own journals. Typing is still free, so a
+              broker nobody here has used yet is not blocked by a list that
+              has never heard of it. */}
           <input
             value={server}
             onChange={(e) => setServer(e.target.value)}
             required
             style={field}
             placeholder="MetaQuotes-Demo"
+            list="known-servers"
+            autoComplete="off"
+            spellCheck={false}
           />
+          <datalist id="known-servers">
+            {knownServers.map((name) => (
+              <option key={name} value={name} />
+            ))}
+          </datalist>
+          {knownServers.length > 0 && (
+            <span className="text-xs ink-3 block">{labels.serverHint}</span>
+          )}
         </label>
       </div>
 

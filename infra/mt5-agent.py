@@ -193,12 +193,31 @@ def _bridge_files() -> pathlib.Path:
 BRIDGE_FILES = _bridge_files()
 
 
-def wait_for_connection(timeout: float = 90.0, interval: float = 3.0, bridge: pathlib.Path | None = None) -> dict:
+#: How long to watch for the terminal to come back, in seconds.
+#:
+#: Ninety was the first guess and it was wrong on this host: a real
+#: registration was applied at 11:18:42, judged a failure ninety seconds
+#: later, and the account published at 11:28:32 - connected, funded and
+#: trading, ten minutes after the agent had written it off. Eight terminals
+#: under Wine on a loaded box do not restart in ninety seconds.
+#:
+#: Twelve minutes covers that observation with room, and the cost of waiting
+#: is only that a genuinely dead login takes longer to be called dead. The
+#: cost of the short wait was a working account reported as broken, which
+#: sent somebody hunting a server name that was correct.
+CONNECT_TIMEOUT = 720.0
+
+
+def wait_for_connection(
+    timeout: float = CONNECT_TIMEOUT,
+    interval: float = 3.0,
+    bridge: pathlib.Path | None = None,
+) -> dict:
     """Watch the bridge until the terminal reports a live account, or give up.
 
-    Ninety seconds covers a restart, a handshake and the first publish cycle.
-    Past that, saying so is more useful than waiting longer: the failure is
-    almost always a server name, and no amount of patience fixes one.
+    Giving up here means "not seen yet", not "failed". What the terminal's own
+    journal says is the only evidence of a real refusal, and this function has
+    none of it.
     """
     account_file = (bridge or BRIDGE_FILES) / "molido_account.json"
     deadline = time.monotonic() + timeout
@@ -460,9 +479,27 @@ def apply(request: pathlib.Path) -> dict:
             if not restarted
             else (
                 terminal_verdict(login, logs_dir=target.logs)
-                or "the terminal restarted and did not connect, and logged no "
-                "authorization attempt - which usually means the server name "
-                "does not exist, so it never reached a broker to be refused by"
+                # No verdict means the journal recorded no authorization
+                # attempt either way, and that is not evidence of anything.
+                #
+                # The first version of this agent answered it with "the usual
+                # cause is a server name that does not exist". The comment
+                # below `terminal_verdict` says that was wrong and the message
+                # stayed anyway - and it cost days: a correct server name was
+                # hunted because this sentence said it was the problem, and a
+                # working account was reported as broken because the agent
+                # stopped watching before the terminal finished starting.
+                #
+                # So it says what it knows. A caller that needs certainty can
+                # look again; a caller told "the server does not exist" goes
+                # and changes a server name that was right.
+                or (
+                    f"the terminal restarted and had not published an account "
+                    f"within {CONNECT_TIMEOUT:.0f}s, and its journal logged no "
+                    "authorization attempt either way. That is not yet a "
+                    "failure - check the terminals page again in a minute "
+                    "before changing anything"
+                )
             )
         ),
         "login": login,
