@@ -69,6 +69,10 @@ from app.models.journal import ARM_RULE, SOURCE_BROKER, JournalEntry
 #: deployment sets nothing. Read through the accessors below rather than used
 #: directly: binding them at import means a deployment cannot change how hard
 #: it trades without a rebuild.
+from app.core.logging import get_logger
+
+log = get_logger(__name__)
+
 RISK_PERCENT = 0.25
 
 #: How many positions may be open at the broker at once.
@@ -1228,6 +1232,30 @@ def run_cycle(
             refused="risk brain: " + "; ".join(verdict.hard_breaches or verdict.reasons),
         )
 
+    # The one decision (`app.ops.authorization`), from every live fact at
+    # once: the gates above plus what only the host and the tables know -
+    # the restore drill, the secrets scan, the disk, the audit chain, the
+    # freshness of every source. Recomputed here every cycle, which is what
+    # lets a cleared blocker clear without anything being reset, and written
+    # to the audit trail so "why did it not trade at 14:00" has an answer.
+    #
+    # It can only refuse. Every gate above that already said no has already
+    # returned; this adds the operational ones and never removes any.
+    authorization = _cycle_authorization(
+        session,
+        moment=moment,
+        published=published,
+        account_reason=account_reason,
+        risk_verdict=verdict,
+        feed_age_bars=_feed_age_bars(published, moment),
+        sender=sender,
+    )
+    if authorization is not None and not authorization.order_authorized:
+        return _report(
+            mode=mode,
+            refused="order authorization: " + "; ".join(authorization.blocking_reasons),
+        )
+
     # Read once for the cycle. Both the account-wide question the rulebook
     # asks and the per-symbol gate below draw on the same week.
     releases = _this_week(moment)
@@ -1873,6 +1901,80 @@ def _needs_an_order(entry: JournalEntry, login: str) -> bool:
     if order.get("state") != str(OrderState.REJECTED):
         return False
     return NEVER_SENT in str(order.get("reason") or "")
+
+
+def _cycle_authorization(
+    session: Session,
+    *,
+    moment: datetime,
+    published: dict[str, Any],
+    account_reason: str,
+    risk_verdict: Any,
+    feed_age_bars: float | None,
+    sender: Any,
+) -> Any:
+    """The cycle's order-authorization decision, audited.
+
+    Returns None only when the posture itself could not be gathered - and
+    says so in the log - so a broken reader does not silently halt a cycle
+    that the gates above had already approved. Every individual reader
+    inside `posture.gather` already fails closed as an undeterminable check;
+    this guards the gatherer, not the checks.
+    """
+    from app.ops import posture as posture_module
+
+    try:
+        posture = posture_module.gather(
+            session,
+            now=moment,
+            account=published,
+            account_reason=account_reason,
+            risk_approved=bool(risk_verdict.approves),
+            risk_reason="; ".join(risk_verdict.reasons or []) or "the risk brain approves",
+            data_age_bars=feed_age_bars,
+            broker_adapter=sender,
+        )
+    except Exception as problem:  # noqa: BLE001 - reported, and the cycle continues on its own gates
+        log.warning(
+            "autotrade.authorization_unavailable",
+            problem=type(problem).__name__,
+            detail=str(problem)[:200],
+        )
+        return None
+    decision = posture.decision
+    log.info(
+        "autotrade.authorization",
+        authorized=decision.order_authorized,
+        engine=decision.engine.value,
+        kill_switch=decision.kill_switch.value,
+        blocking=decision.blocking_reasons,
+        advisories=decision.advisories,
+        reader_failures=posture.reader_failures,
+    )
+    try:
+        from app.services import audit
+
+        audit.record(
+            session,
+            "execution.authorization",
+            summary=(
+                "orders authorised"
+                if decision.order_authorized
+                else "orders blocked: " + "; ".join(decision.blocking_reasons)[:400]
+            ),
+            payload={
+                "engine_state": decision.engine.value,
+                "kill_switch_state": decision.kill_switch.value,
+                "order_authorization_state": decision.authorization.value,
+                "blocking_reasons": decision.blocking_reasons,
+                "advisories": decision.advisories,
+                "login": str(published.get("login") or ""),
+            },
+            service="autotrade",
+        )
+    except Exception as problem:  # noqa: BLE001 - the audit must not decide the trade
+        log.warning("autotrade.authorization_unaudited", problem=type(problem).__name__)
+    return decision
 
 
 def _report(

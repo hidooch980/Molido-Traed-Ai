@@ -56,11 +56,33 @@ app.add_middleware(
 
 @app.middleware("http")
 async def trace_middleware(request: Request, call_next):
-    """Attach a trace id to every request and echo it back to the client."""
+    """Attach a trace id to every request, echo it back, and note the request.
+
+    The note is one service-level observation - latency and status - queued
+    in memory and flushed to the database in batches (`app.ops.slo`). An
+    objective measured against a list that empties on every deploy is not
+    measured; the table is what makes `slo_window_populated` reachable.
+    """
+    import time as _time
+
     incoming = request.headers.get("x-trace-id")
     trace_id = bind_trace(incoming)
+    started = _time.perf_counter()
     response = await call_next(request)
     response.headers["x-trace-id"] = trace_id
+    try:
+        from app.ops import slo as slo_module
+
+        due = slo_module.observe_request(
+            request.url.path, response.status_code, (_time.perf_counter() - started) * 1000.0
+        )
+        if due:
+            from app.db.session import SessionLocal
+
+            with SessionLocal() as db:
+                slo_module.flush_requests(db)
+    except Exception:  # noqa: BLE001 - an observation must never fail a request
+        pass
     return response
 
 

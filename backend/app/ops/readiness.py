@@ -26,6 +26,16 @@ And nothing here grades *profitability*. A system can pass every check in this
 module and lose money: readiness is about whether the machine is safe to run,
 not whether the strategy is worth running. Conflating the two would let a green
 checklist read as a green light.
+
+One principle governs this module, the evidence readers behind it and the
+research registry beside it:
+
+    The system must optimise for discovering whether the deployment is safe
+    and whether an edge is real, not for producing a PASS or a PROVEN label.
+
+A failed check is a finding. Making it pass by widening the check, guessing
+the fact, or reading "unknown" as "fine" is not repair; it is deleting the
+finding. If the result is negative, the negative result is the deliverable.
 """
 
 from __future__ import annotations

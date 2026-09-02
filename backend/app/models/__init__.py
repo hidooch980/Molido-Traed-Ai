@@ -5,7 +5,8 @@ Alembic autogenerate reads. New model modules must be imported here.
 """
 
 from app.db.base import Base
-from app.models.audit import AuditEvent
+from app.models.audit import AuditChainHead, AuditEvent
+from app.models.slo import SloObservation
 from app.models.calendar import MarketHoliday
 from app.models.challenge_accounts import ChallengeAccount
 from app.models.episodes import Episode
@@ -40,7 +41,9 @@ __all__ = [
     "RecoveryCode",
     "ChallengeAccount",
     "ApiKey",
+    "AuditChainHead",
     "AuditEvent",
+    "SloObservation",
     "Bar",
     "Base",
     "BrokerSymbol",

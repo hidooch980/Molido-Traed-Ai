@@ -42,6 +42,7 @@ compose() {
   docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" "$@"
 }
 
+DUMP_EPOCH=$(date -u +%s)
 echo "[$(date -u +%FT%TZ)] dumping ${POSTGRES_DB}"
 # TimescaleDB's catalogue tables carry circular foreign keys between each
 # other, so pg_dump warns and a plain restore fails on ordering. The first
@@ -55,6 +56,7 @@ echo "[$(date -u +%FT%TZ)] dumping ${POSTGRES_DB}"
 compose exec -T postgres pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
   --format=custom --file="/backups/${FILE}"
 
+DRILL_START_EPOCH=$(date -u +%s)
 echo "[$(date -u +%FT%TZ)] verifying by restoring into a scratch database"
 VERIFY_DB="verify_${STAMP}"
 compose exec -T postgres createdb -U "$POSTGRES_USER" "$VERIFY_DB"
@@ -92,6 +94,39 @@ else
   exit 1
 fi
 
+# What the restored database actually contains, beyond one row count. A dump
+# that restores every table but the audit trail has restored a database
+# nobody could reconstruct an incident from.
+TABLES=$(compose exec -T postgres psql -U "$POSTGRES_USER" -d "$VERIFY_DB" -tAc   "SELECT count(*) FROM information_schema.tables WHERE table_schema='public'" || echo "0")
+INDEXES=$(compose exec -T postgres psql -U "$POSTGRES_USER" -d "$VERIFY_DB" -tAc   "SELECT count(*) FROM pg_indexes WHERE schemaname='public'" || echo "0")
+MISSING=$(compose exec -T postgres psql -U "$POSTGRES_USER" -d "$VERIFY_DB" -tAc   "SELECT coalesce(string_agg(t, ','), '') FROM unnest(ARRAY['ohlcv','journal_entries','audit_events','challenge_accounts','instruments','providers']) AS t WHERE to_regclass('public.'||t) IS NULL" || echo "?")
+AUDIT_ROWS=$(compose exec -T postgres psql -U "$POSTGRES_USER" -d "$VERIFY_DB" -tAc   "SELECT count(*) FROM audit_events" || echo "0")
+DRILL_END="$(date -u +%FT%TZ)"
+DRILL_SECONDS=$(( $(date -u +%s) - DRILL_START_EPOCH ))
+SUCCEEDED=true
+if [ -n "$MISSING" ] || [ "${ROWS:-0}" -eq 0 ]; then SUCCEEDED=false; fi
+# The drill's evidence, where the containers can read it (readiness reads
+# /var/lib/molido/evidence/restore-drill.json). Counts and timestamps only.
+EVIDENCE_DIR="${MOLIDO_EVIDENCE_DIR:-/var/lib/molido/evidence}"
+mkdir -p "$EVIDENCE_DIR"
+cat > "$EVIDENCE_DIR/.restore-drill.json.tmp" <<EOF
+{
+  "written_at": "${DRILL_END}",
+  "performed_at": "${DRILL_END}",
+  "backup_file": "${FILE}",
+  "backup_taken_at": "$(date -u -d "@${DUMP_EPOCH}" +%FT%TZ)",
+  "duration_seconds": ${DRILL_SECONDS},
+  "rows_verified": ${ROWS:-0},
+  "tables_restored": ${TABLES:-0},
+  "indexes_restored": ${INDEXES:-0},
+  "required_tables_missing": "${MISSING}",
+  "audit_rows_restored": ${AUDIT_ROWS:-0},
+  "succeeded": ${SUCCEEDED},
+  "note": "restored into a scratch database and queried; counts only, nothing from inside the dump"
+}
+EOF
+mv -f "$EVIDENCE_DIR/.restore-drill.json.tmp" "$EVIDENCE_DIR/restore-drill.json"
+echo "[$(date -u +%FT%TZ)] drill evidence: tables=${TABLES} indexes=${INDEXES} audit_rows=${AUDIT_ROWS} missing='${MISSING}' succeeded=${SUCCEEDED}"
 compose exec -T postgres dropdb -U "$POSTGRES_USER" "$VERIFY_DB"
 
 echo "[$(date -u +%FT%TZ)] pruning dumps older than ${RETENTION_DAYS} days"

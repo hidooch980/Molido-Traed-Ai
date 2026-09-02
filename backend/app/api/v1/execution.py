@@ -52,6 +52,14 @@ from app.execution.contracts import OrderState as State
 
 router = APIRouter(prefix="/execution", tags=["execution"])
 
+
+def _get_db_for_authorization():
+    """A session for the authorization route; local import keeps this file's
+    import list what it was."""
+    from app.db.session import get_db
+
+    yield from get_db()
+
 READ = Depends(require(Permission.READ))
 SIMULATE = Depends(require(Permission.SIMULATE))
 
@@ -626,3 +634,42 @@ def set_account_state(
             "While it is engaged no account trades, however this reads"
         ),
     }
+
+
+# ------------------------------------------------------------ authorization
+#
+# Appended below the routes it summarises. The three states this returns are
+# the ones `app.ops.authorization` refuses to conflate: the engine running,
+# the kill switch released, and an order authorised are three facts, and a
+# dashboard that shows one and implies the others is the failure this exists
+# to end.
+
+
+@router.get("/authorization")
+def read_authorization(
+    _: Principal = READ,
+    session: "Session" = Depends(_get_db_for_authorization),
+) -> dict[str, Any]:
+    """May an order go right now, and every reason it may not.
+
+    Recomputed from live facts on every call; nothing is cached and nothing
+    is inferred from the engine being on. The account and risk gates show as
+    unobserved here because only the trading cycle holds a terminal's
+    publication and the risk brain's verdict; the cycle's own decision is
+    written to the audit trail as `execution.authorization`.
+    """
+    from datetime import UTC as _UTC
+    from datetime import datetime as _datetime
+
+    from app.ops import posture as posture_module
+
+    posture = posture_module.gather(session, now=_datetime.now(_UTC))
+    payload = posture.decision.as_dict()
+    payload["readiness"] = {
+        "safe_to_trade": posture.report.safe_to_trade,
+        "blocking_failures": [c.name for c in posture.report.blocking_failures],
+        "important_failures": [c.name for c in posture.report.important_failures],
+    }
+    payload["details"] = posture.details
+    payload["reader_failures"] = posture.reader_failures
+    return payload

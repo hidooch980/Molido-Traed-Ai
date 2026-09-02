@@ -481,7 +481,31 @@ def send_orders() -> dict[str, Any]:
     from app.workers.autotrade import run_all_accounts
 
     with session_scope() as session:
-        return run_all_accounts(session)
+        report = run_all_accounts(session)
+        # Two service-level observations per cycle, from what the cycle saw:
+        # whether execution ran at all, and how many accounts it could not
+        # even describe. A restart empties nothing; they are rows.
+        try:
+            from app.ops import slo
+
+            per_account = report.get("per_account") or {}
+            described = [v for v in per_account.values() if isinstance(v, dict)]
+            slo.record(
+                session,
+                slo.METRIC_EXECUTION,
+                1.0,
+                detail={"orders": report.get("orders"), "accounts": report.get("accounts")},
+            )
+            if per_account:
+                slo.record(
+                    session,
+                    slo.METRIC_CYCLE_ERRORS,
+                    1.0 - len(described) / len(per_account),
+                    detail={"undescribed": len(per_account) - len(described)},
+                )
+        except Exception:  # noqa: BLE001 - an observation never fails the cycle
+            pass
+        return report
 
 
 def ingest_broker_bars() -> dict[str, Any]:

@@ -115,6 +115,21 @@ def switch_released(monkeypatch):
     monkeypatch.setattr(killswitch_store, "load", open_switch)
 
 
+# Captured at import, before any fixture replaces the name: `real_gate` below
+# puts this back so the gate can be tested as it runs in production.
+_REAL_CYCLE_AUTHORIZATION = autotrade._cycle_authorization
+
+
+@pytest.fixture(autouse=True)
+def operational_gate_open(monkeypatch):
+    """The order-authorization gate reads the host's evidence, the disk and
+    the tables. None of that exists here, so it would refuse every cycle for
+    reasons that are true of the test machine and about nothing under test.
+    Opened by default; `TestOrderAuthorizationIsTheLastGate` closes it on
+    purpose and exercises the real function."""
+    monkeypatch.setattr(autotrade, "_cycle_authorization", lambda *a, **k: None)
+
+
 NEWS_NOW = datetime(2026, 8, 18, 12, 0, tzinfo=UTC)
 
 
@@ -2630,3 +2645,123 @@ class TestAnUnassignedAccountStillGetsABrainSomebodyChose:
 
         assert chosen is not None
         assert why == ""
+
+
+
+class TestOrderAuthorizationIsTheLastGate:
+    """One decision from every live fact, after every gate above has said
+    yes. It can only refuse, and a broken reader must not halt a cycle the
+    other gates approved."""
+
+    @pytest.fixture()
+    def real_gate(self, monkeypatch):
+        # `operational_gate_open` replaced the name; put the real one back.
+        monkeypatch.setattr(autotrade, "_cycle_authorization", _REAL_CYCLE_AUTHORIZATION)
+        return _REAL_CYCLE_AUTHORIZATION
+
+    @staticmethod
+    def posture_returning(authorized: bool, *reasons: str):
+        from datetime import UTC as _UTC
+        from datetime import datetime as _dt
+
+        from app.ops import authorization as auth
+        from app.ops import posture as posture_module
+        from app.ops import readiness as rd
+
+        gates = [auth.Gate("operational_readiness", authorized, "; ".join(reasons) or "every check passes")]
+        decision = auth.Decision(
+            evaluated_at=_dt.now(_UTC),
+            engine=auth.EngineState.RUNNING,
+            kill_switch=auth.KillSwitchState.RELEASED,
+            authorization=(
+                auth.OrderAuthorizationState.AUTHORIZED if authorized else auth.OrderAuthorizationState.BLOCKED
+            ),
+            gates=gates,
+        )
+        return posture_module.Posture(
+            checked_at=decision.evaluated_at,
+            report=rd.ReadinessReport(checked_at=decision.evaluated_at),
+            decision=decision,
+        )
+
+    def test_a_blocked_decision_refuses_and_names_every_reason(self, session, live, real_gate, monkeypatch):
+        from app.ops import posture as posture_module
+
+        monkeypatch.setattr(
+            posture_module,
+            "gather",
+            lambda *a, **k: self.posture_returning(False, "restore_drill_recent: no recent drill"),
+        )
+        decide(session)
+        broker = FakeBroker()
+
+        report = autotrade.run_cycle(session, now=NOW, broker=broker, bridge=FakeBridge())
+
+        assert broker.submitted == []
+        assert "order authorization:" in report["refused"]
+        assert "restore_drill_recent" in report["refused"]
+
+    def test_an_authorised_decision_lets_the_order_through(self, session, live, real_gate, monkeypatch):
+        from app.ops import posture as posture_module
+
+        monkeypatch.setattr(posture_module, "gather", lambda *a, **k: self.posture_returning(True))
+        decide(session)
+        broker = FakeBroker()
+
+        autotrade.run_cycle(session, now=NOW, broker=broker, bridge=FakeBridge())
+
+        assert broker.submitted != []
+
+    def test_the_decision_is_written_to_the_audit_trail(self, session, live, real_gate, monkeypatch):
+        from sqlalchemy import select
+
+        from app.models.audit import AuditEvent
+        from app.ops import posture as posture_module
+
+        monkeypatch.setattr(
+            posture_module, "gather", lambda *a, **k: self.posture_returning(False, "disk_headroom: full")
+        )
+        decide(session)
+
+        autotrade.run_cycle(session, now=NOW, broker=FakeBroker(), bridge=FakeBridge())
+        session.commit()
+
+        rows = session.execute(
+            select(AuditEvent).where(AuditEvent.event_type == "execution.authorization")
+        ).scalars().all()
+        assert len(rows) == 1
+        assert rows[0].payload["order_authorization_state"] == "blocked"
+        assert "disk_headroom" in rows[0].summary
+        assert rows[0].entry_hash  # chained like everything else
+
+    def test_a_gatherer_that_raises_does_not_halt_a_cycle_the_gates_approved(
+        self, session, live, real_gate, monkeypatch
+    ):
+        """Every reader inside the gatherer already fails closed as a failed
+        check; this guards the gatherer itself. A crash there is logged and
+        the cycle proceeds on the gates that did run."""
+        from app.ops import posture as posture_module
+
+        def explode(*a, **k):
+            raise RuntimeError("evidence directory unreadable")
+
+        monkeypatch.setattr(posture_module, "gather", explode)
+        decide(session)
+        broker = FakeBroker()
+
+        report = autotrade.run_cycle(session, now=NOW, broker=broker, bridge=FakeBridge())
+
+        assert broker.submitted != []
+        assert "refused" not in report or not report.get("refused")
+
+    def test_the_real_gatherer_runs_against_this_session(self, session, live, real_gate):
+        """No fakes: the gatherer reads this empty database and an absent
+        evidence directory, and refuses for reasons that are true of it."""
+        decide(session)
+        broker = FakeBroker()
+
+        report = autotrade.run_cycle(session, now=NOW, broker=broker, bridge=FakeBridge())
+
+        assert broker.submitted == []
+        assert "order authorization:" in report["refused"]
+        assert "restore_drill_recent" in report["refused"] or "no_secrets_in_repository" in report["refused"]

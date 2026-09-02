@@ -215,3 +215,47 @@ not takeover. Even so:
   `MOLIDO_COLLECTOR_INTERVAL_SECONDS` rather than lowering it.
 - **Disk grows with history.** One H1 instrument is a few MB per year; ticks are
   not collected. Compression kicks in after 180 days automatically.
+
+## Operational readiness: where each fact comes from
+
+`GET /api/v1/decisions/readiness` and `python -m app.ops.report` grade the
+deployment from live evidence. Nothing is cached and nothing is inferred from
+the engine being on. Three states are reported separately and never conflated:
+
+    ENGINE_STATE               the process is running and evaluating
+    KILL_SWITCH_STATE          a human has released the halt (host file)
+    ORDER_AUTHORIZATION_STATE  this order may go, with every reason it may not
+
+`app.ops.authorization.decide` is the one decision; the trading cycle writes
+it to the audit trail every cycle as `execution.authorization`.
+
+| check | evidence | written by |
+|---|---|---|
+| log_rotation | `/var/lib/molido/evidence/log-rotation.json` (docker inspect of every container) | `infra/readiness-evidence.sh`, cron every 15 min |
+| no_secrets_in_repository | `/var/lib/molido/evidence/secrets-scan.json` (paths and categories, never values) | same script, via `backend/app/ops/secrets_scan.py` with the host python |
+| restore_drill_recent | `/var/lib/molido/evidence/restore-drill.json` (counts and timestamps from a restore into a scratch database) | `infra/backup.sh`, nightly cron |
+| disk_headroom | `app.ops.disk.measure()` on the container root, which is the host disk | the API, live |
+| data_is_fresh | `app.ops.freshness`: every (provider, timeframe) with a bar in the last week, aged in its own bars | the API, live |
+| audit_chain_intact | `app.services.audit.verify`: sequence, previous hash, entry hash, ordering, head (tail of 500 per call; full walk from the CLI) | the API, live |
+| at_least_one_calibrated_source | `app.ops.calibration`: each brain's forward journal against its control, >= 200 resolved per arm and z >= 1.96 | the API, live |
+| slo_window_populated | `slo_observations` table: request latency/availability from the API middleware, execution health per cycle from the collector | live |
+| dry_run_while_simulated | `app.execution.modes.classify` on the adapter that would be handed the order | live |
+
+Install on a host once:
+
+    crontab -e
+    */15 * * * * /opt/molidotrade/infra/readiness-evidence.sh >> /var/log/molido-evidence.log 2>&1
+    15 3 * * *   /opt/molidotrade/infra/backup.sh >> /var/log/molido-backup.log 2>&1
+
+A note older than its reader's limit counts as no note, and no note is a
+failed check. The kill switch is moved only from the host:
+
+    docker exec -i molidotrade-api-1 python -m app.execution.killswitch status
+    docker exec -i molidotrade-api-1 python -m app.execution.killswitch engage  --by <name> --reason "<why>"
+    docker exec -i molidotrade-api-1 python -m app.execution.killswitch release --by <name> --reason "<why>"
+
+Releasing the switch authorises nothing by itself; every other gate still has
+to pass on the next cycle. The principle, stated in `app/ops/readiness.py`:
+the system optimises for discovering whether the deployment is safe, not for
+producing a passing report.
+

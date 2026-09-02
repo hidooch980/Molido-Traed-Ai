@@ -114,24 +114,23 @@ def read_readiness(
     from app.main import app as fastapi_app
 
     settings = get_settings()
-    deployment = rd.Deployment(
-        require_auth=settings.require_auth,
-        execution_enabled=settings.enable_execution,
-        execution_dry_run=settings.execution_dry_run,
-        kill_switch_default_engaged=KillSwitch().engaged,
+    # Every fact from the live system, gathered once (`app.ops.posture`):
+    # the host's evidence notes for what a container cannot see, the bar
+    # table for freshness, the audit chain, the forward journal, the SLO
+    # window, the kill switch file. The same gatherer the trading cycle
+    # uses, so this page and the thing that sends orders cannot disagree.
+    from app.ops import posture as posture_module
+
+    posture = posture_module.gather(
+        session,
+        now=datetime.now(UTC),
         ungated_mutating_routes=[
             str(o)
             for o in find_ungated_routes(fastapi_app, require_auth=settings.require_auth)
         ],
-        retention_configured=bool(retention.POLICIES),
-        broker_is_simulated=True,
-        # Left as None on purpose: this process cannot see the host's disk, the
-        # docker log driver or the restore history, and guessing them would be
-        # the one thing `readiness` refuses. They fail as undeterminable, which
-        # is the honest grade until an operator supplies them.
     )
-    report = rd.assess(deployment, now=datetime.now(UTC))
-    payload = report.as_dict()
+    report = posture.report
+    payload = posture.as_dict()
     # Computed from the checks that just ran rather than by a second pass, so
     # the score and the list underneath it can never disagree about what was
     # true at the same moment.

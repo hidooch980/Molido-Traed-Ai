@@ -9,7 +9,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Index, String, Text
+from sqlalchemy import BigInteger, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.enums import Severity
@@ -39,3 +39,24 @@ class AuditEvent(Base, UUIDPrimaryKeyMixin):
     summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     payload: Mapped[dict] = mapped_column(JSONType, default=dict, nullable=False)
     model_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+    # The chain (migration 0021). NULL on rows written before it existed;
+    # those are counted as pre-chain and never rewritten.
+    sequence: Mapped[int | None] = mapped_column(BigInteger, nullable=True, unique=True)
+    previous_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    entry_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+
+class AuditChainHead(Base):
+    """The one row every append locks: the last sequence and its hash.
+
+    A chain with three writers and no serialisation forks, and a forked chain
+    verifies as broken through nobody's fault. Locking this row inside the
+    writer's transaction is what keeps the sequence a sequence.
+    """
+
+    __tablename__ = "audit_chain_head"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    sequence: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    entry_hash: Mapped[str] = mapped_column(String(64), nullable=False)
