@@ -42,8 +42,8 @@ const GROUPS: NavItem["group"][] = [
   "overview",
   "market",
   "trading",
-  "intelligence",
-  "operations",
+  "learning",
+  "setup",
 ];
 
 function Logo({ size = 30 }: { size?: number }) {

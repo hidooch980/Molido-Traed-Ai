@@ -60,11 +60,16 @@ export function Stat({
           ? "var(--critical)"
           : "var(--ink)";
 
+  // Tighter than it was. A dashboard is twenty-six of these and a row of
+  // them is the first thing on the page; a quarter-rem of padding and a
+  // smaller figure per tile is a whole extra row above the fold. The
+  // figure stays the largest thing in the tile, which is what makes it a
+  // number and not a label.
   return (
-    <div className="panel p-3.5 flex flex-col gap-1.5">
+    <div className="panel stat flex flex-col gap-1">
       <div className="eyebrow">{label}</div>
       <div className="flex items-end gap-1.5">
-        <span className="text-[1.75rem] leading-none font-semibold" style={{ color }}>
+        <span className="stat-value" style={{ color }}>
           {value}
         </span>
         {unit && <span className="text-xs ink-3 pb-0.5">{unit}</span>}
@@ -142,7 +147,7 @@ export function Pill({
 }
 
 export function Empty({ children }: { children: ReactNode }) {
-  return <div className="p-6 text-sm ink-3 text-center">{children}</div>;
+  return <div className="p-4 text-sm ink-3 text-center">{children}</div>;
 }
 
 /**
