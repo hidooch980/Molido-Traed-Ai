@@ -208,3 +208,78 @@ class TestTheIncumbentIsAlwaysInTheGrid:
         read as a comparison."""
         assert STOP_MULTIPLE in geometry.STOP_MULTIPLES
         assert TARGET_MULTIPLE in geometry.TARGET_MULTIPLES
+
+
+class TestOneSplitCanBeLuck:
+    """A geometry that wins at one cut and loses at the next was read off the
+    noise, and that is worth finding out before a live stop is widened six
+    times."""
+
+    @staticmethod
+    def fold(stop, target, *, survived=True):
+        won = geometry.Trial(
+            stop_multiple=stop,
+            target_multiple=target,
+            instants=500,
+            trades=900,
+            gross_r=0.2 if survived else 0.0,
+            cost_r=0.01,
+            t_statistic=4.0,
+        )
+        return geometry.Sweep(
+            chosen=won,
+            confirmed=won if survived else None,
+            incumbent_train=None,
+            incumbent_test=None,
+            train_window=None,
+            test_window=None,
+        )
+
+    def test_a_geometry_chosen_at_every_cut_is_reported(self):
+        rolled = geometry.Stability(
+            folds=tuple(self.fold(7.5, 1.5) for _ in range(4)),
+            tally={(7.5, 1.5): 4},
+        )
+
+        assert rolled.consistent == (7.5, 1.5)
+        assert rolled.survivors == 4
+
+    def test_a_majority_is_not_enough(self):
+        """Three cuts of five is a geometry whose case rests on which three."""
+        rolled = geometry.Stability(
+            folds=tuple(self.fold(7.5, 1.5) for _ in range(4)),
+            tally={(7.5, 1.5): 3, (15.0, 2.0): 1},
+        )
+
+        assert rolled.consistent is None
+
+    def test_no_folds_means_nothing_held(self):
+        assert geometry.Stability(folds=(), tally={}).consistent is None
+
+    def test_the_payload_names_how_often_each_was_chosen(self):
+        rolled = geometry.Stability(
+            folds=tuple(self.fold(7.5, 1.5) for _ in range(3)),
+            tally={(7.5, 1.5): 2, (15.0, 2.0): 1},
+        )
+        payload = rolled.as_payload()
+
+        assert payload["chosen_every_fold"] is None
+        assert payload["how_often_each_geometry_was_chosen"]["7.5/1.5"] == 2
+
+    def test_every_test_window_follows_its_training_window(self):
+        """Shuffled folds would train on next month and test on last, and
+        report an edge that is only hindsight."""
+        rolled = geometry.stability(
+            series(), bar_interval=timedelta(minutes=15), cost_at_incumbent=0.19
+        )
+
+        for fold in rolled.folds:
+            if fold.train_window and fold.test_window:
+                assert fold.train_window[1] <= fold.test_window[0]
+
+    def test_a_flat_market_holds_nothing_across_folds(self):
+        rolled = geometry.stability(
+            series(), bar_interval=timedelta(minutes=15), cost_at_incumbent=0.19
+        )
+
+        assert rolled.survivors == 0

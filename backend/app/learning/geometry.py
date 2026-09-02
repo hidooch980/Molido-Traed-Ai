@@ -359,6 +359,97 @@ def sweep(
     )
 
 
+@dataclass(frozen=True)
+class Stability:
+    """The same question asked at several cuts, and what kept its answer.
+
+    One train/test split is one draw. A geometry can clear its own cost on a
+    held-out window because the window suited it, and nothing in a single
+    split can tell that from an edge - the D1 and M1 runs both scored *better*
+    out of sample than in training, which is the shape a favourable period
+    makes and not the shape an edge makes.
+
+    Rolling the cut forward asks the question again on a different eight
+    years. A geometry that wins at every cut is not proof, but a geometry that
+    wins at one cut and loses at the next has been read off the noise, and
+    that is worth finding out before a live stop is widened by six times.
+    """
+
+    folds: tuple[Sweep, ...]
+    #: How many folds each geometry won, keyed by (stop, target).
+    tally: dict[tuple[float, float], int]
+
+    @property
+    def survivors(self) -> int:
+        return sum(1 for f in self.folds if f.survived)
+
+    @property
+    def consistent(self) -> tuple[float, float] | None:
+        """The geometry chosen at every fold, or None.
+
+        Every fold, not most of them. A geometry that wins three cuts of five
+        is a geometry whose case rests on which three, and answering that
+        needs the folds nobody has run rather than a majority of the ones
+        that happened to be convenient.
+        """
+        if not self.folds:
+            return None
+        for key, count in self.tally.items():
+            if count == len(self.folds):
+                return key
+        return None
+
+    def as_payload(self) -> dict[str, Any]:
+        return {
+            "folds": len(self.folds),
+            "survived": self.survivors,
+            "chosen_every_fold": list(self.consistent) if self.consistent else None,
+            "how_often_each_geometry_was_chosen": {
+                f"{stop}/{target}": count
+                for (stop, target), count in sorted(
+                    self.tally.items(), key=lambda item: -item[1]
+                )
+            },
+            "per_fold": [f.as_payload() for f in self.folds],
+            "note": (
+                "a geometry that wins at one cut and loses at the next was "
+                "read off the noise. Every fold has to choose it, not most"
+            ),
+        }
+
+
+def stability(
+    series: dict[str, list[Any]],
+    *,
+    bar_interval: timedelta,
+    cost_at_incumbent: float,
+    rule: Any = None,
+    fractions: tuple[float, ...] = (0.5, 0.6, 0.7, 0.8),
+) -> Stability:
+    """Run the sweep at several cuts and report what held at all of them.
+
+    Rolling origin rather than k folds: every test window is strictly after
+    its training window, which is the only arrangement a trading rule may be
+    scored under. Shuffled folds would train on next month and test on last,
+    and would report an edge that is only hindsight.
+    """
+    folds: list[Sweep] = []
+    tally: dict[tuple[float, float], int] = {}
+    for fraction in fractions:
+        result = sweep(
+            series,
+            bar_interval=bar_interval,
+            cost_at_incumbent=cost_at_incumbent,
+            rule=rule,
+            fraction=fraction,
+        )
+        folds.append(result)
+        if result.chosen is not None:
+            key = (result.chosen.stop_multiple, result.chosen.target_multiple)
+            tally[key] = tally.get(key, 0) + 1
+    return Stability(folds=tuple(folds), tally=tally)
+
+
 def main(argv: list[str] | None = None) -> int:
     """Run the sweep over a stored series and print what held up.
 
@@ -394,6 +485,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--cost", type=float, required=True)
     parser.add_argument("--fraction", type=float, default=TRAIN_FRACTION)
     parser.add_argument("--rule", default=None)
+    parser.add_argument(
+        "--folds",
+        action="store_true",
+        help="roll the cut forward and report only what every fold chose",
+    )
     args = parser.parse_args(argv)
 
     timeframe = Timeframe(args.timeframe)
@@ -424,6 +520,21 @@ def main(argv: list[str] | None = None) -> int:
             )
         )
         return 1
+
+    if args.folds:
+        rolled = stability(
+            series,
+            bar_interval=timeframe.delta,
+            cost_at_incumbent=args.cost,
+            rule=rule,
+        )
+        payload = rolled.as_payload()
+        payload["provider"] = args.provider
+        payload["timeframe"] = args.timeframe
+        payload["symbols"] = len(series)
+        payload["cost_at_incumbent"] = args.cost
+        print(json.dumps(payload, indent=2))
+        return 0 if rolled.consistent else 1
 
     result = sweep(
         series,
