@@ -587,6 +587,70 @@ string Reanchor(const string symbol, const string side, const ulong ticket,
 
 
 //+------------------------------------------------------------------+
+//| Close one position, named by its ticket.                          |
+//|                                                                   |
+//| The bridge could open a position and move its stop and nothing    |
+//| else, so a position it had opened could only ever leave by        |
+//| hitting a level. That is fine while a terminal is running and a   |
+//| gap the moment one is not: four terminals were stopped during a   |
+//| tidy-up with positions still on them, and those sat at the broker |
+//| unmanaged and invisible to every report here for a day.           |
+//|                                                                   |
+//| By ticket, never "close everything". A request that names what it |
+//| closes can be checked before it is written and read afterwards to |
+//| see what it did; a sweep primitive is one typo from emptying an   |
+//| account, and the convenience is not worth keeping that within     |
+//| reach of a file drop.                                             |
+//|                                                                   |
+//| In hedging mode a position closes by dealing the opposite way     |
+//| with `position` set - an opposite order without it opens a second |
+//| position and doubles the exposure it was meant to remove.         |
+//+------------------------------------------------------------------+
+void CloseOne(const string id, const ulong ticket)
+  {
+   if(!PositionSelectByTicket(ticket))
+     {
+      //--- Already gone is not a failure. A stop may have taken it between
+      //--- the request being written and read, and reporting that as an
+      //--- error would have somebody hunting a position that closed
+      //--- correctly.
+      WriteResult(id, true, ticket, 0.0, "no such position - already closed");
+      return;
+     }
+
+   string symbol = PositionGetString(POSITION_SYMBOL);
+   double volume = PositionGetDouble(POSITION_VOLUME);
+   long   kind   = PositionGetInteger(POSITION_TYPE);
+
+   MqlTradeRequest request;
+   MqlTradeResult  result;
+   ZeroMemory(request);
+   ZeroMemory(result);
+   request.action       = TRADE_ACTION_DEAL;
+   request.position     = ticket;
+   request.symbol       = symbol;
+   request.volume       = volume;
+   request.type         = (kind == POSITION_TYPE_BUY) ? ORDER_TYPE_SELL : ORDER_TYPE_BUY;
+   request.price        = (kind == POSITION_TYPE_BUY)
+                          ? SymbolInfoDouble(symbol, SYMBOL_BID)
+                          : SymbolInfoDouble(symbol, SYMBOL_ASK);
+   request.deviation    = MaxSlippagePts;
+   request.type_filling = MolidoFilling(symbol);
+   request.comment      = "molido-close:" + id;
+
+   if(!OrderSend(request, result) ||
+      (result.retcode != TRADE_RETCODE_DONE && result.retcode != TRADE_RETCODE_PLACED))
+     {
+      WriteResult(id, false, ticket, 0.0,
+                  "close retcode " + IntegerToString(result.retcode) + " " + result.comment);
+      return;
+     }
+   WriteResult(id, true, ticket, result.price, "closed " + DoubleToString(volume, 2) + " " + symbol);
+   Print("MolidoBridge: closed ", symbol, " ticket ", ticket);
+  }
+
+
+//+------------------------------------------------------------------+
 ENUM_ORDER_TYPE_FILLING MolidoFilling(const string symbol)
   {
    long allowed = 0;
@@ -626,6 +690,21 @@ void ExecuteOne(string filename)
    while(!FileIsEnding(handle))
       body += FileReadString(handle);
    FileClose(handle);
+
+   //--- A close names a ticket and nothing else. Routed before the fields
+   //--- an opening needs are read, because a close has no size, no stop and
+   //--- no side to validate.
+   string closing = JsonField(body, "close_ticket");
+   if(closing != "")
+     {
+      if(!AllowTrading)
+        {
+         WriteResult(id, false, 0, 0.0, "AllowTrading is off on the expert");
+         return;
+        }
+      CloseOne(id, (ulong)StringToInteger(closing));
+      return;
+     }
 
    string symbol = JsonField(body, "symbol");
    string side   = JsonField(body, "side");

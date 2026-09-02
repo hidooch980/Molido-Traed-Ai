@@ -144,15 +144,25 @@ def write_config(login: str, server: str, password: str, config: pathlib.Path | 
     config.chmod(0o600)
 
 
-def restart_terminal(unit: str = UNIT) -> tuple[bool, str]:
+def systemctl(verb: str, unit: str = UNIT) -> tuple[bool, str]:
+    """One systemctl verb against one unit.
+
+    `restart`, `stop` and `start` differ only in the word, and writing three
+    near-identical functions is how the timeout on one of them ends up
+    different from the others by accident.
+    """
     result = subprocess.run(
-        ["sudo", "systemctl", "restart", unit],
+        ["sudo", "systemctl", verb, unit],
         capture_output=True,
         text=True,
         timeout=120,
     )
     ok = result.returncode == 0
     return ok, (result.stderr or result.stdout).strip()
+
+
+def restart_terminal(unit: str = UNIT) -> tuple[bool, str]:
+    return systemctl("restart", unit)
 
 
 
@@ -366,6 +376,34 @@ def apply(request: pathlib.Path) -> dict:
             ),
         }
 
+    if action in {"stop", "start"}:
+        # Power, not identity. The startup config stays exactly where it is,
+        # so starting the terminal again logs into the same account with no
+        # password anywhere in the request - which matters because this
+        # system deliberately stores none, and any "reconnect" that needed
+        # one would have to start keeping them.
+        #
+        # `clear` is the other act and is not this one: it forgets the
+        # account, and coming back from it means typing the password again.
+        # They were the same call until somebody wanted to park an account
+        # for an afternoon without re-entering credentials to get it back.
+        moved, detail = systemctl(action, target.unit)
+        if action == "stop":
+            # The bridge files describe a terminal that is now gone. Left
+            # behind they read as a live account with a stale heartbeat,
+            # which is the shape of a broken terminal rather than a parked
+            # one, and every report downstream would show the difference as
+            # an outage.
+            for stale in target.bridge.glob("molido_*.json"):
+                stale.unlink(missing_ok=True)
+        return {
+            "applied": moved,
+            "terminal": target.key,
+            "action": action,
+            "reason": None if moved else f"systemctl {action} failed: {detail}",
+            "applied_at": datetime.now(UTC).isoformat(timespec="seconds"),
+        }
+
     if action == "clear":
         # Log the terminal out by removing the startup config and restarting.
         # The saved session inside the prefix goes too, or the terminal would
@@ -388,7 +426,7 @@ def apply(request: pathlib.Path) -> dict:
             "applied": False,
             "terminal": target.key,
             "reason": f"{action!r} is not an action this agent knows. "
-            "Known: login, clear",
+            "Known: login, clear, stop, start",
         }
 
     if not login or not server or not password:

@@ -268,6 +268,71 @@ def unlink_account(
     return body
 
 
+@router.post("/disconnect")
+def disconnect_account(
+    payload: ClearPayload,
+    principal: Principal = BROKER_MANAGE,
+) -> dict[str, Any]:
+    """Stop a terminal without forgetting the account it holds.
+
+    The startup config stays, so connecting again is a start rather than a
+    fresh registration and needs no password - which is the whole point,
+    because this application stores none and any reconnect that needed one
+    would have to begin keeping them.
+
+    Distinct from `/unlink`, which forgets. Those were the same call until
+    parking an account for an afternoon meant re-typing its credentials to
+    get it back, and a system that makes people re-type passwords is a system
+    that trains them to keep passwords somewhere convenient.
+
+    `BROKER_MANAGE`: stopping a terminal mid-trade is as much an act on the
+    account as starting it.
+    """
+    request = mt5_link.validate_power(payload.terminal, "stop")
+    result = mt5_link.submit(request)
+    body = result.as_dict()
+    body["applied_by"] = "host agent"
+    body["next"] = f"/api/v1/brokers/link/{result.request_id}"
+    log.info(
+        "broker.disconnect_requested",
+        request_id=result.request_id,
+        terminal=payload.terminal,
+        queued=result.queued,
+        tenant_id=str(principal.tenant_id) if principal.tenant_id else None,
+    )
+    return body
+
+
+@router.post("/connect")
+def connect_account(
+    payload: ClearPayload,
+    principal: Principal = BROKER_MANAGE,
+) -> dict[str, Any]:
+    """Start a terminal that still holds a login.
+
+    Not a registration - that is `/link`, and it is the one that carries a
+    password. This only turns on a terminal whose account is already in its
+    own config, which is what makes it the counterpart to `/disconnect`.
+
+    A terminal whose login was cleared will start and connect to nothing,
+    which the metatrader endpoint already reports as its own state rather
+    than as a failure.
+    """
+    request = mt5_link.validate_power(payload.terminal, "start")
+    result = mt5_link.submit(request)
+    body = result.as_dict()
+    body["applied_by"] = "host agent"
+    body["next"] = f"/api/v1/brokers/link/{result.request_id}"
+    log.info(
+        "broker.connect_requested",
+        request_id=result.request_id,
+        terminal=payload.terminal,
+        queued=result.queued,
+        tenant_id=str(principal.tenant_id) if principal.tenant_id else None,
+    )
+    return body
+
+
 @router.get("/metatrader")
 def read_metatrader(_: Principal = READ) -> dict[str, Any]:
     """What the terminal is actually reporting, right now.

@@ -80,6 +80,49 @@ class ClearRequest:
         return {"action": "clear", "terminal": self.terminal}
 
 
+#: The two things that can be done to a terminal's power without touching
+#: its identity. Named rather than free text so an unknown verb is caught
+#: here instead of by the agent, which would have to answer with a result
+#: file nobody was waiting for.
+POWER_ACTIONS = frozenset({"stop", "start"})
+
+
+@dataclass(frozen=True)
+class PowerRequest:
+    """Stop or start a terminal, leaving the account it holds alone.
+
+    Its own type beside `ClearRequest` for the same reason that one is its own
+    type beside `LinkRequest`: disconnecting and forgetting are different acts
+    with different consequences, and they were the same call until somebody
+    wanted to park an account for an afternoon. A stop keeps the startup
+    config, so starting again needs no password - which matters because this
+    system stores none and a "reconnect" that needed one would have to begin.
+    """
+
+    terminal: str
+    action: str
+
+    def as_payload(self) -> dict[str, str]:
+        return {"action": self.action, "terminal": self.terminal}
+
+
+def validate_power(terminal: str | None, action: str) -> PowerRequest:
+    """A stop or a start, against a named terminal."""
+    verb = str(action or "").strip().lower()
+    if verb not in POWER_ACTIONS:
+        raise ValidationFailedError(
+            f"{action!r} is not something that can be done to a terminal. "
+            f"Known: {', '.join(sorted(POWER_ACTIONS))}."
+        )
+    checked = validate_terminal(terminal)
+    if checked is None:
+        raise ValidationFailedError(
+            f"A {verb} needs the terminal named. Acting on a default terminal "
+            "from a blank field would touch an account nobody meant to."
+        )
+    return PowerRequest(terminal=checked, action=verb)
+
+
 @dataclass(frozen=True)
 class LinkResult:
     """What happened, with no secret in it."""
@@ -161,7 +204,11 @@ def validate_clear(terminal: str | None) -> ClearRequest:
     return ClearRequest(terminal=checked)
 
 
-def submit(request: LinkRequest | ClearRequest, *, now: datetime | None = None) -> LinkResult:
+def submit(
+    request: LinkRequest | ClearRequest | PowerRequest,
+    *,
+    now: datetime | None = None,
+) -> LinkResult:
     """Write the request for the host agent to pick up.
 
     Written to a temporary name and renamed into place. The agent globs for

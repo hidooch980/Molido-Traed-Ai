@@ -1,7 +1,7 @@
 import AccountBarcode from "@/components/AccountBarcode";
 import { Offline, Panel, Stat, StatusBadge } from "@/components/ui";
 import { AddBrokerAccount } from "@/components/AddBrokerAccount";
-import { TerminalUnlink } from "@/components/TerminalUnlink";
+import { TerminalControls } from "@/components/TerminalControls";
 import { api } from "@/lib/api";
 import { getT } from "@/lib/locale";
 
@@ -181,21 +181,24 @@ export default async function BrokersPage() {
                     )}
                   </td>
                   <td>
-                    {/* Only where there is a login to forget. A log-out
-                        button on an empty terminal would queue a restart
-                        that changes nothing and reads as broken. */}
-                    {term.available && (
-                      <TerminalUnlink
-                        terminal={key}
-                        labels={{
-                          unlink: t("brokers.unlink"),
-                          confirm: t("brokers.unlinkConfirm"),
-                          cancel: t("brokers.unlinkCancel"),
-                          working: t("brokers.unlinkWorking"),
-                          failed: t("brokers.unlinkFailed"),
-                        }}
-                      />
-                    )}
+
+                    {/* Always, not only where a login is visible. A stopped
+                        terminal publishes nothing, so gating on `available`
+                        hid the Connect button on exactly the rows that
+                        needed it. */}
+                    <TerminalControls
+                      terminal={key}
+                      labels={{
+                        connect: t("brokers.connect"),
+                        disconnect: t("brokers.disconnect"),
+                        remove: t("brokers.remove"),
+                        removeWarning: t("brokers.removeWarning"),
+                        confirm: t("brokers.unlinkConfirm"),
+                        cancel: t("brokers.unlinkCancel"),
+                        working: t("brokers.unlinkWorking"),
+                        failed: t("brokers.unlinkFailed"),
+                      }}
+                    />
                   </td>
                 </tr>
               ))}

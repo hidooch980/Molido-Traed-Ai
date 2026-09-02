@@ -14,6 +14,7 @@ import stat
 
 import pytest
 
+from app.core.errors import ValidationFailedError
 from app.services import mt5_link
 
 
@@ -289,3 +290,54 @@ class TestClearingATerminal:
 
         with pytest.raises(ValidationFailedError):
             mt5_link.validate_clear(None)
+
+
+class TestStoppingIsNotForgetting:
+    """Disconnect and delete were the same call until parking an account for
+    an afternoon meant re-typing its password to get it back - and a system
+    that makes people re-type passwords trains them to keep passwords
+    somewhere convenient."""
+
+    def test_a_stop_carries_no_credential(self):
+        request = mt5_link.validate_power("term-g", "stop")
+
+        assert request.as_payload() == {"action": "stop", "terminal": "term-g"}
+        assert "password" not in request.as_payload()
+
+    def test_a_start_is_its_own_action(self):
+        assert mt5_link.validate_power("term-g", "start").action == "start"
+
+    def test_clearing_is_a_different_payload_entirely(self):
+        """The agent has to be able to tell them apart, because one is
+        reversible without a password and the other is not."""
+        stop = mt5_link.validate_power("term-g", "stop").as_payload()
+        clear = mt5_link.validate_clear("term-g").as_payload()
+
+        assert stop["action"] != clear["action"]
+
+    def test_an_unknown_verb_is_refused_here_not_at_the_agent(self):
+        """The agent would have to answer with a result file nobody is
+        waiting for."""
+        with pytest.raises(ValidationFailedError) as caught:
+            mt5_link.validate_power("term-g", "restart")
+
+        assert "not something that can be done" in str(caught.value)
+
+    def test_a_blank_terminal_is_refused(self):
+        """Acting on a default terminal from an empty field would touch an
+        account nobody meant to."""
+        with pytest.raises(ValidationFailedError):
+            mt5_link.validate_power("", "stop")
+
+    def test_the_verb_is_read_case_insensitively(self):
+        assert mt5_link.validate_power("term-g", "STOP").action == "stop"
+
+    def test_a_power_request_can_be_submitted_like_any_other(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("MOLIDO_MT5_QUEUE", str(tmp_path))
+        result = mt5_link.submit(mt5_link.validate_power("term-g", "stop"))
+
+        assert result.queued is True
+        # No login and no server on a power request, and the result says so
+        # rather than inventing them.
+        assert result.login == ""
+        assert result.server == ""
