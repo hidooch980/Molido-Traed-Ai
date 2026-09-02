@@ -15,7 +15,7 @@ const config: Config = {
         warn: "#F59E0B",
       },
       fontFamily: {
-        sans: ["Segoe UI", "Inter", "system-ui", "sans-serif"],
+        sans: ["var(--font-vazirmatn)", "Vazirmatn", "Segoe UI", "system-ui", "sans-serif"],
         mono: ["Cascadia Mono", "Consolas", "ui-monospace", "monospace"],
       },
     },

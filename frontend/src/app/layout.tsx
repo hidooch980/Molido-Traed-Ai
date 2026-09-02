@@ -1,3 +1,4 @@
+import { Vazirmatn } from "next/font/google";
 import type { Metadata, Viewport } from "next";
 
 import Shell from "@/components/Shell";
@@ -45,6 +46,16 @@ export const viewport: Viewport = {
   viewportFit: "cover",
 };
 
+// Self-hosted by Next at build time: no request to Google at runtime, no
+// flash of the wrong face, and a Persian family with tabular numerals for a
+// site that is mostly Persian numbers in tables. Exposed as a CSS variable
+// so Tailwind's `font-sans` picks it up without any component naming it.
+const vazirmatn = Vazirmatn({
+  subsets: ["arabic", "latin"],
+  variable: "--font-vazirmatn",
+  display: "swap",
+});
+
 export default async function RootLayout({
   children,
 }: {
@@ -60,7 +71,7 @@ export default async function RootLayout({
   const railCollapsed = await getRailCollapsed();
 
   return (
-    <html lang={locale} dir={direction(locale)} className={theme === "dark" ? "dark" : ""}>
+    <html lang={locale} dir={direction(locale)} className={`${vazirmatn.variable} ${theme === "dark" ? "dark" : ""}`}>
       <body className="font-sans antialiased">
         <Shell locale={locale} theme={theme} initialCollapsed={railCollapsed}>
           {children}

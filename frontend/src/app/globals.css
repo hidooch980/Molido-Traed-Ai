@@ -30,41 +30,32 @@
 :root {
   color-scheme: light;
 
-  --plane: #eef0f6;
-  --panel: #ffffff;
-  --panel-raised: #f5f6fa;
-  --border: #dfe2ec;
-  --border-strong: #c3c8d8;
+  --plane: #f4f2ee;
+  --panel: #fbfaf7;
+  --panel-raised: #efece6;
+  --border: #dcd7cd;
+  --border-strong: #b9b2a4;
 
-  --ink: #151824;
-  --ink-2: #474d63;
-  --ink-3: #7b8199;
+  --ink: #1a1a24;
+  --ink-2: #4a4a5a;
+  --ink-3: #66667a;
 
-  /* The same green, taken down until it passes contrast on paper. A brand
-     that changes hue between themes is two brands. */
-  --accent: #067a34;
-  --accent-soft: rgba(6, 122, 52, 0.10);
+  --accent: #4338ca;
+  --accent-soft: rgba(67,56,202,0.10);
   --accent-ink: #ffffff;
 
-  /* Status — reserved. Never reused as a series colour. */
-  /* Teal here too, for the same reason it is teal in the dark theme: a green
-     status badge beside a green button is two meanings in one colour. */
   --good: #0f766e;
-  --warning: #a5730b;
-  --serious: #bd5528;
-  --critical: #b83a2b;
+  --warning: #7c4a03;
+  --serious: #9a3412;
+  --critical: #b91c1c;
 
-  /* Series — checked against --panel. Violet rather than yellow in the fourth
-     slot: yellow on warm paper is nearly the accent, and two things that mean
-     different things must not look the same. */
-  --series-1: #2c6fb5;
-  --series-2: #cf5f28;
-  --series-3: #2b8874;
-  --series-4: #7a5fb8;
+  --series-1: #3b5bdb;
+  --series-2: #d9480f;
+  --series-3: #0b7285;
+  --series-4: #862e9c;
 
-  --grid: #e6e9f2;
-  --axis: #c3c8d8;
-
+  --grid: #e6e2d9;
+  --axis: #b9b2a4;
   --shadow: 0 1px 2px rgba(16, 20, 31, 0.06), 0 8px 24px rgba(16, 20, 31, 0.05);
   --radius: 12px;
 }
@@ -72,63 +63,32 @@
 .dark {
   color-scheme: dark;
 
-  /* Black, and then white at four opacities.
-   *
-   * The previous dark theme was navy with three hand-picked greys, and the
-   * result was the thing every trading dashboard looks like: flat, cold, and
-   * uniformly mid-tone, so nothing on it had any weight. Ground truth here is
-   * pure black; every surface above it is white at a low alpha, and every
-   * piece of text is white at one of four. That is one decision instead of a
-   * dozen, and it is why the hierarchy holds on a page with forty numbers on
-   * it - a panel is lighter than the plane because it has more white in it,
-   * not because somebody chose a second colour that happened to be lighter.
-   *
-   * The hairline is faintly blue rather than neutral grey. On pure black a
-   * neutral border reads as dirt; a cool one reads as an edge.
-   */
-  --plane: #000000;
-  --panel: #0b0b0e;
-  --panel-raised: #141419;
-  --border: rgba(214, 223, 255, 0.09);
-  --border-strong: rgba(214, 223, 255, 0.18);
+  --plane: #12131a;
+  --panel: #1a1b24;
+  --panel-raised: #22232f;
+  --border: #2e2f3d;
+  --border-strong: #474859;
 
-  --ink: #ffffff;
-  --ink-2: rgba(255, 255, 255, 0.72);
-  --ink-3: rgba(255, 255, 255, 0.48);
+  --ink: #eeeef3;
+  --ink-2: #b8b9c7;
+  --ink-3: #8b8c9e;
 
-  /* One vivid accent, and it is the only saturated colour in the chrome. On
-     black a single high-chroma green carries every affordance on the page -
-     the active nav item, the button, the focus ring - and needs no help from
-     size or weight to be found. */
-  --accent: #09e354;
-  --accent-soft: rgba(9, 227, 84, 0.14);
-  --accent-ink: #04160a;
+  --accent: #8b85ff;
+  --accent-soft: rgba(139,133,255,0.14);
+  --accent-ink: #0c0c14;
 
-  /* Status must not be the accent, and here that rule costs something worth
-     paying. "Good" is the obvious green, and green is now the brand - so a
-     healthy badge and a submit button would be the same swatch meaning two
-     different things. Good moves to teal: still unmistakably positive, and
-     never confusable with something you can press. */
   --good: #2dd4bf;
   --warning: #fbbf24;
-  --serious: #fb7185;
-  --critical: #f43f5e;
+  --serious: #fb923c;
+  --critical: #f87171;
 
-  /* Four hues checked against --panel. Not the accent: a series line painted
-     in the brand colour competes with every button on the page for the same
-     meaning. */
-  --series-1: #60a5fa;
-  --series-2: #fb923c;
-  --series-3: #2dd4bf;
+  --series-1: #6d8cff;
+  --series-2: #ff8a5b;
+  --series-3: #38bdf8;
   --series-4: #c084fc;
 
-  --grid: rgba(214, 223, 255, 0.06);
-  --axis: rgba(214, 223, 255, 0.16);
-
-  /* Depth comes from the surface being lighter, not from a shadow. On black a
-     drop shadow is invisible; what separates a panel is its own tone and a
-     hairline, so the shadow is only a faint lift to stop large panels looking
-     painted on. */
+  --grid: #262736;
+  --axis: #474859;
   --shadow: 0 1px 0 rgba(255, 255, 255, 0.03), 0 12px 32px rgba(0, 0, 0, 0.6);
   --radius: 16px;
 }
@@ -213,6 +173,10 @@ table.data {
 
 table.data th,
 table.data td {
+  /* Columns of prices and R-multiples line up only if every digit is the
+     same width. Proportional figures make 1.15904 and 1.11111 different
+     lengths, and a column that does not align cannot be scanned. */
+  font-variant-numeric: tabular-nums;
   text-align: start;
   padding: 0.4rem 0.7rem;
   border-bottom: 1px solid var(--border);
