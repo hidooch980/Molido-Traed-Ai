@@ -49,13 +49,45 @@ LOOKBACK = 80
 #: three instruments printed is not a cross-section, it is three instruments.
 MIN_FOR_INSTANT = crosssection.MIN_CROSS_SECTION
 
-#: The target, as a multiple of the risk. 1R, as tested.
-TARGET_MULTIPLE = 1.0
+#: The target, as a multiple of the risk.
+#:
+#: 1.0 for as long as this system existed, and never measured against
+#: anything - `measure` read both of these off the module and so could only
+#: ever score the geometry already deployed. When it was finally given the
+#: question, 1.0 lost at almost every cut.
+TARGET_MULTIPLE = 1.5
 
-#: The stop the measurement used. Recorded with the decision so a later reader
-#: can tell which geometry produced which series - a rule re-measured under a
-#: different stop is a different rule.
-STOP_MULTIPLE = 2.5
+#: The stop, as a multiple of ATR. Recorded with the decision so a later
+#: reader can tell which geometry produced which series - a rule re-measured
+#: under a different stop is a different rule, and the journal holds both eras
+#: side by side rather than pretending the older one was taken under this.
+#:
+#: 2.5 was the number this platform was built around, and out of sample it
+#: loses on four timeframes of the five now measured. The stop was inside the
+#: noise: 2.5 ATR is seven pips on M15 while entry costs four, so most of the
+#: risk was spent before the trade had an opinion, and a normal wiggle closed
+#: it. A live account showed 18% wins against the journal's 55% on the same
+#: decisions, and that gap is this number.
+#:
+#: 7.5 and 1.5 were chosen on training windows alone and confirmed on data
+#: the choice never saw:
+#:
+#:     H1, four rolling cuts over 687 days, chosen at every one of them
+#:         +0.0060  +0.0318  +0.0493  +0.0403   net, held out
+#:         -0.0701  -0.0463  -0.0042  +0.0096   the incumbent, same windows
+#:     D1, 21 years of dukascopy   +0.1470 held out against +0.0503
+#:     M1, an independent feed     +0.1481 held out against -0.3639
+#:
+#: M15 and M5 refused to confirm any geometry and are recorded as failures
+#: rather than dropped. Three datasets that share no bars all asked for a stop
+#: three times wider and a target above parity, which is the agreement that
+#: makes this a measurement rather than a fit.
+#:
+#: What it costs: fewer trades reach a target this far away, and the ones that
+#: do sit through more noise. The measurement says that trade is worth making.
+#: The next thing to check is whether the live journal agrees, and it will
+#: take weeks rather than a cycle to say so.
+STOP_MULTIPLE = 7.5
 
 
 def snapshot(

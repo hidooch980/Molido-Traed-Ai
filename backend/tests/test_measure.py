@@ -501,11 +501,27 @@ class TestInstantRowsForSlicing:
             for i in range(22)
         }
 
-        silent = _measure(series, bar_interval=_td(hours=1), universe=None)
+        # The geometry is pinned rather than inherited. This test is about
+        # whether the rows are kept and whether they re-add to the summary,
+        # and a synthetic series drifting a tenth of a point per bar resolves
+        # under a 2.5 ATR stop and not under a wider one - so leaving it to
+        # the deployment's constant meant a production tuning change silently
+        # emptied the fixture while every assertion below still passed.
+        geometry = {"stop_multiple": 2.5, "target_multiple": 1.0}
+        silent = _measure(
+            series, bar_interval=_td(hours=1), universe=None, **geometry
+        )
         kept = _measure(
-            series, bar_interval=_td(hours=1), universe=None, keep_instants=True
+            series,
+            bar_interval=_td(hours=1),
+            universe=None,
+            keep_instants=True,
+            **geometry,
         )
 
+        # Guards the guard: an empty measurement would divide by zero below
+        # rather than say it measured nothing.
+        assert kept.instants > 0
         assert silent.instant_rows is None
         assert kept.instant_rows is not None
         assert len(kept.instant_rows) == kept.instants

@@ -35,7 +35,21 @@ from app.learning.universe_selection import (
 START = datetime(2024, 1, 1, tzinfo=UTC)
 
 
-def bars(count: int, *, base: float = 100.0, drift: float = 0.1) -> list[Bar]:
+#: How far these synthetic instruments travel per bar.
+#:
+#: It was a tenth of a point, against a one-point bar range, and that put the
+#: fixture right at the edge of resolving: a 2.5 ATR stop is five points and
+#: the drift covers it inside the horizon, a wider one is not reached at all.
+#: So every test below silently measured nothing the moment the deployment's
+#: stop multiple moved, and asserted happily against empty measurements.
+#:
+#: A point a bar clears any geometry in the sweep's grid several times over.
+#: The spread between instruments is what these tests actually need - the
+#: ranking has to have something to rank - and that is preserved.
+DRIFT_PER_BAR = 1.0
+
+
+def bars(count: int, *, base: float = 100.0, drift: float = DRIFT_PER_BAR) -> list[Bar]:
     return [
         Bar(
             at=START + timedelta(days=index),
@@ -50,7 +64,7 @@ def bars(count: int, *, base: float = 100.0, drift: float = 0.1) -> list[Bar]:
 
 def series(symbols: list[str], count: int = 200) -> dict[str, list[Bar]]:
     return {
-        symbol: bars(count, base=100.0 + index, drift=0.1 + index * 0.01)
+        symbol: bars(count, base=100.0 + index, drift=DRIFT_PER_BAR + index * 0.1)
         for index, symbol in enumerate(symbols)
     }
 
