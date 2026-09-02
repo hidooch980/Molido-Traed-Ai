@@ -208,10 +208,34 @@ BRIDGE_FILES = _bridge_files()
 CONNECT_TIMEOUT = 720.0
 
 
+def write_progress(request: pathlib.Path, stage: str, **facts) -> None:
+    """Say which stage a login is at, before it is finished.
+
+    A registration takes seven minutes on this host - restart, handshake,
+    chart load, expert - and the only file the page could read was the final
+    result, so it showed "queued" for all seven and the account looked stuck
+    at the exact moment it was working. This writes a sibling file the page
+    polls in the meantime. It is removed when the result lands; a progress
+    file that outlived its result would describe a login that is over.
+    """
+    request_id = request.name.removesuffix(".request.json")
+    path = request.parent / f"{request_id}.progress.json"
+    try:
+        path.write_text(
+            json.dumps({"stage": stage, "at": datetime.now(UTC).isoformat(timespec="seconds"), **facts}),
+            encoding="utf-8",
+        )
+        path.chmod(0o660)
+    except OSError:
+        # Progress is a courtesy. Failing to write it must not fail the login.
+        pass
+
+
 def wait_for_connection(
     timeout: float = CONNECT_TIMEOUT,
     interval: float = 3.0,
     bridge: pathlib.Path | None = None,
+    on_wait=None,
 ) -> dict:
     """Watch the bridge until the terminal reports a live account, or give up.
 
@@ -221,8 +245,17 @@ def wait_for_connection(
     """
     account_file = (bridge or BRIDGE_FILES) / "molido_account.json"
     deadline = time.monotonic() + timeout
+    started = time.monotonic()
+    last_note = -60.0
 
     while time.monotonic() < deadline:
+        elapsed = time.monotonic() - started
+        # Every thirty seconds, not every pass: a progress file rewritten
+        # three times a second is churn, and thirty seconds is fine grain for
+        # a wait measured in minutes.
+        if on_wait is not None and elapsed - last_note >= 30:
+            on_wait(int(elapsed))
+            last_note = elapsed
         try:
             payload = json.loads(account_file.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
@@ -458,10 +491,21 @@ def apply(request: pathlib.Path) -> dict:
         }
 
     write_config(login, server, password, config=target.config)
+    write_progress(request, "config_written", terminal=target.key)
     restarted, detail = restart_terminal(target.unit)
+    write_progress(request, "terminal_restarted" if restarted else "restart_failed", terminal=target.key)
     connection = (
-        wait_for_connection(bridge=target.bridge) if restarted else {"connected": False}
+        wait_for_connection(
+            bridge=target.bridge,
+            on_wait=lambda secs: write_progress(
+                request, "waiting_for_account", terminal=target.key, elapsed_seconds=secs
+            ),
+        )
+        if restarted
+        else {"connected": False}
     )
+    if connection.get("connected"):
+        write_progress(request, "account_visible", terminal=target.key)
 
     return {
         "applied": restarted,
@@ -529,6 +573,9 @@ def process_once() -> int:
         result_path = request.parent / f"{request_id}.result.json"
         result_path.write_text(json.dumps(result, indent=1), encoding="utf-8")
         result_path.chmod(0o660)
+        # The result supersedes every stage. Left behind, the page could read
+        # "waiting" beside a result that says "connected".
+        (request.parent / f"{request_id}.progress.json").unlink(missing_ok=True)
         request.unlink(missing_ok=True)
         log(f"result: {result.get('applied')} {result.get('reason') or ''}")
     return len(pending)

@@ -341,3 +341,62 @@ class TestStoppingIsNotForgetting:
         # rather than inventing them.
         assert result.login == ""
         assert result.server == ""
+
+
+class TestAPendingLoginSaysWhereItIs:
+    """Seven minutes between "queued" and "done", and the page used to show
+    the first word for all of them. The agent writes a stage file now; the
+    result carries it while the real result is still pending, and only
+    while."""
+
+    def test_progress_is_carried_with_known_still_false(self, tmp_path, monkeypatch):
+        """`known` must stay false or the page stops polling and reports a
+        half-finished login as a failure."""
+        monkeypatch.setattr(mt5_link, "queue_dir", lambda: tmp_path)
+        (tmp_path / "abc.request.json").write_text("{}", encoding="utf-8")
+        (tmp_path / "abc.progress.json").write_text(
+            '{"stage": "waiting_for_account", "elapsed_seconds": 90}', encoding="utf-8"
+        )
+
+        answer = mt5_link.result_for("abc")
+
+        assert answer["known"] is False
+        assert answer["pending"] is True
+        assert answer["progress"]["stage"] == "waiting_for_account"
+        assert answer["progress"]["elapsed_seconds"] == 90
+
+    def test_a_result_wins_over_any_progress(self, tmp_path, monkeypatch):
+        """Once the agent has answered, a stale stage file must not be read
+        beside it as if the login were still in flight."""
+        monkeypatch.setattr(mt5_link, "queue_dir", lambda: tmp_path)
+        (tmp_path / "abc.progress.json").write_text('{"stage": "config_written"}', encoding="utf-8")
+        (tmp_path / "abc.result.json").write_text(
+            '{"applied": true, "connected": true}', encoding="utf-8"
+        )
+
+        answer = mt5_link.result_for("abc")
+
+        assert answer["known"] is True
+        assert "progress" not in answer
+
+    def test_an_unreadable_progress_file_is_ignored_not_fatal(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(mt5_link, "queue_dir", lambda: tmp_path)
+        (tmp_path / "abc.request.json").write_text("{}", encoding="utf-8")
+        (tmp_path / "abc.progress.json").write_text("not json", encoding="utf-8")
+
+        answer = mt5_link.result_for("abc")
+
+        assert answer["known"] is False
+        assert "progress" not in answer
+
+    def test_no_progress_file_means_the_old_answer_exactly(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(mt5_link, "queue_dir", lambda: tmp_path)
+        (tmp_path / "abc.request.json").write_text("{}", encoding="utf-8")
+
+        answer = mt5_link.result_for("abc")
+
+        assert answer == {
+            "known": False,
+            "pending": True,
+            "reason": "the host agent has not picked this up yet",
+        }

@@ -255,7 +255,7 @@ def result_for(request_id: str) -> dict[str, Any]:
     path = queue_dir() / f"{request_id}.result.json"
     if not path.exists():
         pending = (queue_dir() / f"{request_id}.request.json").exists()
-        return {
+        answer: dict[str, Any] = {
             "known": False,
             "pending": pending,
             "reason": (
@@ -264,6 +264,19 @@ def result_for(request_id: str) -> dict[str, Any]:
                 else "no request or result exists with that id"
             ),
         }
+        # In between "not picked up" and "done" there are seven minutes, and
+        # the agent now says where in them it is. Carried under its own key
+        # with `known` still false, so a page polling for the result keeps
+        # polling and has something true to show while it does.
+        progress = queue_dir() / f"{request_id}.progress.json"
+        if progress.exists():
+            try:
+                answer["progress"] = json.loads(progress.read_text(encoding="utf-8"))
+                answer["pending"] = True
+                answer["reason"] = "the host agent is applying it"
+            except (OSError, json.JSONDecodeError):
+                pass
+        return answer
     try:
         return {"known": True, **json.loads(path.read_text(encoding="utf-8"))}
     except (OSError, json.JSONDecodeError) as exc:

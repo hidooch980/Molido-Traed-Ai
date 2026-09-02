@@ -38,6 +38,10 @@ export interface BrokerFormLabels {
   cancel: string;
   submitting: string;
   queued: string;
+  stageConfig: string;
+  stageRestarted: string;
+  stageWaiting: string;
+  stageSeen: string;
   applied: string;
   failed: string;
   refused: string;
@@ -212,6 +216,21 @@ export function AddBrokerAccount({
         await new Promise((resolve) => setTimeout(resolve, 2000));
         const check = await fetch(`/api/v1/brokers/link/${id}`);
         const result = await check.json();
+        // Seven minutes between "queued" and "done" on this host, and the
+        // page used to show the first word for all of them - so a login that
+        // was working looked stuck at exactly the moment it was working. The
+        // agent names its stage now, and the stage is what is shown.
+        if (!result.known && result.progress?.stage) {
+          const stage = String(result.progress.stage);
+          const secs = Number(result.progress.elapsed_seconds ?? 0);
+          const text =
+            stage === "config_written" ? labels.stageConfig
+            : stage === "terminal_restarted" ? labels.stageRestarted
+            : stage === "waiting_for_account" ? labels.stageWaiting.replace("{s}", String(secs))
+            : stage === "account_visible" ? labels.stageSeen
+            : labels.queued;
+          setStatus(text);
+        }
         if (result.known) {
           // Applied and connected are different facts. A wrong server name
           // applies perfectly and connects to nothing, and calling that a
