@@ -169,6 +169,7 @@ def run(
     with_leave_one_out: bool,
     draws: int,
     drop_flat: bool = False,
+    with_regime: bool = False,
 ) -> dict[str, Any]:
     end = datetime.now(UTC)
     start = end - timedelta(days=365 * years)
@@ -225,6 +226,17 @@ def run(
             full_edge=full.edge_r,
         )
 
+    regime = None
+    if with_regime:
+        from app.learning import regimes as rg
+
+        readings = rg.features(
+            series,
+            [row[0] for row in (full.instant_rows or ())],
+            universe=frozenset(universe),
+        )
+        regime = rg.test_dispersion_regime(full.instant_rows or (), readings)
+
     report = rb.assess(
         full,
         horizon_instants=block,
@@ -252,6 +264,7 @@ def run(
         "flat_bars_dropped": dropped_flat,
         "measurement": full.as_dict(),
         "robustness": report.as_dict(),
+        "regime": regime.as_dict() if regime else None,
         "registry": {
             "listed_as": (
                 "PENDING_FORWARD" if name in pending else "REJECTED" if name in rejected else "not registered"
@@ -351,6 +364,35 @@ def render(payload: dict[str, Any]) -> str:
                 "unanswerable question at this universe size"
             )
 
+    if payload.get("regime"):
+        g = payload["regime"]
+        lines += [
+            "",
+            "-" * 62,
+            "REGIME (threshold chosen on training only)",
+            "-" * 62,
+            f"  hypothesis: {g['hypothesis']}",
+            f"  threshold:  dispersion >= {g['threshold']} ({g['threshold_chosen_on']})",
+        ]
+        for phase in ("train", "test"):
+            block = g[phase]
+            window = block["window"]
+            lines.append(
+                f"  {phase:<5} {window[0][:10] if window else '?'} .. "
+                f"{window[1][:10] if window else '?'}"
+            )
+            for side in ("high", "low"):
+                half = block[side]
+                lines.append(
+                    f"    {side:<5} n {half['instants']:<6} edge {half['edge_r']:+.4f} R  t {half['t']:.2f}"
+                )
+            lines.append(
+                f"    separation {block['separation_r']:+.4f} R  t {block['separation_t']:.2f}"
+            )
+        lines.append(f"  verdict: {g['verdict']}")
+        if g["unknown_instants"]:
+            lines.append(f"  {g['unknown_instants']} instant(s) carried no regime reading")
+
     lines += [
         "",
         "-" * 62,
@@ -397,6 +439,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--leave-one-out", action="store_true")
     parser.add_argument(
+        "--regime",
+        action="store_true",
+        help="test the dispersion-regime hypothesis, train then held-out",
+    )
+    parser.add_argument(
         "--drop-flat-bars",
         action="store_true",
         help="drop bars whose high equals their low: a day nothing traded",
@@ -427,6 +474,7 @@ def main(argv: list[str] | None = None) -> int:
             with_leave_one_out=args.leave_one_out,
             draws=args.draws,
             drop_flat=args.drop_flat_bars,
+            with_regime=args.regime,
         )
 
     if args.json:
