@@ -69,12 +69,20 @@ def bridge_dir(tmp_path, key: str, *, login: str, positions: list[dict]):
     return directory
 
 
-def journal(session, *, account_key: str, symbol: str, outcome=None, r=None, arm=ARM_RULE):
+def journal(session, *, traded_by=None, symbol="EURUSD", outcome=None, r=None, arm=ARM_RULE):
+    """One decision, optionally carrying an order for one account.
+
+    `traded_by` is a login. The fleet records a decision once and offers it to
+    every account; the account-specific fact is the order under
+    `during["orders"][login]`, which is where the cycle writes it. Filtering on
+    `account_key` was wrong - it is NULL on all 21,804 live rows, because
+    nothing populates it.
+    """
+    during = {"orders": {traded_by: {"state": "filled", "lots": 0.03}}} if traded_by else {}
     session.add(
         JournalEntry(
             symbol=symbol,
             decision="long",
-            account_key=account_key,
             opened_at=NOW - timedelta(hours=2),
             closed_at=NOW - timedelta(hours=1) if outcome else None,
             outcome=outcome,
@@ -84,7 +92,7 @@ def journal(session, *, account_key: str, symbol: str, outcome=None, r=None, arm
             timeframe="H1",
             strategy="cross-sectional-stretch",
             before={},
-            during={},
+            during=during,
             after={},
         )
     )
@@ -164,20 +172,38 @@ class TestItAnswersForOneTerminal:
 
 
 class TestTheDecisionsAreFilteredByAccount:
-    def test_only_this_accounts_decisions_appear(self, client, session, two_terminals):
-        journal(session, account_key="term-b", symbol="EURUSD", outcome="win", r=1.5)
-        journal(session, account_key="term-c", symbol="XAUUSD", outcome="loss", r=-1.0)
+    def test_only_the_trades_this_account_sent_appear(self, client, session, two_terminals):
+        journal(session, traded_by="111", symbol="EURUSD", outcome="win", r=1.5)
+        journal(session, traded_by="222", symbol="XAUUSD", outcome="loss", r=-1.0)
 
         b = client.get("/api/v1/brokers/terminals/term-b").json()
 
         assert [d["symbol"] for d in b["decisions"]] == ["EURUSD"]
 
+    def test_a_decision_nobody_traded_is_not_this_accounts_history(self, client, session, two_terminals):
+        """The fleet is offered thousands of decisions a day and each account
+        sends orders for a handful. Listing the offers as an account's trades
+        would put a month of the fleet's thinking under one login."""
+        journal(session, traded_by=None, symbol="GBPUSD", outcome="win", r=2.0)
+
+        b = client.get("/api/v1/brokers/terminals/term-b").json()
+
+        assert b["decisions"] == []
+
+    def test_the_brokers_answer_for_this_order_is_carried(self, client, session, two_terminals):
+        journal(session, traded_by="111", symbol="EURUSD", outcome="win", r=1.5)
+
+        [row] = client.get("/api/v1/brokers/terminals/term-b").json()["decisions"]
+
+        assert row["order_state"] == "filled"
+        assert row["lots"] == 0.03
+
     def test_the_control_arm_is_not_shown_as_a_trade(self, client, session, two_terminals):
         """The control never reached a broker. Listing it under an account's
         trades would put a number beside a position that never existed."""
-        journal(session, account_key="term-b", symbol="EURUSD", outcome="win", r=1.5)
+        journal(session, traded_by="111", symbol="EURUSD", outcome="win", r=1.5)
         journal(
-            session, account_key="term-b", symbol="EURUSD", outcome="loss", r=-1.0, arm=ARM_CONTROL
+            session, traded_by="111", symbol="EURUSD", outcome="loss", r=-1.0, arm=ARM_CONTROL
         )
 
         b = client.get("/api/v1/brokers/terminals/term-b").json()
@@ -186,8 +212,8 @@ class TestTheDecisionsAreFilteredByAccount:
         assert b["summary"]["total_r"] == 1.5
 
     def test_the_summary_counts_only_what_resolved(self, client, session, two_terminals):
-        journal(session, account_key="term-b", symbol="EURUSD", outcome="win", r=2.0)
-        journal(session, account_key="term-b", symbol="GBPUSD", outcome=None, r=None)
+        journal(session, traded_by="111", symbol="EURUSD", outcome="win", r=2.0)
+        journal(session, traded_by="111", symbol="GBPUSD", outcome=None, r=None)
 
         summary = client.get("/api/v1/brokers/terminals/term-b").json()["summary"]
 

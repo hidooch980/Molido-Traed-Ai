@@ -16,8 +16,10 @@ export const dynamic = "force-dynamic";
  * differently.
  *
  * Everything here is read for this terminal alone. Open positions come from
- * its own bridge, decisions from the journal under its own account key, so
- * nothing on this page is the fleet's answer wearing one member's name.
+ * its own bridge; the trades are the decisions this account actually sent an
+ * order for, which is not the same list as the decisions the fleet was
+ * offered - those are recorded once and shown to every account, and putting
+ * them under one login would credit a month of the fleet's thinking to it.
  *
  * Open positions come first. A closed trade is history and can be read at
  * leisure; an open one is money currently at risk, and it is what somebody
@@ -181,11 +183,11 @@ export default async function TerminalPage({
       </Panel>
 
       <Panel
-        title={t("terminalDetail.decisions")}
-        subtitle={t("terminalDetail.decisionsSubtitle", { days: String(summary.days) })}
+        title={t("terminalDetail.trades")}
+        subtitle={t("terminalDetail.tradesSubtitle", { days: String(summary.days) })}
       >
         {decisions.length === 0 ? (
-          <Empty>{t("terminalDetail.noDecisions")}</Empty>
+          <Empty>{t("terminalDetail.noTrades")}</Empty>
         ) : (
           <div className="scroll-x">
             <table className="data">
@@ -196,6 +198,8 @@ export default async function TerminalPage({
                   <th>{t("terminalDetail.side")}</th>
                   <th>{t("terminalDetail.brain")}</th>
                   <th>{t("terminalDetail.timeframe")}</th>
+                  <th className="num">{t("terminalDetail.volume")}</th>
+                  <th>{t("terminalDetail.orderState")}</th>
                   <th>{t("terminalDetail.outcome")}</th>
                   <th className="num">R</th>
                 </tr>
@@ -219,6 +223,10 @@ export default async function TerminalPage({
                     </td>
                     <td dir="ltr" className="ink-3">
                       {d.timeframe}
+                    </td>
+                    <td className="num">{d.lots ?? "—"}</td>
+                    <td dir="ltr" className="ink-3">
+                      {d.order_state ?? "—"}
                     </td>
                     <td>
                       {d.outcome ? (

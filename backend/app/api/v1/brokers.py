@@ -36,6 +36,12 @@ from app.services import mt5_link
 
 router = APIRouter(prefix="/brokers", tags=["brokers"])
 
+#: How many recent decisions to read before filtering to one account's orders.
+#: The fleet records a few thousand a day and one account trades a handful of
+#: them, so a cap keeps a page request from walking a month of the journal to
+#: find twenty rows.
+SCAN_LIMIT = 4000
+
 READ = Depends(require(Permission.READ))
 #: Not EXECUTE. Connecting a terminal is not placing an order, and a route that
 #: asks for more authority than it needs is how the two stop being separate.
@@ -421,9 +427,20 @@ def read_terminal_detail(
     positions = bridge.positions() if state.usable else {"positions": []}
     login = str(account.get("login") or "") if account.get("available") else ""
 
-    # The account key the cycle writes decisions under. `terminal` is that key
-    # in this deployment; looked up rather than assumed so a rename shows as a
-    # missing history instead of somebody else's.
+    # What *this* account traded, which is not what the fleet was offered.
+    #
+    # The decisions are recorded once for the whole fleet - `account_key` is
+    # NULL on all 21,804 of them, because the forward recorder writes one set
+    # and every account is offered it. The account-specific fact lives where
+    # the cycle puts it: `during["orders"][login]`, one entry per account that
+    # sent an order for that decision. Filtering on `account_key` returned an
+    # empty table on every terminal, which read as "this account has done
+    # nothing" rather than "this is the wrong column".
+    #
+    # Filtered in Python rather than in SQL because the JSON operators differ
+    # between Postgres and the SQLite the tests run on, and a query that only
+    # works in production is a query nothing checks. The scan is bounded by
+    # the window and a row cap.
     rows: list[dict[str, Any]] = []
     if login:
         since = datetime.now(UTC) - timedelta(days=days)
@@ -431,17 +448,21 @@ def read_terminal_detail(
             session.execute(
                 select(JournalEntry)
                 .where(
-                    JournalEntry.account_key == terminal,
                     JournalEntry.arm == ARM_RULE,
                     JournalEntry.opened_at >= since,
                 )
                 .order_by(JournalEntry.opened_at.desc())
-                .limit(200)
+                .limit(SCAN_LIMIT)
             )
             .scalars()
             .all()
         )
         for entry in entries:
+            during = entry.during if isinstance(entry.during, dict) else {}
+            orders = during.get("orders") if isinstance(during.get("orders"), dict) else {}
+            order = orders.get(login) or orders.get(str(login))
+            if not order:
+                continue
             rows.append(
                 {
                     "id": str(entry.id),
@@ -454,8 +475,15 @@ def read_terminal_detail(
                     "outcome": entry.outcome,
                     "r_multiple": entry.r_multiple,
                     "price_source": entry.price_source,
+                    # The broker's own answer for this account, so a rejected
+                    # order is not shown as a trade that happened.
+                    "order_state": order.get("state"),
+                    "lots": order.get("lots"),
+                    "fill": order.get("average_price") or order.get("price"),
                 }
             )
+            if len(rows) >= 200:
+                break
 
     resolved = [r for r in rows if r["outcome"]]
     wins = [r for r in resolved if r["outcome"] == "win"]
@@ -478,8 +506,9 @@ def read_terminal_detail(
             "average_r": round(total_r / len(resolved), 4) if resolved else None,
         },
         "note": (
-            "positions are read from this terminal's own bridge and decisions "
-            "from the journal under this account's key, so neither is the "
-            "fleet's answer attributed to one member of it"
+            "positions are read from this terminal's own bridge, and the "
+            "trades are the decisions this account actually sent an order "
+            "for - not the decisions the fleet was offered, which are "
+            "recorded once and shown to every account"
         ),
     }

@@ -827,6 +827,10 @@ export interface TerminalDetail {
     outcome: string | null;
     r_multiple: number | null;
     price_source: string | null;
+    /** The broker's own answer for this account's order on that decision. */
+    order_state: string | null;
+    lots: number | null;
+    fill: number | null;
   }>;
   summary: {
     days: number;
