@@ -504,6 +504,90 @@ class DonchianBreakout:
         )
 
 
+@dataclass(frozen=True)
+class StochasticReversion:
+    """Buy what is near the bottom of its recent range, sell what is near the top.
+
+    The stochastic oscillator asks where the last close sits between the
+    highest high and the lowest low of a lookback window, as a percentage. It
+    is bounded 0-100 by construction, so it needs no volatility
+    normalisation and gold competes with EURUSD on the same scale - the same
+    property that made RSI usable on this mixed list.
+
+    What it measures that RSI does not: RSI is built from the size of the
+    closes' own changes, and this is built from the position of the close
+    inside the range the bars actually traded. An instrument can grind down
+    in small steps - low RSI, because every step is small - while still
+    closing at the top of its range, and the two indicators disagree there.
+    Whether that disagreement is worth anything is the question the
+    measurement answers, not this docstring.
+
+    **Slow, and with the published parameters.** 14 for the window, 3 for the
+    smoothing, 20 and 80 for the bands: the values Lane published, not values
+    chosen here. A threshold tuned on this data would make the measurement
+    that follows a measurement of the tuning. `%D` - the smoothed line -
+    rather than raw `%K`, because raw `%K` crosses its band on a single bar's
+    high and produces a signal about one bar.
+    """
+
+    name: str = "stochastic-reversion"
+    window: int = 14
+    smoothing: int = 3
+    oversold: float = 20.0
+    overbought: float = 80.0
+    per_side: int = 2
+
+    def _percent_k(self, bars: list[tuple[float, float, float]]) -> float | None:
+        """Where the last close sits in the window's range, 0-100."""
+        window = bars[-self.window :]
+        if len(window) < self.window:
+            return None
+        highest = max(bar[0] for bar in window)
+        lowest = min(bar[1] for bar in window)
+        span = highest - lowest
+        if span <= 0:
+            # A window that never moved has no position inside itself. Not
+            # 50, which would be a claim about the middle of nothing.
+            return None
+        return 100.0 * (window[-1][2] - lowest) / span
+
+    def percent_d(self, bars: list[tuple[float, float, float]]) -> float | None:
+        """The smoothed line: the mean of the last `smoothing` values of %K."""
+        needed = self.window + self.smoothing - 1
+        if len(bars) < needed:
+            return None
+        values = []
+        for offset in range(self.smoothing):
+            end = len(bars) - offset
+            value = self._percent_k(bars[:end])
+            if value is None:
+                return None
+            values.append(value)
+        return sum(values) / len(values)
+
+    def __call__(
+        self, snapshot: dict[str, dict[str, Any]], *, universe: frozenset[str] | None
+    ) -> Picks:
+        scored: list[tuple[float, str]] = []
+        for symbol in _eligible(snapshot, universe):
+            bars = list(snapshot.get(symbol, {}).get("bars") or [])
+            value = self.percent_d(bars)
+            if value is None:
+                continue
+            scored.append((value, symbol))
+
+        longs = tuple(s for v, s in sorted(scored) if v <= self.oversold)
+        shorts = tuple(
+            s for v, s in sorted(scored, reverse=True) if v >= self.overbought
+        )
+        if not longs and not shorts:
+            # Most of the time nothing sits in a band, and that is what a
+            # bounded oscillator is for. An indicator with an opinion every
+            # bar is not an oscillator, it is a coin.
+            return Picks(declined="nothing is at the edge of its range")
+        return Picks(longs=longs[: self.per_side], shorts=shorts[: self.per_side])
+
+
 #: Every candidate, by name. Adding one here is the whole cost of testing it.
 CANDIDATES: dict[str, Rule] = {
     rule.name: rule  # type: ignore[misc]
@@ -519,9 +603,27 @@ CANDIDATES: dict[str, Rule] = {
 }
 
 
+#: Rules written but not yet trading.
+#:
+#: Kept apart from CANDIDATES on purpose. `forward.record_forward` iterates
+#: CANDIDATES and writes a decision for every rule in it on every cycle, so
+#: putting a rule there is not "proposing" it - it is deploying it, and its
+#: decisions immediately join the council's votes. A rule belongs here until
+#: its measurement says it should move, and `get` finds it either way so the
+#: lab can run it without the live loop being changed to allow that.
+PROPOSED: dict[str, Rule] = {
+    rule.name: rule  # type: ignore[misc]
+    for rule in (StochasticReversion(),)
+}
+
+
 def get(name: str) -> Rule | None:
-    return CANDIDATES.get(name)
+    return CANDIDATES.get(name) or PROPOSED.get(name)
 
 
 def names() -> list[str]:
     return sorted(CANDIDATES)
+
+
+def proposed_names() -> list[str]:
+    return sorted(PROPOSED)
