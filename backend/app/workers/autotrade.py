@@ -1168,6 +1168,16 @@ def run_all_accounts(
     }
 
 
+def _conviction_imports() -> None:
+    """Documented here rather than imported at module scope.
+
+    `autotrade` is imported by the collector on every cycle and by the tests
+    in bulk; the learning modules it now consults pull in the measurement
+    stack, and paying for that at import time would slow every path that
+    never reaches an order.
+    """
+
+
 def run_cycle(
     session: Session,
     *,
@@ -1187,7 +1197,10 @@ def run_cycle(
     switch at all - the API reported one engaged while this traded, because
     the switch lived in a per-request object and this never asked.
     """
-    from app.execution import autopilot, killswitch_store
+    from app.execution import autopilot, conviction, killswitch_store
+    from app.learning import edge as edge_registry
+    from app.learning import rules as rules_module
+    from app.ops import calibration
     from app.providers.metatrader import MetaTraderBridge
 
     moment = (now or datetime.now(UTC)).astimezone(UTC)
@@ -1244,7 +1257,10 @@ def run_cycle(
     if state is None:
         return _report(mode=mode, refused=f"risk state unavailable: {missing}")
 
-    verdict = _authorise(state, feed_age_bars=_feed_age_bars(published, moment))
+    # Bound once: the risk brain gates on it and the conviction step below
+    # scores it, and computing it twice invites the two to disagree.
+    feed_age_bars = _feed_age_bars(published, moment)
+    verdict = _authorise(state, feed_age_bars=feed_age_bars)
     if not verdict.approves:
         return _report(
             mode=mode,
@@ -1325,6 +1341,14 @@ def run_cycle(
     sent: list[dict[str, Any]] = []
     skipped: list[str] = []
 
+    # Read once for the cycle rather than per candidate: both are account-wide
+    # facts and neither moves between symbols.
+    edge_allowed, _edge_why = edge_registry.live_trading_allowed()
+    try:
+        calibrated_sources = len(calibration.measure(session, now=moment).calibrated)
+    except Exception:  # noqa: BLE001 - unread is unobserved, which costs confidence
+        calibrated_sources = None
+
     required = _consensus_required()
     # Always built, not only when a majority is demanded: the votes are
     # what tell agreement from contradiction, and contradiction is worth
@@ -1378,6 +1402,9 @@ def run_cycle(
         other_side = "short" if entry.decision == "long" else "long"
         against = votes.get((entry.symbol, other_side), set())
         supporting = votes.get((entry.symbol, entry.decision), set())
+        # Both names are read again further down by the conviction step, which
+        # runs for every candidate rather than only for the ones the consensus
+        # rule examines.
         if len(against) >= len(supporting):
             skipped.append(
                 f"{entry.symbol}: {len(against)} brains want the other side "
@@ -1493,6 +1520,47 @@ def run_cycle(
             )
             continue
 
+        # How much of the permitted risk this particular trade has earned.
+        #
+        # Every gate above has already said yes; none of them expressed the
+        # difference between a trade the evidence barely permits and one it
+        # positively supports, so every permitted order was sized the same.
+        # This scores that difference and can only spend it downward - the
+        # multiplier is capped at 1.0 by construction (`app.execution.
+        # conviction`), so a mistake here costs a position that was too small
+        # and never one that was too large.
+        judgement = conviction.assess(
+            side=entry.decision,
+            proven_edge=edge_allowed,
+            factors=[
+                conviction.agreement_factor(
+                    agreeing=len(supporting),
+                    opposing=len(against),
+                ),
+                conviction.cost_factor(cost_r=spread_cost, ceiling_r=ceiling),
+                conviction.freshness_factor(age_bars=feed_age_bars),
+                conviction.calibration_factor(calibrated_sources=calibrated_sources),
+                # No regime filter has been confirmed out of sample: the
+                # dispersion hypothesis separated the halves by t 1.82 against
+                # a required 1.96 on 21 years of daily bars. Reported as
+                # unobserved rather than as a pass, because not knowing which
+                # regime this is costs confidence - which is the truthful
+                # effect of not knowing.
+                conviction.regime_factor(aligned=None),
+            ],
+        )
+        if not judgement.allowed:
+            skipped.append(
+                f"{entry.symbol}: trade power {judgement.score}/100 "
+                f"({judgement.tier.label}) - " + "; ".join(judgement.blocks)
+            )
+            continue
+        # The only line where conviction touches money, and it can only take
+        # away: `risk_multiplier` is capped at 1.0, so this is a min() of the
+        # permitted risk with itself at worst.
+        permitted_before_conviction = risk_for_this
+        risk_for_this = min(risk_for_this, risk_for_this * judgement.risk_multiplier)
+
         lots, problem = _lots(
             equity=equity,
             stop_distance=stop_distance,
@@ -1508,6 +1576,37 @@ def run_cycle(
             # exactly the contract size per lot.
             account_currency=str(published.get("currency") or "") or None,
         )
+        if lots is None and judgement.risk_multiplier < 1.0:
+            # The lot step is coarse, and on an account whose permitted risk
+            # buys only the minimum lot any reduction at all rounds to
+            # nothing. That is not conviction deciding against the trade; it
+            # is conviction being unable to express a preference, and letting
+            # it read as a refusal would make the granularity of the broker's
+            # volume step into a trading rule nobody wrote.
+            #
+            # So the trade proceeds at the risk every gate already approved -
+            # never more than that - and the log says conviction had no say.
+            lots, problem = _lots(
+                equity=equity,
+                stop_distance=stop_distance,
+                specification=specification,
+                risk_percent=permitted_before_conviction * 100.0,
+                account_currency=str(published.get("currency") or "") or None,
+            )
+            if lots:
+                risk_for_this = permitted_before_conviction
+                log.info(
+                    "autotrade.conviction_not_expressible",
+                    symbol=entry.symbol,
+                    score=judgement.score,
+                    wanted_multiplier=round(judgement.risk_multiplier, 3),
+                    lots=lots,
+                    detail=(
+                        "the permitted risk buys only the minimum lot, so the "
+                        "reduction rounds to nothing and the trade goes at the "
+                        "approved size"
+                    ),
+                )
         if lots is None:
             skipped.append(f"{entry.symbol}: {problem}")
             continue
