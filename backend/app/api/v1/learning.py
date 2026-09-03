@@ -329,3 +329,25 @@ def read_journal(
     from app.services import journal_log
 
     return journal_log.summary(session)
+
+
+@router.get("/real-money")
+def read_real_money_readiness(
+    _: Principal = READ,
+    session: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Should a real account be connected right now?
+
+    `/readiness` above answers when there will be enough evidence to judge.
+    This answers whether to connect today, which is a different question with
+    two halves: would anything here lose money for reasons that have nothing
+    to do with the market, and is there any measured reason to expect a gain.
+
+    They are reported apart on purpose. Every operational check can be green
+    while the second half has never been measured, and a verdict that folded
+    them together would say "ready" on operational health alone - which is
+    the most expensive thing this deployment could tell somebody.
+    """
+    from app.ops import real_money
+
+    return real_money.assess(session).as_dict()
