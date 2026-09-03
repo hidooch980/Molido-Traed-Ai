@@ -38,6 +38,19 @@ x-backend-env: &backend-env
   # not named here reads back as its default and looks unset rather than
   # ignored. The defaults below are the conservative pair.
   MOLIDO_AUTOTRADE_RISK_PERCENT: ${MOLIDO_AUTOTRADE_RISK_PERCENT:-0.25}
+  # Per-account risk, "login=percent,...", overriding the fleet figure above
+  # for the accounts it names and nothing else. The smallest trade a broker
+  # accepts is a fixed size, so a $50 account at the fleet's 0.75% computes
+  # an order that rounds to zero on every symbol; raising the fleet figure
+  # instead would put ten thousand dollars behind every trade on the
+  # $196,000 account.
+  #
+  # Listed here because this anchor is an explicit list, not a passthrough:
+  # a variable absent from it is absent from the container, and the setting
+  # then silently keeps its default while the env file says otherwise. That
+  # is what happened when this was first set - the file was right, the
+  # container was unchanged, and nothing said so.
+  MOLIDO_ACCOUNT_RISK_PERCENT: ${MOLIDO_ACCOUNT_RISK_PERCENT:-}
   MOLIDO_AUTOTRADE_MAX_OPEN_POSITIONS: ${MOLIDO_AUTOTRADE_MAX_OPEN_POSITIONS:-8}
   MOLIDO_FORWARD_TIMEFRAMES: ${MOLIDO_FORWARD_TIMEFRAMES:-H1}
   MOLIDO_WATCHLIST: ${MOLIDO_WATCHLIST}
