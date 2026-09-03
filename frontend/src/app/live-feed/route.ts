@@ -27,7 +27,34 @@ import { api } from "@/lib/api";
  */
 export const dynamic = "force-dynamic";
 
-export async function GET() {
+export async function GET(request: Request) {
+  // One terminal, when asked for one.
+  //
+  // The fleet view wants every open position; an account's own page wants
+  // that account's, and reading the fleet's answer and filtering it in the
+  // browser is how a position ends up attributed to whichever terminal the
+  // reader happened to be looking at. The per-terminal route reads that
+  // terminal's own bridge, so the answer is the account's by construction.
+  //
+  // The name is whitelisted by shape rather than trusted: it goes into a
+  // path, and a path segment built from a query string is how a keyhole
+  // stops being a keyhole.
+  const asked = new URL(request.url).searchParams.get("terminal");
+  const terminal = asked && /^[a-z0-9-]{1,32}$/.test(asked) ? asked : null;
+
+  if (terminal) {
+    const detail = await api.terminalDetail(terminal);
+    return NextResponse.json(
+      {
+        stamped_at: new Date().toISOString(),
+        terminal,
+        detail: detail.ok ? detail.data : null,
+        unreachable: detail.ok ? [] : ["terminal"],
+      },
+      { headers: { "cache-control": "no-store, max-age=0" } },
+    );
+  }
+
   const [positions, realised] = await Promise.all([
     api.positions(),
     api.realised(1),

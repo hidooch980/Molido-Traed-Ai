@@ -1,5 +1,6 @@
 import Link from "next/link";
 
+import { LiveTerminalPositions } from "@/components/LiveTerminalPositions";
 import { Empty, Offline, Panel, Stat, StatusBadge } from "@/components/ui";
 import { api } from "@/lib/api";
 import { getT } from "@/lib/locale";
@@ -116,70 +117,26 @@ export default async function TerminalPage({
         title={t("terminalDetail.positions")}
         subtitle={t("terminalDetail.positionsSubtitle")}
       >
-        {positions.length === 0 ? (
-          <Empty>{t("terminalDetail.noPositions")}</Empty>
-        ) : (
-          <div className="scroll-x">
-            <table className="data">
-              <thead>
-                <tr>
-                  <th>{t("terminalDetail.symbol")}</th>
-                  <th>{t("terminalDetail.side")}</th>
-                  <th className="num">{t("terminalDetail.volume")}</th>
-                  <th className="num">{t("terminalDetail.entry")}</th>
-                  <th className="num">{t("terminalDetail.stop")}</th>
-                  <th className="num">{t("terminalDetail.target")}</th>
-                  <th className="num">{t("terminalDetail.reward")}</th>
-                  <th className="num">{t("terminalDetail.floating")}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {positions.map((p) => {
-                  const entry = Number(p.price_open);
-                  const stopDistance = Math.abs(entry - Number(p.stop));
-                  const targetDistance = Math.abs(Number(p.target) - entry);
-                  // Printed rather than assumed: the deployment's geometry is
-                  // one number in a constant, and what a position is actually
-                  // carrying is a different fact about a trade already open.
-                  const reward =
-                    stopDistance > 0 ? (targetDistance / stopDistance).toFixed(2) : "—";
-                  return (
-                    <tr key={String(p.ticket)}>
-                      <td className="font-semibold" dir="ltr">
-                        {p.symbol}
-                      </td>
-                      <td>
-                        <StatusBadge
-                          status={p.side === "buy" ? "good" : "warning"}
-                          label={
-                            p.side === "buy"
-                              ? t("terminalDetail.buy")
-                              : t("terminalDetail.sell")
-                          }
-                        />
-                      </td>
-                      <td className="num">{p.volume}</td>
-                      <td className="num">{p.price_open}</td>
-                      <td className="num">{p.stop || "—"}</td>
-                      <td className="num">{p.target || "—"}</td>
-                      <td className="num">{reward}</td>
-                      <td
-                        className="num"
-                        style={{
-                          color:
-                            Number(p.profit) < 0 ? "var(--bad)" : "var(--good)",
-                        }}
-                      >
-                        {Number(p.profit) >= 0 ? "+" : ""}
-                        {money(p.profit)}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
+        <LiveTerminalPositions
+          terminal={terminal}
+          initial={positions}
+          labels={{
+            symbol: t("terminalDetail.symbol"),
+            side: t("terminalDetail.side"),
+            volume: t("terminalDetail.volume"),
+            entry: t("terminalDetail.entry"),
+            stop: t("terminalDetail.stop"),
+            target: t("terminalDetail.target"),
+            reward: t("terminalDetail.reward"),
+            floating: t("terminalDetail.floating"),
+            buy: t("terminalDetail.buy"),
+            sell: t("terminalDetail.sell"),
+            empty: t("terminalDetail.noPositions"),
+            age: t("terminalDetail.age"),
+            stale: t("terminalDetail.stale"),
+            unreachable: t("terminalDetail.unreachable"),
+          }}
+        />
       </Panel>
 
       <Panel
