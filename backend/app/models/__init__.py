@@ -5,6 +5,7 @@ Alembic autogenerate reads. New model modules must be imported here.
 """
 
 from app.db.base import Base
+from app.models.account_policy import AccountPolicy
 from app.models.audit import AuditChainHead, AuditEvent
 from app.models.slo import SloObservation
 from app.models.calendar import MarketHoliday
@@ -32,6 +33,7 @@ from app.models.tenancy import ApiKey, Tenant, User
 from app.models.terminals import Terminal
 
 __all__ = [
+    "AccountPolicy",
     "HumanChallenge",
     "Incident",
     "JournalEntry",

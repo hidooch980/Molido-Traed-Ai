@@ -1121,6 +1121,18 @@ def _risk_percent(login: str | None = None) -> float:
     fleet = float(getattr(get_settings(), "autotrade_risk_percent", RISK_PERCENT))
     if not login:
         return fleet
+
+    # The stored policy first, then the environment table, then the fleet.
+    #
+    # The order is the order somebody would expect: what was set on the page
+    # beats what was set on the host, and both beat the default. The stored
+    # value is capped by the same ceiling as the env one - a page is easier
+    # to typo into than a file, not harder.
+    from app.services import account_policy
+
+    stored = account_policy.risk_percent(str(login))
+    if stored is not None:
+        return min(stored, MAX_ACCOUNT_RISK_PERCENT)
     return _account_risk_overrides().get(str(login), fleet)
 
 
@@ -2053,7 +2065,13 @@ def _strategy_for(login: str) -> tuple[frozenset[str] | None, str]:
             key, _, value = piece.partition("=")
             assigned[key.strip()] = value.strip()
 
-    raw_names = assigned.get(login)
+    # The stored policy first, for the same reason and in the same order as
+    # the risk above: what was set on the page beats what was set on the
+    # host. An empty list there reads as "not set", never as "trade nothing".
+    from app.services import account_policy
+
+    stored = account_policy.strategies(str(login))
+    raw_names = "+".join(stored) if stored else assigned.get(login)
     if raw_names is None:
         # Nobody assigned this account, and that is the normal case: an
         # account is registered on a web page by somebody who should not have

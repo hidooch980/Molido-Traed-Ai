@@ -30,6 +30,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.deps import Principal, require
@@ -62,6 +63,16 @@ def _get_db_for_authorization():
 
 READ = Depends(require(Permission.READ))
 SIMULATE = Depends(require(Permission.SIMULATE))
+#: Changing what an account trades and how much it risks is a configuration
+#: authority, not a trading one, and the difference matters: a key that can
+#: place orders must not be able to raise its own risk limit. That is
+#: privilege escalation with extra steps, and EXECUTE - the first choice
+#: here - would have granted exactly it.
+#:
+#: BROKER_MANAGE already gates connecting a live account, which is the
+#: strictly larger power: whoever may point this system at real money may
+#: also say how much of it goes behind one stop.
+POLICY_MANAGE = Depends(require(Permission.BROKER_MANAGE))
 
 
 def _policy() -> safety_module.ExecutionPolicy:
@@ -673,3 +684,111 @@ def read_authorization(
     payload["details"] = posture.details
     payload["reader_failures"] = posture.reader_failures
     return payload
+
+
+class AccountPolicyPayload(BaseModel):
+    """What one account trades and how much it risks."""
+
+    #: Empty means "not set here" and the deployment's assignment applies. It
+    #: is never a way to stop an account - that is the kill switch, and a
+    #: settings field that quietly did the same would be a second halt
+    #: nobody can find.
+    strategies: list[str] = Field(default_factory=list, max_length=12)
+    risk_percent: float | None = Field(default=None, gt=0, le=5.0)
+
+
+@router.get("/accounts/{login}/policy")
+def read_account_policy(login: str, _: Principal = READ) -> dict[str, Any]:
+    """This account's stored settings, and what is actually in force.
+
+    Both, because they differ: a login with nothing stored is running on the
+    deployment's figures, and a page that showed only the stored row would
+    render an empty form for an account that is very much trading.
+    """
+    from app.services import account_policy
+    from app.workers.autotrade import _risk_percent, _strategy_for
+
+    stored = account_policy.all_policies().get(str(login))
+    names, refusal = _strategy_for(str(login))
+    return {
+        "login": login,
+        "stored": stored,
+        "in_force": {
+            "risk_percent": _risk_percent(str(login)),
+            "strategies": sorted(names) if names else [],
+            "refused": None if names else refusal,
+        },
+        "available_strategies": _available_strategies(),
+        "max_risk_percent": _max_account_risk_percent(),
+    }
+
+
+@router.put("/accounts/{login}/policy")
+def write_account_policy(
+    login: str,
+    payload: AccountPolicyPayload,
+    session: Session = Depends(get_db),
+    principal: Principal = POLICY_MANAGE,
+) -> dict[str, Any]:
+    """Set what this account trades and how much it risks.
+
+    Behind BROKER_MANAGE rather than EXECUTE. Changing a risk limit is a
+    configuration authority and placing an order is a trading one, and a key
+    that can do the second must not be able to raise the ceiling on itself -
+    that is privilege escalation with extra steps.
+
+    A strategy nothing registered is refused here rather than at cycle time.
+    The cycle already refuses it - loudly, and by name - but an operator who
+    mistypes a brain on a page should be told while the page is still open,
+    not by an account that quietly stops trading.
+    """
+    from app.learning import rules as rules_module
+    from app.models.account_policy import AccountPolicy
+    from app.services import account_policy
+
+    unknown = sorted({n for n in payload.strategies if rules_module.get(n) is None})
+    if unknown:
+        raise ValidationFailedError(
+            "no brain is registered under "
+            + ", ".join(repr(n) for n in unknown)
+            + ". Known: "
+            + ", ".join(sorted(rules_module.names()))
+        )
+
+    row = session.scalar(select(AccountPolicy).where(AccountPolicy.login == str(login)))
+    if row is None:
+        row = AccountPolicy(login=str(login))
+        session.add(row)
+    row.strategies = list(payload.strategies)
+    row.risk_percent = payload.risk_percent
+    row.changed_by = str(getattr(principal, "subject", "") or "")[:120]
+    session.commit()
+
+    # Otherwise the operator saves, sees the old figure for twenty seconds,
+    # and reasonably concludes it did not save.
+    account_policy.invalidate()
+
+    from app.workers.autotrade import _risk_percent, _strategy_for
+
+    names, refusal = _strategy_for(str(login))
+    return {
+        "login": login,
+        "stored": row.as_dict(),
+        "in_force": {
+            "risk_percent": _risk_percent(str(login)),
+            "strategies": sorted(names) if names else [],
+            "refused": None if names else refusal,
+        },
+    }
+
+
+def _available_strategies() -> list[str]:
+    from app.learning import rules as rules_module
+
+    return sorted(rules_module.names())
+
+
+def _max_account_risk_percent() -> float:
+    from app.workers.autotrade import MAX_ACCOUNT_RISK_PERCENT
+
+    return float(MAX_ACCOUNT_RISK_PERCENT)
