@@ -181,6 +181,31 @@ def materialize(
             timeframe=timeframe.value,
         )
 
+    # Start from where every spec already reaches, not from the top.
+    #
+    # This ran over the whole requested range every cycle. For one instrument
+    # and timeframe that meant reading about nine thousand existing feature
+    # keys out of Postgres to discover that all nine thousand were already
+    # written - `bars 412, written 0, skipped 9064` in the log, ninety-three
+    # times a cycle, which is the better part of a million rows read to write
+    # nothing. Postgres sat at 58% of a core doing it and the collect cycle
+    # grew from ten minutes to forty-five.
+    #
+    # The watermark is the *earliest* point every spec has reached, not the
+    # latest any of them has. A new indicator added today has no rows at all,
+    # its own high-water mark is None, and the pass correctly falls back to
+    # the full range so its history gets built - which is the case that would
+    # have made a naive `max()` silently skip every bar the new spec needed.
+    #
+    # Warm-up is unaffected: the bar fetch above reaches back `warmup` bars
+    # before `start`, so a later `start` still arrives with its lookback.
+    if not recompute:
+        through = _materialised_through(session, instrument_id, timeframe, specs, start, end)
+        if through is not None:
+            resumed = through + timeframe.delta
+            if start < resumed < end:
+                start = resumed
+
     existing = (
         set()
         if recompute
@@ -300,6 +325,46 @@ def materialize(
         first_event_time=first_time,
         last_event_time=last_time,
     )
+
+
+def _materialised_through(
+    session: Session,
+    instrument_id: uuid.UUID,
+    timeframe: Timeframe,
+    specs: list[registry.FeatureSpec],
+    start: datetime,
+    end: datetime,
+) -> datetime | None:
+    """The latest instant every one of these specs has already been written to.
+
+    The minimum of each spec's own maximum. One spec with nothing written
+    makes the whole answer None, and the caller then does the full pass -
+    which is exactly right the day an indicator is added, and exactly what a
+    plain `max()` over all specs would have got wrong.
+    """
+    wanted = {(spec.name, spec.version) for spec in specs}
+    rows = session.execute(
+        select(
+            FeatureValue.name,
+            FeatureValue.feature_version,
+            func.max(FeatureValue.event_time),
+        )
+        .where(
+            FeatureValue.instrument_id == instrument_id,
+            FeatureValue.timeframe == timeframe,
+            FeatureValue.name.in_([spec.name for spec in specs]),
+            FeatureValue.event_time >= start,
+            FeatureValue.event_time < end,
+        )
+        .group_by(FeatureValue.name, FeatureValue.feature_version)
+    ).all()
+
+    reached: dict[tuple[str, int], datetime] = {
+        (name, version): highest for name, version, highest in rows if highest is not None
+    }
+    if not wanted <= reached.keys():
+        return None
+    return min(reached[key] for key in wanted)
 
 
 def _existing_keys(
