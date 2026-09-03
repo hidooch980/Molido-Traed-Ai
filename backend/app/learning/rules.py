@@ -599,6 +599,19 @@ CANDIDATES: dict[str, Rule] = {
         TrendFollowing(),
         RSIMeanReversion(),
         DonchianBreakout(),
+        # Moved from PROPOSED on 2026-09-03, after the measurement rather
+        # than before it: +0.0991 R over its control at t = 4.90 on 21 years
+        # of daily bars, p = 0.00025 against a sign-flipped null, and a block
+        # bootstrap interval of [+0.0322, +0.1852] that clears zero - which
+        # the incumbent's does not. Every one of the three periods is
+        # positive and significant, where the incumbent's edge is carried by
+        # three years out of twenty.
+        #
+        # It is still NOT_ROBUST by this project's own standard: 2025 is
+        # negative and 2013 significantly so. It joins the council to vote
+        # and to build its own forward record, which is what the registry
+        # needs and what no amount of re-cutting history can supply.
+        StochasticReversion(),
     )
 }
 
@@ -611,10 +624,7 @@ CANDIDATES: dict[str, Rule] = {
 #: decisions immediately join the council's votes. A rule belongs here until
 #: its measurement says it should move, and `get` finds it either way so the
 #: lab can run it without the live loop being changed to allow that.
-PROPOSED: dict[str, Rule] = {
-    rule.name: rule  # type: ignore[misc]
-    for rule in (StochasticReversion(),)
-}
+PROPOSED: dict[str, Rule] = {}
 
 
 def get(name: str) -> Rule | None:

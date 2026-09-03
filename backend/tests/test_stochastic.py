@@ -110,17 +110,28 @@ class TestWhatItPicks:
         assert len(picks.shorts) == 2
 
 
-class TestItIsNotDeployedYet:
-    def test_it_is_proposed_rather_than_a_candidate(self):
-        """`forward.record_forward` iterates CANDIDATES and writes a decision
-        for every rule in it every cycle, so putting it there is deploying
-        it, not proposing it. It moves when its measurement says so."""
+class TestItIsInTheCouncilNow:
+    def test_it_records_and_votes(self):
+        """Moved on 2026-09-03, after its measurement: +0.0991 R over the
+        control at t = 4.90 on 21 years of daily bars, with a bootstrap
+        interval that clears zero where the incumbent's does not."""
         from app.learning import rules
 
-        assert "stochastic-reversion" in PROPOSED
-        assert "stochastic-reversion" not in rules.CANDIDATES
+        assert "stochastic-reversion" in rules.CANDIDATES
+        assert PROPOSED == {}
 
-    def test_but_the_lab_can_still_find_it(self):
+    def test_the_council_is_eight_and_every_one_of_them_is_reachable(self):
         from app.learning import rules
 
-        assert rules.get("stochastic-reversion") is not None
+        assert len(rules.CANDIDATES) == 8
+        for name in rules.names():
+            assert rules.get(name) is not None
+
+    def test_it_is_not_assigned_to_an_account_by_default(self):
+        """Voting and trading are separate. A brain in the council records a
+        decision and seconds a motion; whether an account puts money behind
+        it is `DEFAULT_STRATEGIES` and the per-account assignment, which this
+        deliberately does not touch."""
+        from app.workers.autotrade import DEFAULT_STRATEGIES
+
+        assert "stochastic-reversion" not in DEFAULT_STRATEGIES
