@@ -376,6 +376,46 @@ def record_cycle(
             ),
         }
 
+    # Decide only on instruments the broker actually offers.
+    #
+    # The snapshot is filled from a free data provider that carries symbols
+    # this broker does not: crypto, metal futures, a dozen thin currencies -
+    # nineteen of forty-nine on this deployment. A brain takes two picks a
+    # side, so a cycle where both of one brain's shorts are BTCUSD and GCFUT
+    # is a brain that contributed nothing: its opinion is discarded at the
+    # order gate with "the terminal publishes no contract specification",
+    # after it has already spent its picks. Two accounts have never sent an
+    # order in their lives and a quarter of everything they were offered was
+    # of this kind.
+    #
+    # Narrowed here, before the ranking, so every brain sees the same ground.
+    # Filtering the candidates alone would let the incumbent rank against
+    # forty-nine while the others ranked against thirty, and the whole basis
+    # of the comparison is that they differ only in what they choose.
+    #
+    # Fails open, loudly. A bridge that cannot be read returns nothing, and
+    # an empty intersection would stop the fleet deciding altogether - which
+    # is a far worse failure than deciding on a symbol that cannot be
+    # bought. So an empty or unreadable answer leaves the snapshot alone and
+    # says so in the report.
+    dropped: list[str] = []
+    try:
+        from app.providers.metatrader import tradeable_symbols
+
+        tradeable = tradeable_symbols()
+    except Exception:  # noqa: BLE001 - a narrowing must never stop a cycle
+        tradeable = frozenset()
+    if tradeable:
+        dropped = sorted(name for name in built if name not in tradeable)
+        narrowed = {name: rows for name, rows in built.items() if name in tradeable}
+        # Only if enough is left to rank. Below the cross-section minimum the
+        # ranking is not a ranking, and a narrowing that produces a worse
+        # measurement than no narrowing should not happen silently.
+        if len(narrowed) >= MIN_FOR_INSTANT:
+            built = narrowed
+        else:
+            dropped = []
+
     ranked = crosssection.rank(built, at=latest, bar_interval=timeframe.delta)
     if not ranked.available:
         return {"recorded": 0, "reason": ranked.reason, "considered": ranked.considered}
@@ -445,6 +485,8 @@ def record_cycle(
     session.commit()
     return {
         "price_source": price_source,
+        "not_offered_by_the_broker": len(dropped),
+        "not_offered_names": dropped[:20],
         "candidates_recorded": candidate_written,
         "recorded": written,
         # Published rather than swallowed. A cycle that writes nothing because

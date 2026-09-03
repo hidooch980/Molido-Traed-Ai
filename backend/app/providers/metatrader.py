@@ -538,3 +538,38 @@ class MetaTraderBridge:
     def list_symbols(self, *, now: datetime | None = None) -> list[str]:
         published = self.symbols(now=now)
         return [s["name"] for s in published.get("symbols", []) if s.get("name")]
+
+
+def tradeable_symbols(directories: dict[str, pathlib.Path] | None = None) -> frozenset[str]:
+    """Every symbol at least one terminal can actually price and size.
+
+    The fleet decides on whatever has bars in the database, and the database
+    is filled from a free data provider that carries instruments this broker
+    does not offer: crypto, metal futures, and a dozen thin currencies. A
+    brain takes two picks a side, so a cycle where both of one brain's shorts
+    are BTCUSD and GCFUT is a brain that contributed nothing - its opinion is
+    thrown away at the order gate with "the terminal publishes no contract
+    specification", after it has already spent its picks.
+
+    That is the failure this closes. It is not a loosened gate: the same
+    rules run, on instruments that exist at the broker rather than on ones
+    that cannot be bought at any size.
+
+    A symbol counts as tradeable when some terminal publishes a usable tick
+    value and tick size for it. One terminal is enough - accounts differ in
+    what they may trade, and that is the account's own filter to apply, not
+    this one's.
+    """
+    found: set[str] = set()
+    for path in (directories or bridge_dirs()).values():
+        published = MetaTraderBridge(directory=path).symbols()
+        for row in published.get("symbols") or []:
+            name = str(row.get("name") or "")
+            try:
+                tick_value = float(row.get("tick_value") or 0.0)
+                tick_size = float(row.get("tick_size") or 0.0)
+            except (TypeError, ValueError):
+                continue
+            if name and tick_value > 0 and tick_size > 0:
+                found.add(name)
+    return frozenset(found)
