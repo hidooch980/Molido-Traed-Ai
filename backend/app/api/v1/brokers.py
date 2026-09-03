@@ -21,7 +21,7 @@ from typing import Any
 import structlog
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import String, cast, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import Principal, require
@@ -36,11 +36,12 @@ from app.services import mt5_link
 
 router = APIRouter(prefix="/brokers", tags=["brokers"])
 
-#: How many recent decisions to read before filtering to one account's orders.
-#: The fleet records a few thousand a day and one account trades a handful of
-#: them, so a cap keeps a page request from walking a month of the journal to
-#: find twenty rows.
-SCAN_LIMIT = 4000
+#: How many matching rows to read at most. This caps the *matches*, not the
+#: rows scanned to find them - the first version capped the scan, and four
+#: thousand recent decisions reached back only eight hours on this fleet, so
+#: an account's orders from the previous day fell outside it while the window
+#: claimed thirty days.
+SCAN_LIMIT = 400
 
 READ = Depends(require(Permission.READ))
 #: Not EXECUTE. Connecting a terminal is not placing an order, and a route that
@@ -437,10 +438,21 @@ def read_terminal_detail(
     # empty table on every terminal, which read as "this account has done
     # nothing" rather than "this is the wrong column".
     #
-    # Filtered in Python rather than in SQL because the JSON operators differ
-    # between Postgres and the SQLite the tests run on, and a query that only
-    # works in production is a query nothing checks. The scan is bounded by
-    # the window and a row cap.
+    # Narrowed in SQL, confirmed in Python.
+    #
+    # The first version took the most recent `SCAN_LIMIT` decisions and
+    # filtered them here. That is a cap on the wrong thing: the fleet records
+    # a few thousand decisions a day, so four thousand rows reached back eight
+    # hours, and an account's orders from the day before fell outside the scan
+    # while the window said thirty days. The page would have shown a partial
+    # history that looked complete.
+    #
+    # The narrowing is a text match on the JSON, which works on both Postgres
+    # (JSONB casts to text) and the SQLite the tests run on (JSON is text), so
+    # the same query is the one the tests exercise. It is deliberately loose -
+    # a login can appear anywhere in the payload - and the Python check below
+    # is what decides, so a false positive costs a row read and never a wrong
+    # answer.
     rows: list[dict[str, Any]] = []
     if login:
         since = datetime.now(UTC) - timedelta(days=days)
@@ -450,6 +462,7 @@ def read_terminal_detail(
                 .where(
                     JournalEntry.arm == ARM_RULE,
                     JournalEntry.opened_at >= since,
+                    cast(JournalEntry.during, String).like(f'%"{login}"%'),
                 )
                 .order_by(JournalEntry.opened_at.desc())
                 .limit(SCAN_LIMIT)

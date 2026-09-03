@@ -229,3 +229,60 @@ class TestTheDecisionsAreFilteredByAccount:
         assert payload["decisions"] == []
         assert payload["summary"]["hit_rate"] is None
         assert payload["summary"]["average_r"] is None
+
+
+class TestTheHistoryIsNotSilentlyTruncated:
+    def test_an_order_older_than_a_pile_of_untraded_decisions_is_still_found(
+        self, client, session, two_terminals
+    ):
+        """The first version capped the rows it scanned rather than the rows
+        it returned. On this fleet four thousand recent decisions reach back
+        about eight hours, so an account's orders from the previous day fell
+        outside the scan while the window said thirty days - and the page
+        showed a partial history that looked complete."""
+        journal(session, traded_by="111", symbol="EURUSD", outcome="win", r=1.5)
+        for i in range(300):
+            session.add(
+                JournalEntry(
+                    symbol=f"S{i:03d}",
+                    decision="long",
+                    opened_at=NOW - timedelta(minutes=i),
+                    arm=ARM_RULE,
+                    price_source="broker",
+                    timeframe="H1",
+                    strategy="cross-sectional-stretch",
+                    before={},
+                    during={},
+                    after={},
+                )
+            )
+        session.commit()
+
+        b = client.get("/api/v1/brokers/terminals/term-b").json()
+
+        assert [d["symbol"] for d in b["decisions"]] == ["EURUSD"]
+
+    def test_a_login_appearing_elsewhere_in_the_payload_is_not_counted(
+        self, client, session, two_terminals
+    ):
+        """The SQL narrowing is a loose text match; the Python check is what
+        decides. A false positive must cost a row read and never a wrong row."""
+        session.add(
+            JournalEntry(
+                symbol="AUDUSD",
+                decision="long",
+                opened_at=NOW - timedelta(hours=1),
+                arm=ARM_RULE,
+                price_source="broker",
+                timeframe="H1",
+                strategy="cross-sectional-stretch",
+                before={},
+                during={"note": 'mentions "111" without trading it'},
+                after={},
+            )
+        )
+        session.commit()
+
+        b = client.get("/api/v1/brokers/terminals/term-b").json()
+
+        assert b["decisions"] == []
