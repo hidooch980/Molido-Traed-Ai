@@ -481,6 +481,29 @@ class MetaTraderBridge:
             return {"available": False, "reason": f"unreadable: {exc}", "positions": []}
         return {"available": True, "positions": payload.get("positions", [])}
 
+    def deals(self, *, now: datetime | None = None) -> dict[str, Any]:
+        """Closed trades, as the terminal recorded them.
+
+        The one place a result is final. Everything else on this bridge is a
+        position that may still move; a deal has settled, carries its swap and
+        commission, and is what the account was actually paid - which is why
+        the gold loss read here to the cent while the floating figure was
+        still an opinion.
+        """
+        state = self.state(now=now)
+        if not state.usable:
+            return {"available": False, "reason": state.reason, "deals": []}
+
+        path = self.directory / "molido_deals.json"
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            # A terminal that has closed nothing yet has no file, and that is
+            # not an error - but it is also not a deal, so it reads as empty
+            # with the reason kept.
+            return {"available": False, "reason": f"unreadable: {exc}", "deals": []}
+        return {"available": True, "deals": payload.get("deals", [])}
+
     # ----------------------------------------------------------------- bars
     def fetch_ohlcv(
         self,
