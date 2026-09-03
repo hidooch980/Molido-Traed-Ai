@@ -1241,6 +1241,7 @@ def run_cycle(
     # disagree exactly when it matters, and the broker's answer is the one the
     # account is judged on.
     live_positions = feed.positions().get("positions") or []
+
     open_now = len(live_positions)
     # Which symbols the account already carries. The cap on count alone let
     # the cross-section re-pick the same instrument on consecutive instants:
@@ -1333,6 +1334,23 @@ def run_cycle(
     specifications = {
         str(s.get("name")): s for s in (feed.symbols().get("symbols") or [])
     }
+    # The broker's specification, checked against the broker's own arithmetic.
+    #
+    # A gold position closed at -$3,730.76 because the terminal published a
+    # tick value ten times too small and every layer trusted it. The identity
+    # in `calculators.lot_size` catches that before an order is sent, for
+    # instruments whose quote currency can be read from their name; this
+    # catches it on anything the account already holds, by dividing the
+    # position's own profit by its own move. Reported, never acted on - the
+    # sizing correction lives in one place and is tested there.
+    try:
+        from app.ops import spec_audit
+
+        audit = spec_audit.audit(live_positions, specifications)
+        for finding in audit.findings:
+            log.warning("autotrade.specification_contradicted_by_profit", **finding.as_dict())
+    except Exception as problem:  # noqa: BLE001 - a monitor never stops a cycle
+        log.warning("autotrade.spec_audit_unavailable", problem=type(problem).__name__)
 
     strategies, strategy_refusal = _strategy_for(login)
     if strategies is None:
