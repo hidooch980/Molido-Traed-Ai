@@ -44,6 +44,25 @@ MAX_CURRENCY_RISK_R = 3.0
 MAX_CLUSTER_RISK_R = 3.0
 MAX_INSTRUMENT_RISK_R = 2.0
 
+#: How many open positions may lean the same way on one currency, whatever
+#: they are sized at.
+#:
+#: Every other limit here is denominated in R, and that is the right unit for
+#: "how much can this lose". It is the wrong unit for "is this one bet or
+#: several", and the difference showed up on a live account: ten positions,
+#: seven of them long against the yen, all losing together. The currency cap
+#: is 3.0 R and the yen exposure was 0.28 R, because the deployment is unsure
+#: of itself and sizes every trade at a twenty-fifth of the configured risk.
+#:
+#: So the guard against concentration scaled down with the very uncertainty
+#: that should have made it stricter, and seven identical bets passed a check
+#: written to stop three. Seven small copies of one trade are still one trade;
+#: the account was not diversified, it was only quiet about it.
+#:
+#: A count does not shrink. Three is the same intent as MAX_CURRENCY_RISK_R -
+#: three trades' worth on one currency - in a unit that survives being unsure.
+MAX_SAME_CURRENCY_POSITIONS = 3
+
 
 @dataclass
 class Position:
@@ -184,6 +203,23 @@ def evaluate(
         existing = exposures.get(currency, 0.0)
         same_direction = existing if (existing > 0) == (leg > 0) else 0.0
         headrooms.append((f"currency:{currency}", MAX_CURRENCY_RISK_R - abs(same_direction)))
+
+    # The count limit, which does not shrink when the trades do.
+    for currency, leg in candidate_legs.items():
+        if leg == 0:
+            continue
+        same_side = sum(
+            1
+            for position in positions
+            for held_currency, held_leg in position.legs().items()
+            if held_currency == currency and held_leg != 0 and (held_leg > 0) == (leg > 0)
+        )
+        if same_side >= MAX_SAME_CURRENCY_POSITIONS:
+            # Expressed as zero headroom rather than as its own veto, so it
+            # travels the same path as every other limit: one reported cause,
+            # one place that decides, and a caller that cannot forget to check
+            # this one.
+            headrooms.append((f"currency-count:{currency}", 0.0))
 
     limiting_name, headroom = min(headrooms, key=lambda item: item[1])
     headroom = max(0.0, headroom)
