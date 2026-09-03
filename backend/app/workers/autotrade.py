@@ -1470,22 +1470,45 @@ def run_cycle(
     # inside a cycle.
     edges = _measured_edge(session)
 
+    # Why a decision was not traded, kept with the decision.
+    #
+    # Sixteen different refusals are produced here and not one of them was
+    # written down. They went into the cycle report, which is a log line, and
+    # when the log rotated the reason was gone for good. The journal resolves
+    # every rule-arm decision whether or not an order was sent, so the
+    # outcome of a refused trade is already recorded - what was missing is
+    # the other half of the pair, which is why it was refused.
+    #
+    # With both, a question nothing could answer becomes arithmetic: of the
+    # trades the council vetoed, how many would have won? The same for the
+    # news gate, the spread gate, the concentration cap. Every one of them is
+    # trusted and none of them is measured, which is exactly the shape of the
+    # gold defect - a number everybody believed and nobody checked.
+    #
+    # Collected here and written once at the end of the account's pass. One
+    # flush rather than sixty-four, because the day this was written was
+    # spent taking pointless writes *out* of the cycle.
+    refusals: dict[Any, str] = {}
+
+    def refuse(candidate: Any, reason: str) -> None:
+        skipped.append(f"{candidate.symbol}: {reason}")
+        # The first refusal is the binding one: the loop moves on straight
+        # after, so a later gate never gets to overwrite it. Keeping the
+        # first is what makes the record answer "which gate stopped this".
+        refusals.setdefault(candidate, reason)
+
     for entry in candidates:
         # Resolved before the per-symbol cap, because the cap is about the
         # instrument the account will actually carry: a GCFUT decision and
         # an XAUUSD position are the same exposure under two names.
         traded_as = _tradeable_symbol(entry.symbol)
         if traded_as in held:
-            skipped.append(
-                f"{entry.symbol}: the account already holds a position in it, "
-                "and a second one doubles an exposure that was sized for one"
-            )
+            refuse(entry, "the account already holds a position in it, "
+                "and a second one doubles an exposure that was sized for one")
             continue
 
         if len(sent) >= room:
-            skipped.append(
-                f"{entry.symbol}: the open-position cap was reached in this cycle"
-            )
+            refuse(entry, "the open-position cap was reached in this cycle")
             continue
 
         # A contradiction is settled by weight of opinion, not by veto.
@@ -1517,11 +1540,9 @@ def run_cycle(
         # runs for every candidate rather than only for the ones the consensus
         # rule examines.
         if len(against) >= len(supporting):
-            skipped.append(
-                f"{entry.symbol}: {len(against)} brains want the other side "
+            refuse(entry, f"{len(against)} brains want the other side "
                 f"against {len(supporting)} for it "
-                f"({', '.join(sorted(against))})"
-            )
+                f"({', '.join(sorted(against))})")
             continue
 
         # A fast entry must not fight the hourly picture.
@@ -1541,11 +1562,9 @@ def run_cycle(
                 (entry.symbol, CONTEXT_TIMEFRAME), set()
             )
             if slower and entry.decision not in slower:
-                skipped.append(
-                    f"{entry.symbol}: the {CONTEXT_TIMEFRAME} decision is "
+                refuse(entry, f"the {CONTEXT_TIMEFRAME} decision is "
                     f"{'/'.join(sorted(slower))} and this is "
-                    f"{entry.decision} on {entry.timeframe}"
-                )
+                    f"{entry.decision} on {entry.timeframe}")
                 continue
 
         if required > 1:
@@ -1554,25 +1573,21 @@ def run_cycle(
                 # The council rule: one brain moving alone is a hypothesis,
                 # not a trade. Named with the count so a symbol every brain
                 # ignores and one a single brain loves read differently.
-                skipped.append(
-                    f"{entry.symbol}: consensus needs {required} brains and "
-                    f"{len(agreeing)} agree ({', '.join(sorted(agreeing))})"
-                )
+                refuse(entry, f"consensus needs {required} brains and "
+                    f"{len(agreeing)} agree ({', '.join(sorted(agreeing))})")
                 continue
 
         geometry = entry.before or {}
         price, stop = geometry.get("entry"), geometry.get("stop")
         target = geometry.get("target")
         if price is None or stop is None:
-            skipped.append(f"{entry.symbol}: the decision recorded no levels")
+            refuse(entry, "the decision recorded no levels")
             continue
 
         specification = specifications.get(traded_as)
         if not specification:
-            skipped.append(
-                f"{entry.symbol}: the terminal publishes no contract "
-                "specification, so the size cannot be computed from it"
-            )
+            refuse(entry, "the terminal publishes no contract "
+                "specification, so the size cannot be computed from it")
             continue
 
         # A decision from another feed carries that feed's prices, and the
@@ -1581,11 +1596,9 @@ def run_cycle(
         if entry.price_source != SOURCE_BROKER:
             reanchored = _levels_from_broker(geometry, specification, entry.decision)
             if reanchored is None:
-                skipped.append(
-                    f"{entry.symbol}: recorded on {entry.price_source} and the "
+                refuse(entry, f"recorded on {entry.price_source} and the "
                     "terminal publishes no quote to re-anchor it onto, so its "
-                    "levels would be another feed's prices"
-                )
+                    "levels would be another feed's prices")
                 continue
             price, stop, target = reanchored
 
@@ -1603,7 +1616,7 @@ def run_cycle(
             ),
         )
         if not clear:
-            skipped.append(f"{entry.symbol}: {news_reason}")
+            refuse(entry, f"{news_reason}")
             continue
 
         stop_distance = abs(float(price) - float(stop))
@@ -1621,26 +1634,22 @@ def run_cycle(
             equity * (verdict.permitted_risk_r or 0.0),
         )
         if headroom is None:
-            skipped.append(f"{entry.symbol}: {portfolio_reason}")
+            refuse(entry, f"{portfolio_reason}")
             continue
         risk_for_this = min(verdict.permitted_risk_r, headroom)
         if risk_for_this <= 0:
-            skipped.append(
-                f"{entry.symbol}: the book has no room left for it at this correlation"
-            )
+            refuse(entry, "the book has no room left for it at this correlation")
             continue
 
         spread_cost, spread_reason = _spread_cost_r(specification, stop_distance)
         if spread_cost is None:
-            skipped.append(f"{entry.symbol}: {spread_reason}")
+            refuse(entry, f"{spread_reason}")
             continue
         ceiling, ceiling_why = _cost_ceiling(edges, entry.timeframe)
         if spread_cost > ceiling:
-            skipped.append(
-                f"{entry.symbol}: spread and slippage cost {spread_cost:.3f} R "
+            refuse(entry, f"spread and slippage cost {spread_cost:.3f} R "
                 f"against a {ceiling:.3f} R ceiling - {ceiling_why}. The trade "
-                "starts further behind than it is expected to travel"
-            )
+                "starts further behind than it is expected to travel")
             continue
 
         # How much of the permitted risk this particular trade has earned.
@@ -1673,10 +1682,8 @@ def run_cycle(
             ],
         )
         if not judgement.allowed:
-            skipped.append(
-                f"{entry.symbol}: trade power {judgement.score}/100 "
-                f"({judgement.tier.label}) - " + "; ".join(judgement.blocks)
-            )
+            refuse(entry, f"trade power {judgement.score}/100 "
+                f"({judgement.tier.label}) - " + "; ".join(judgement.blocks))
             continue
         # The only line where conviction touches money, and it can only take
         # away: `risk_multiplier` is capped at 1.0, so this is a min() of the
@@ -1731,7 +1738,7 @@ def run_cycle(
                     ),
                 )
         if lots is None:
-            skipped.append(f"{entry.symbol}: {problem}")
+            refuse(entry, f"{problem}")
             continue
 
         try:
@@ -1775,7 +1782,7 @@ def run_cycle(
             # One malformed decision must not end the cycle for every
             # decision behind it. Named, because a side and a stop that
             # disagree is a recorder bug worth finding, not noise.
-            skipped.append(f"{entry.symbol}: {problem}")
+            refuse(entry, f"{problem}")
             continue
 
         # Written before the order is sent, not after. If this process dies
@@ -1901,6 +1908,21 @@ def run_cycle(
         # Held from this cycle on, so two decisions on one symbol inside a
         # single pass cannot both go through either.
         held.add(entry.symbol)
+
+    # One flush for every refusal this account made.
+    #
+    # Keyed by login beside the orders, because a decision refused for one
+    # account is often traded by another - the fleet is offered the same
+    # decisions and the gates answer per account. A single "refused" field
+    # would record whichever account happened to run last.
+    if refusals:
+        for candidate, reason in refusals.items():
+            during = dict(candidate.during or {})
+            book = dict(during.get("refused") or {})
+            book[login] = {"reason": reason, "at": moment.isoformat()}
+            during["refused"] = book
+            candidate.during = during
+        session.commit()
 
     return _report(
         mode=mode,
