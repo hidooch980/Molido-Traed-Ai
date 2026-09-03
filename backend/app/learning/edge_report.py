@@ -46,6 +46,90 @@ def horizon_instants(instants: int, bars: int, horizon_bars: int) -> int:
     return max(1, min(instants, round(horizon_bars * per_bar)))
 
 
+#: What one loaded bar costs. Measured with `tracemalloc` over 200,000 bars:
+#: 168 bytes for the object and 80 for its entry in the per-symbol index
+#: `measure` builds, so 249. Doubled here, because the measurement covers the
+#: series and not the per-instant lists the walk allocates on top of it, and
+#: because being wrong in the other direction is the silent kill this exists
+#: to prevent.
+#:
+#: Stated as a measurement because it was one. The first version of this
+#: constant was 1400, guessed, and it would have refused a two-year hourly run
+#: that in fact needs 0.12 GB - a guard that blocks the work it was meant to
+#: protect is worse than no guard.
+BYTES_PER_BAR = 500
+
+#: How much of what is free this run may plan to use. The rest is for the
+#: bootstrap's resampled lists and for whatever the host is already doing.
+MEMORY_HEADROOM = 0.5
+
+
+def available_bytes() -> int | None:
+    """Free memory on this host, or None when it cannot be read.
+
+    `MemAvailable` rather than `MemFree`: the kernel's own estimate of what a
+    new allocation can actually have, which counts reclaimable cache. Reading
+    `MemFree` here would refuse every run on a machine with a warm page cache.
+    """
+    try:
+        with open("/proc/meminfo", encoding="utf-8") as handle:
+            for line in handle:
+                if line.startswith("MemAvailable:"):
+                    return int(line.split()[1]) * 1024
+    except (OSError, ValueError, IndexError):
+        return None
+    return None
+
+
+def _refuse_if_too_large(
+    session: Any, *, provider: str, timeframe: Timeframe, start: datetime, end: datetime
+) -> dict[str, Any] | None:
+    """Count the bars first and refuse a load that will not fit.
+
+    Returns None when the run may proceed, or the refusal payload. Unknown
+    memory proceeds: a machine whose free memory cannot be read is not a
+    machine known to be short of it, and refusing there would make this
+    unrunnable in a container that hides /proc.
+    """
+    from sqlalchemy import func, select
+
+    from app.models.instruments import Provider
+    from app.models.market_data import Bar as StoredBar
+
+    provider_id = session.scalar(select(Provider.id).where(Provider.code == provider))
+    if provider_id is None:
+        return None
+    bars = session.scalar(
+        select(func.count())
+        .select_from(StoredBar)
+        .where(
+            StoredBar.provider_id == provider_id,
+            StoredBar.timeframe == timeframe,
+            StoredBar.event_time >= start,
+            StoredBar.event_time <= end,
+        )
+    )
+    free = available_bytes()
+    if not bars or free is None:
+        return None
+    needed = bars * BYTES_PER_BAR
+    if needed <= free * MEMORY_HEADROOM:
+        return None
+    return {
+        "available": False,
+        "reason": (
+            f"{bars:,} bars would need about {needed / 1024**3:.1f} GB and this "
+            f"host has {free / 1024**3:.1f} GB available. Refusing rather than "
+            "being killed halfway with no traceback, which reads like a run "
+            "that finished and found nothing. Narrow the window with --years, "
+            "use a coarser --timeframe, or run it somewhere with memory"
+        ),
+        "bars": bars,
+        "estimated_bytes": needed,
+        "available_bytes": free,
+    }
+
+
 def run(
     session: Any,
     *,
@@ -59,6 +143,16 @@ def run(
 ) -> dict[str, Any]:
     end = datetime.now(UTC)
     start = end - timedelta(days=365 * years)
+
+    # Counted before it is loaded, so a run that cannot fit says so instead of
+    # being killed halfway with no traceback - which reads exactly like a run
+    # that finished and found nothing. The threshold is deliberately generous:
+    # the two-year hourly series is 516,000 bars and needs about 0.12 GB, so
+    # this refuses nothing that a working host can do.
+    too_big = _refuse_if_too_large(session, provider=provider, timeframe=timeframe, start=start, end=end)
+    if too_big:
+        return too_big
+
     series = load_series(
         session, provider_code=provider, timeframe=timeframe, start=start, end=end
     )
