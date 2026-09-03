@@ -1,0 +1,10 @@
+[Unit]
+Description=Say what happened today, once, without being asked
+After=docker.service
+
+[Service]
+Type=oneshot
+# Exits zero when the chat channel is unconfigured: that is a state the
+# operator already knows about, and a timer that reports failure every
+# morning trains them to ignore it.
+ExecStart=/usr/bin/docker exec molidotrade-api-1 python -m app.ops.digest

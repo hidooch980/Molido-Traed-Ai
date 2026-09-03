@@ -1,0 +1,17 @@
+[Unit]
+Description=The daily digest, after the night jobs and before the day starts
+
+[Timer]
+# 06:30 Tehran, which is 03:00 UTC. After the nightly aggregation at 00:10
+# and the DNA sweep at 02:00, so the numbers it reports are the settled ones
+# rather than the ones being rewritten underneath it.
+#
+# Persistent, so a machine that was off at three still sends the digest when
+# it comes back. A summary that silently skips the day the server was down
+# is missing on exactly the day it was needed.
+OnCalendar=*-*-* 03:00:00 UTC
+Persistent=true
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target
