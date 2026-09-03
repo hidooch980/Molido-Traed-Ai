@@ -1,5 +1,6 @@
 import Link from "next/link";
 
+import { AccountPolicyForm } from "@/components/AccountPolicyForm";
 import { LiveTerminalPositions } from "@/components/LiveTerminalPositions";
 import { Empty, Offline, Panel, Stat, StatusBadge } from "@/components/ui";
 import { api } from "@/lib/api";
@@ -39,6 +40,12 @@ export default async function TerminalPage({
 
   const { account, positions, decisions, summary, state } = detail.data;
   const connected = account?.available === true;
+
+  // The account's own settings, fetched only when there is an account to
+  // settle them on. A terminal with nobody logged in has no login to key
+  // them by, and asking anyway would render a form that cannot be saved.
+  const login = connected ? String(account?.login ?? "") : "";
+  const policy = login ? await api.accountPolicy(login) : null;
 
   const money = (value: number | null | undefined, digits = 2) =>
     value === null || value === undefined
@@ -225,6 +232,33 @@ export default async function TerminalPage({
           </div>
         )}
       </Panel>
+
+      {policy?.ok && (
+        <Panel
+          title={t("accountPolicy.title")}
+          subtitle={t("accountPolicy.subtitle")}
+        >
+          <AccountPolicyForm
+            login={login}
+            initial={policy.data}
+            labels={{
+              title: t("accountPolicy.title"),
+              subtitle: t("accountPolicy.subtitle"),
+              risk: t("accountPolicy.risk"),
+              riskHint: t("accountPolicy.riskHint"),
+              brains: t("accountPolicy.brains"),
+              brainsHint: t("accountPolicy.brainsHint"),
+              inForce: t("accountPolicy.inForce"),
+              usingFleetDefault: t("accountPolicy.usingFleetDefault"),
+              save: t("accountPolicy.save"),
+              saving: t("accountPolicy.saving"),
+              saved: t("accountPolicy.saved"),
+              failed: t("accountPolicy.failed"),
+              cap: t("accountPolicy.cap"),
+            }}
+          />
+        </Panel>
+      )}
 
       <p className="text-xs ink-3">{detail.data.note}</p>
       {!connected && state?.reason && (

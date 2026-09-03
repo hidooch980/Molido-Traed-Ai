@@ -793,6 +793,27 @@ export interface Posture {
   note: string;
 }
 
+/** What one account trades and risks: what is stored, and what is in force. */
+export interface AccountPolicyView {
+  login: string;
+  /** Null when nothing is set for this account and the fleet's figures apply. */
+  stored: {
+    login: string;
+    strategies: string[];
+    risk_percent: number | null;
+    changed_by: string | null;
+    changed_at: string | null;
+  } | null;
+  in_force: {
+    risk_percent: number | null;
+    strategies: string[];
+    /** Why this account may not trade at all, when that is the case. */
+    refused: string | null;
+  };
+  available_strategies: string[];
+  max_risk_percent: number;
+}
+
 /** One terminal's own account, book and history - never the fleet's. */
 export interface TerminalDetail {
   terminal: string;
@@ -1278,6 +1299,10 @@ export const api = {
       ).toString()}`,
     ),
   brokers: () => request<BrokerView>("/api/v1/brokers"),
+  accountPolicy: (login: string) =>
+    request<AccountPolicyView>(
+      `/api/v1/execution/accounts/${encodeURIComponent(login)}/policy`,
+    ),
   terminalDetail: (terminal: string) =>
     request<TerminalDetail>(
       `/api/v1/brokers/terminals/${encodeURIComponent(terminal)}`,
