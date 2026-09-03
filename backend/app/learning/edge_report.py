@@ -130,6 +130,34 @@ def _refuse_if_too_large(
     }
 
 
+def without_flat_bars(
+    series: dict[str, list[Any]],
+) -> tuple[dict[str, list[Any]], int]:
+    """Drop bars with no range at all, and say how many.
+
+    Dukascopy's daily series carries a bar for every Saturday - 21,920 of
+    them - whose high equals its low exactly. Nothing traded; the bar is a
+    placeholder for a day the market was shut. Left in, it does two things,
+    both bad: it drags ATR down, which narrows every stop derived from it,
+    and it offers the ranking a close nobody could have transacted at, so
+    fourteen per cent of the measured entries are entries that could not have
+    been taken.
+
+    Zero range rather than the calendar, because the calendar is a guess about
+    which venue and which holidays, and a bar with no range is a fact about
+    the data. A real bar can print a zero range only if nothing traded in the
+    whole period, which at daily resolution is the same statement.
+    """
+    cleaned: dict[str, list[Any]] = {}
+    dropped = 0
+    for symbol, bars in series.items():
+        kept = [bar for bar in bars if float(bar.high) > float(bar.low)]
+        dropped += len(bars) - len(kept)
+        if kept:
+            cleaned[symbol] = kept
+    return cleaned, dropped
+
+
 def run(
     session: Any,
     *,
@@ -140,6 +168,7 @@ def run(
     hypotheses_tested: int,
     with_leave_one_out: bool,
     draws: int,
+    drop_flat: bool = False,
 ) -> dict[str, Any]:
     end = datetime.now(UTC)
     start = end - timedelta(days=365 * years)
@@ -158,6 +187,12 @@ def run(
     )
     if not series:
         return {"available": False, "reason": f"no {timeframe.value} bars from {provider}"}
+
+    dropped_flat = 0
+    if drop_flat:
+        series, dropped_flat = without_flat_bars(series)
+        if not series:
+            return {"available": False, "reason": "every bar in the window was flat"}
 
     universe = frozenset(series) & set(crosssection.RANKED_UNIVERSE or series)
     if not universe:
@@ -214,6 +249,7 @@ def run(
         "window": full.as_dict()["window"],
         "universe": sorted(universe),
         "leave_one_out_ran": with_leave_one_out,
+        "flat_bars_dropped": dropped_flat,
         "measurement": full.as_dict(),
         "robustness": report.as_dict(),
         "registry": {
@@ -238,7 +274,12 @@ def render(payload: dict[str, Any]) -> str:
         "",
         f"Rule:       {payload['rule']}",
         f"Series:     {payload['provider']} {payload['timeframe']}, "
-        f"{len(payload['universe'])} instruments",
+        f"{len(payload['universe'])} instruments"
+        + (
+            f", {payload['flat_bars_dropped']:,} flat bars dropped"
+            if payload.get("flat_bars_dropped")
+            else ""
+        ),
         f"Window:     {(m['window'] or ['?', '?'])[0]} to {(m['window'] or ['?', '?'])[1]}",
         "",
         "-" * 62,
@@ -355,6 +396,11 @@ def main(argv: list[str] | None = None) -> int:
         help="how many distinct hypotheses were tried to arrive at this one",
     )
     parser.add_argument("--leave-one-out", action="store_true")
+    parser.add_argument(
+        "--drop-flat-bars",
+        action="store_true",
+        help="drop bars whose high equals their low: a day nothing traded",
+    )
     parser.add_argument("--draws", type=int, default=5000)
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
@@ -380,6 +426,7 @@ def main(argv: list[str] | None = None) -> int:
             hypotheses_tested=args.hypotheses,
             with_leave_one_out=args.leave_one_out,
             draws=args.draws,
+            drop_flat=args.drop_flat_bars,
         )
 
     if args.json:
