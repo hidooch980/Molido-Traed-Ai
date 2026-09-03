@@ -294,12 +294,21 @@ def render(payload: dict[str, Any]) -> str:
 
     if payload["leave_one_out_ran"]:
         lines += ["", "  leave one instrument out:"]
-        for e in sorted(r["leave_one_out"], key=lambda x: x["edge_r"])[:8]:
+        measurable = [e for e in r["leave_one_out"] if e["measurable"]]
+        unmeasurable = [e for e in r["leave_one_out"] if not e["measurable"]]
+        for e in sorted(measurable, key=lambda x: x["edge_r"])[:8]:
             lines.append(
                 f"    without {e['without']:<10} edge {e['edge_r']:+.4f} R  t {e['t']:.2f}"
             )
-        if len(r["leave_one_out"]) > 8:
-            lines.append(f"    ... {len(r['leave_one_out']) - 8} more, all higher")
+        if len(measurable) > 8:
+            lines.append(f"    ... {len(measurable) - 8} more, all higher")
+        if unmeasurable:
+            lines.append(
+                f"    {len(unmeasurable)} removal(s) scored no instants at all: the "
+                "universe is at the ranking minimum, so taking one instrument out "
+                "leaves a cross-section `rank` refuses. Not a fragility - an "
+                "unanswerable question at this universe size"
+            )
 
     lines += [
         "",

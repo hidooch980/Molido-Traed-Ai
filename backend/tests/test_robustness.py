@@ -74,6 +74,16 @@ class TestSegmentsCutOnTheDecisionInstant:
 
         assert names == {"session:tokyo", "session:london", "session:overlap", "session:new-york"}
 
+    def test_a_cut_that_separates_nothing_is_not_reported(self):
+        """Daily bars are all stamped at midnight, so slicing them by session
+        puts every instant in one bucket and prints the headline number under
+        a heading that suggests it was tested."""
+        daily = [(START + timedelta(days=i), 0.2, 0.0) for i in range(400)]
+
+        assert rb.by_session(daily) == []
+        assert rb.by_hour(daily) == []
+        assert len(rb.by_weekday(daily)) == 7
+
     def test_a_thin_slice_is_marked_rather_than_dropped(self):
         sample = rows([1.0] * 10)
 
@@ -223,6 +233,23 @@ class TestLeaveOneOut:
 
         assert fragile == ["XAUUSD"]
         assert len(runs) == 3
+
+    def test_a_run_that_scored_nothing_is_not_a_run_that_scored_zero(self):
+        """On a universe already at the ranking minimum, every removal empties
+        every instant. Reading those zeroes as edges says the rule depends on
+        all twenty instruments at once, which is the absence of a finding
+        rather than a finding."""
+        universe = frozenset({"EURUSD", "GBPUSD", "XAUUSD"})
+
+        runs, fragile = rb.leave_one_out(
+            lambda remaining: measurement(rows([])) if True else None,
+            universe=universe,
+            full_edge=0.3,
+        )
+
+        assert fragile == []
+        assert all(not run.measurable for run in runs)
+        assert all(run.as_dict()["edge_r"] is None for run in runs)
 
     def test_an_edge_spread_across_instruments_names_nobody(self):
         universe = frozenset({"EURUSD", "GBPUSD", "XAUUSD"})

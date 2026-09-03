@@ -111,6 +111,13 @@ def segments(
     buckets: dict[str, list[Row]] = {}
     for row in rows:
         buckets.setdefault(key(row[0]), []).append(row)
+    if len(buckets) < 2:
+        # Not a cut. Daily bars are all stamped at midnight, so slicing them
+        # by hour puts every instant in one bucket and prints the headline
+        # number under a heading that suggests it was tested by session. A
+        # segmentation that separates nothing is worse than no segmentation:
+        # it looks like evidence.
+        return []
     out: list[Slice] = []
     for name, bucket in sorted(buckets.items()):
         edge, t, n = paired(bucket)
@@ -390,12 +397,25 @@ class Excluded:
     edge_r: float
     t: float
 
+    @property
+    def measurable(self) -> bool:
+        """Whether the run produced any evidence at all.
+
+        A run that scored no instants has an edge of exactly zero, and zero
+        here means "not measured", not "no edge". `rank` refuses a
+        cross-section thinner than its minimum, so on a universe already at
+        that minimum every removal empties every instant and the table fills
+        with confident zeroes that read as twenty fragilities.
+        """
+        return self.instants > 0
+
     def as_dict(self) -> dict[str, Any]:
         return {
             "without": self.symbol,
             "instants": self.instants,
-            "edge_r": round(self.edge_r, 4),
-            "t": round(self.t, 2),
+            "edge_r": round(self.edge_r, 4) if self.measurable else None,
+            "t": round(self.t, 2) if self.measurable else None,
+            "measurable": self.measurable,
         }
 
 
@@ -419,20 +439,27 @@ def leave_one_out(
     Returns the runs and the names whose removal takes the edge to zero or
     below: an edge that exists only in the presence of one instrument is a
     finding about that instrument.
+
+    **A run that scored nothing is not a run that scored zero.** `rank`
+    refuses a cross-section thinner than its minimum, so on a universe sitting
+    at that minimum every removal empties every instant, every run returns an
+    edge of exactly 0.0000, and the naive reading is that the edge depends on
+    all twenty instruments at once - which is not a finding, it is the
+    absence of one. Those runs are reported as unmeasurable and take no part
+    in the fragility verdict.
     """
     runs: list[Excluded] = []
     fragile: list[str] = []
     for symbol in sorted(universe):
         measurement = run(frozenset(universe - {symbol}))
-        runs.append(
-            Excluded(
-                symbol=symbol,
-                instants=measurement.instants,
-                edge_r=measurement.edge_r,
-                t=measurement.t_statistic,
-            )
+        excluded = Excluded(
+            symbol=symbol,
+            instants=measurement.instants,
+            edge_r=measurement.edge_r,
+            t=measurement.t_statistic,
         )
-        if full_edge > 0 and measurement.edge_r <= 0:
+        runs.append(excluded)
+        if excluded.measurable and full_edge > 0 and measurement.edge_r <= 0:
             fragile.append(symbol)
     return runs, fragile
 
