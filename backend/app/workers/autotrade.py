@@ -254,12 +254,60 @@ def _currencies_of(symbol: str) -> set[str]:
     """
     cleaned = "".join(c for c in symbol.upper() if c.isalpha())
     if len(cleaned) < 6:
+        # Not a pair. WTI, UKOIL, INTC and the indices are priced in one
+        # currency rather than two, and returning nothing here refused every
+        # one of them outright - eleven of the forty-nine candidates two
+        # accounts were offered in a single cycle, on instruments they could
+        # actually afford.
+        #
+        # Refusing is not the conservative answer it looks like. It is a claim
+        # that the exposure is unknown, when in fact these are quoted in the
+        # account's own currency and their exposure to that currency's
+        # releases is the plainest fact about them. The caller supplies it
+        # when it can; without it there is genuinely nothing to match on and
+        # the old refusal stands.
         return set()
     return {cleaned[:3], cleaned[3:6]}
 
 
+def _quoted_in_account_currency(
+    specification: dict[str, Any], account_currency: str | None
+) -> str | None:
+    """The account's currency, when the broker's own numbers say so.
+
+    The same identity the position sizing uses: a price quoted in the
+    account's currency moves the account by exactly the contract size per
+    lot, so `tick_value / tick_size` and `contract_size` agree. WTI agrees to
+    within a percent on this broker; EURUSD, priced in dollars on a dollar
+    account, agrees too - and that is not a problem, because a pair already
+    has its currencies read from its name and never reaches here.
+
+    Derived rather than listed. A hardcoded set of "these are dollar
+    instruments" is a list somebody has to remember to update the day the
+    broker adds a symbol, and the day they forget it fails silently.
+    """
+    if not account_currency:
+        return None
+    try:
+        tick_value = float(specification.get("tick_value") or 0.0)
+        tick_size = float(specification.get("tick_size") or 0.0)
+        contract_size = float(specification.get("contract_size") or 0.0)
+    except (TypeError, ValueError):
+        return None
+    if tick_value <= 0 or tick_size <= 0 or contract_size <= 0:
+        return None
+    per_unit = tick_value / tick_size
+    if abs(per_unit / contract_size - 1.0) <= 0.05:
+        return account_currency.upper()
+    return None
+
+
 def _news_gate(
-    symbol: str, moment: datetime, releases: list[dict[str, Any]] | None
+    symbol: str,
+    moment: datetime,
+    releases: list[dict[str, Any]] | None,
+    *,
+    quoted_in: str | None = None,
 ) -> tuple[bool, str]:
     """Whether a release is close enough to keep this symbol shut.
 
@@ -276,6 +324,10 @@ def _news_gate(
         )
 
     exposed = _currencies_of(symbol)
+    if not exposed and quoted_in:
+        # A single-currency instrument is exposed to that currency's calendar.
+        # This is a check where there was none, not a gate held open.
+        exposed = {quoted_in.upper()}
     if not exposed:
         return False, (
             f"{symbol} cannot be split into currencies, so its news exposure "
@@ -1537,7 +1589,19 @@ def run_cycle(
                 continue
             price, stop, target = reanchored
 
-        clear, news_reason = _news_gate(entry.symbol, moment, releases)
+        clear, news_reason = _news_gate(
+            entry.symbol,
+            moment,
+            releases,
+            # For an instrument with no two currencies in its name, the
+            # broker's own arithmetic says which single currency it is priced
+            # in. Without this the gate refused WTI, UKOIL and every share
+            # outright - not because a release was imminent, but because it
+            # could not tell.
+            quoted_in=_quoted_in_account_currency(
+                specification, str(published.get("currency") or "") or None
+            ),
+        )
         if not clear:
             skipped.append(f"{entry.symbol}: {news_reason}")
             continue
