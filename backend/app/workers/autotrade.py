@@ -184,7 +184,7 @@ def _feed_age_bars(published: dict[str, Any], moment: datetime) -> float | None:
     return minutes / max(DECISION_BAR_MINUTES, 1)
 
 
-def _authorise(state: Any, *, feed_age_bars: float | None) -> Any:
+def _authorise(state: Any, *, feed_age_bars: float | None, login: str | None = None) -> Any:
     """Ask the risk brain whether this cycle may open new risk.
 
     Health is reported honestly rather than flatteringly. `calibrated` and
@@ -197,7 +197,7 @@ def _authorise(state: Any, *, feed_age_bars: float | None) -> Any:
     from app.brain.risk import DataHealth, authorise
 
     return authorise(
-        requested_risk_r=_risk_percent() / 100.0,
+        requested_risk_r=_risk_percent(login) / 100.0,
         account=state,
         health=DataHealth(data_age_bars=feed_age_bars),
     )
@@ -652,7 +652,7 @@ def _account_state(
     # The day's P&L expressed in R, which is what the brain's limits are in.
     # One R is what a single trade risks, so a 3 R daily limit is three losing
     # trades - which is the unit the limit was written in.
-    one_r = equity * (_risk_percent() / 100.0)
+    one_r = equity * (_risk_percent(str(published.get("login") or "")) / 100.0)
     if one_r <= 0:
         return None, "the configured risk per trade is zero, so R is undefined"
     daily_pnl_r = (equity - float(day_open)) / one_r
@@ -1024,11 +1024,52 @@ def _bar_minutes(entry: JournalEntry) -> int:
         return DECISION_BAR_MINUTES
 
 
-def _risk_percent() -> float:
-    """What fraction of equity to put behind one stop, as the deployment set it."""
+#: The most any per-account override may ask for. A typo in an environment
+#: variable should cost a smaller position than intended, never a larger one
+#: than anybody would choose: `5` and `50` are one keystroke apart, and one of
+#: them is half the account behind a single stop.
+MAX_ACCOUNT_RISK_PERCENT = 5.0
+
+
+def _account_risk_overrides() -> dict[str, float]:
+    """The per-account risk table, as parsed. Unreadable entries are dropped.
+
+    A malformed entry is dropped rather than raised on, and named in the log
+    by the caller: an environment variable with a stray comma must not stop a
+    fleet from trading, and it must not silently become a different number
+    either.
+    """
     from app.core.config import get_settings
 
-    return float(getattr(get_settings(), "autotrade_risk_percent", RISK_PERCENT))
+    raw = str(getattr(get_settings(), "account_risk_percent", "") or "")
+    out: dict[str, float] = {}
+    for piece in raw.split(","):
+        if "=" not in piece:
+            continue
+        key, _, value = piece.partition("=")
+        try:
+            percent = float(value.strip())
+        except ValueError:
+            continue
+        if percent <= 0:
+            continue
+        out[key.strip()] = min(percent, MAX_ACCOUNT_RISK_PERCENT)
+    return out
+
+
+def _risk_percent(login: str | None = None) -> float:
+    """What fraction of equity to put behind one stop for this account.
+
+    The deployment's figure unless this account has an override. Capped, and
+    the cap is silent on purpose: it is a guard against a typo, not a policy
+    anybody sets by reaching it.
+    """
+    from app.core.config import get_settings
+
+    fleet = float(getattr(get_settings(), "autotrade_risk_percent", RISK_PERCENT))
+    if not login:
+        return fleet
+    return _account_risk_overrides().get(str(login), fleet)
 
 
 def _max_open_positions() -> int:
@@ -1261,7 +1302,7 @@ def run_cycle(
     # Bound once: the risk brain gates on it and the conviction step below
     # scores it, and computing it twice invites the two to disagree.
     feed_age_bars = _feed_age_bars(published, moment)
-    verdict = _authorise(state, feed_age_bars=feed_age_bars)
+    verdict = _authorise(state, feed_age_bars=feed_age_bars, login=login)
     if not verdict.approves:
         return _report(
             mode=mode,

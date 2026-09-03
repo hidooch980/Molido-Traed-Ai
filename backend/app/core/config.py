@@ -174,6 +174,20 @@ class Settings(BaseSettings):
     #: rather than the tail one. `account_gate` still refuses a real-money
     #: account whatever these say.
     autotrade_risk_percent: float = 0.25
+    #: Per-account risk, as "login=percent,login=percent". A login not named
+    #: here uses the figure above.
+    #:
+    #: This exists because the smallest trade a broker will accept is a fixed
+    #: size, not a fixed fraction: 0.01 lots of EURUSD behind a 26-pip stop
+    #: risks $2.60 whatever the account holds. A $50 account at 0.75% may
+    #: risk 38 cents, so every order it computes rounds to zero and it trades
+    #: nothing - not because a rule refused it but because arithmetic did.
+    #:
+    #: A single global figure cannot fix that. Raising it enough for the $50
+    #: account would put $10,000 behind every trade on the $196,000 one, and
+    #: the whole reason the fleet has both is that they are different
+    #: decisions. So the override is per account and touches nothing else.
+    account_risk_percent: str = ""
     autotrade_max_open_positions: int = 8
     #: Which brain each account trades, as "login=strategy,login=strategy".
     #: A login not named here trades the incumbent. A strategy name nothing
