@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 import AccountBarcode from "@/components/AccountBarcode";
 import AccountQr from "@/components/AccountQr";
 import { Offline, Panel, Stat, StatusBadge } from "@/components/ui";
@@ -147,7 +149,16 @@ export default async function BrokersPage() {
             <tbody>
               {Object.entries(b.metatrader.terminals).map(([key, term]) => (
                 <tr key={key}>
-                  <td className="font-semibold" dir="ltr">{key}</td>
+                  {/* The terminal's name is the way into its own page. This
+                      table answers "are they all alive"; the next question
+                      anybody asks is what *this* one is doing, and until now
+                      that meant reading three other pages and matching
+                      logins by eye. */}
+                  <td className="font-semibold" dir="ltr">
+                    <Link href={`/brokers/${key}`} className="underline underline-offset-2">
+                      {key}
+                    </Link>
+                  </td>
                   <td dir="ltr">
                     {term.available ? (
                       <span className="inline-flex flex-col gap-1 items-start">

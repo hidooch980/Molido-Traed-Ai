@@ -648,6 +648,37 @@ const en: Dictionary = {
   "posture.off": "off",
   "posture.authHint": "off is safe only while no endpoint changes state; the app refuses to start if one is added without it",
   "posture.blockers": "What is stopping it",
+  "terminalDetail.backToFleet": "Back to the fleet",
+  "terminalDetail.notConnected": "no account is connected to this terminal",
+  "terminalDetail.balance": "Balance",
+  "terminalDetail.equity": "Equity",
+  "terminalDetail.openPositions": "Open positions",
+  "terminalDetail.resolved": "Resolved, {days} days",
+  "terminalDetail.nothingResolved": "nothing has resolved yet",
+  "terminalDetail.hitRate": "{wins} of {resolved} won ({rate})",
+  "terminalDetail.positions": "What it holds now",
+  "terminalDetail.positionsSubtitle": "Read from this terminal's own bridge, not from a fleet-wide file",
+  "terminalDetail.noPositions": "nothing open",
+  "terminalDetail.decisions": "What it was offered",
+  "terminalDetail.decisionsSubtitle": "Decisions recorded under this account over {days} days, rule arm only",
+  "terminalDetail.noDecisions": "no decision has been recorded for this account yet",
+  "terminalDetail.symbol": "Symbol",
+  "terminalDetail.side": "Side",
+  "terminalDetail.volume": "Lots",
+  "terminalDetail.entry": "Entry",
+  "terminalDetail.stop": "Stop",
+  "terminalDetail.target": "Target",
+  "terminalDetail.reward": "R:R",
+  "terminalDetail.floating": "Floating",
+  "terminalDetail.opened": "Opened",
+  "terminalDetail.brain": "Brain",
+  "terminalDetail.timeframe": "Timeframe",
+  "terminalDetail.outcome": "Outcome",
+  "terminalDetail.buy": "buy",
+  "terminalDetail.sell": "sell",
+  "terminalDetail.win": "win",
+  "terminalDetail.loss": "loss",
+  "terminalDetail.stillOpen": "not answered yet",
   "posture.states": "Engine, halt, and orders",
   "posture.statesSubtitle": "Three states, never one. The engine keeps evaluating while orders are blocked.",
   "posture.engineState": "Engine",
@@ -1937,6 +1968,37 @@ const fa: Dictionary = {
   "posture.off": "خاموش",
   "posture.authHint": "خاموش‌بودنش تنها تا وقتی امن است که هیچ endpointی state را تغییر ندهد؛ اگر یکی اضافه شود، اپلیکیشن بدون آن بالا نمی‌آید",
   "posture.blockers": "چه چیزی جلویش را گرفته",
+  "terminalDetail.backToFleet": "بازگشت به ناوگان",
+  "terminalDetail.notConnected": "هیچ حسابی به این ترمینال وصل نیست",
+  "terminalDetail.balance": "موجودی",
+  "terminalDetail.equity": "ارزش خالص",
+  "terminalDetail.openPositions": "پوزیشن‌های باز",
+  "terminalDetail.resolved": "تعیین‌تکلیف‌شده، {days} روز",
+  "terminalDetail.nothingResolved": "هنوز چیزی تعیین تکلیف نشده",
+  "terminalDetail.hitRate": "{wins} از {resolved} برد ({rate})",
+  "terminalDetail.positions": "الان چه دارد",
+  "terminalDetail.positionsSubtitle": "از پل خودِ همین ترمینال خوانده شده، نه از فایل کل ناوگان",
+  "terminalDetail.noPositions": "چیزی باز نیست",
+  "terminalDetail.decisions": "چه به آن پیشنهاد شده",
+  "terminalDetail.decisionsSubtitle": "تصمیم‌های ثبت‌شده برای این حساب در {days} روز، فقط بازوی قاعده",
+  "terminalDetail.noDecisions": "هنوز تصمیمی برای این حساب ثبت نشده",
+  "terminalDetail.symbol": "نماد",
+  "terminalDetail.side": "جهت",
+  "terminalDetail.volume": "لات",
+  "terminalDetail.entry": "ورود",
+  "terminalDetail.stop": "حد ضرر",
+  "terminalDetail.target": "هدف",
+  "terminalDetail.reward": "نسبت",
+  "terminalDetail.floating": "شناور",
+  "terminalDetail.opened": "باز شده",
+  "terminalDetail.brain": "مغز",
+  "terminalDetail.timeframe": "تایم‌فریم",
+  "terminalDetail.outcome": "نتیجه",
+  "terminalDetail.buy": "خرید",
+  "terminalDetail.sell": "فروش",
+  "terminalDetail.win": "برد",
+  "terminalDetail.loss": "باخت",
+  "terminalDetail.stillOpen": "هنوز جواب نگرفته",
   "posture.states": "موتور، توقف، و سفارش‌ها",
   "posture.statesSubtitle": "سه وضعیت، نه یکی. موتور در حال ارزیابی می‌ماند حتی وقتی سفارش‌ها مسدودند.",
   "posture.engineState": "موتور",
@@ -2606,7 +2668,23 @@ export function translator(locale: Locale) {
   // English is the fallback rather than the key itself: showing a real English
   // sentence to a Turkish user is imperfect but usable; showing "dna.busiest"
   // is not.
-  return (key: string): string => dictionary[key] ?? en[key] ?? key;
+  //
+  // `vars` fills `{name}` placeholders. Without it a sentence with a number in
+  // the middle has to be built by concatenating three fragments in the page,
+  // which fixes English word order into every translation - and in a
+  // right-to-left language the fragments then come out in the wrong order for
+  // reasons nobody can see in the source. A placeholder lets each language put
+  // the number where that language puts it.
+  //
+  // A placeholder with no matching variable is left as it is, so a missing
+  // value shows up as `{days}` on the page rather than as a silent blank.
+  return (key: string, vars?: Record<string, string | number>): string => {
+    const message = dictionary[key] ?? en[key] ?? key;
+    if (!vars) return message;
+    return message.replace(/\{(\w+)\}/g, (whole, name: string) =>
+      name in vars ? String(vars[name]) : whole,
+    );
+  };
 }
 
 export function formatNumber(value: number, locale: Locale, digits = 2): string {

@@ -793,6 +793,54 @@ export interface Posture {
   note: string;
 }
 
+/** One terminal's own account, book and history - never the fleet's. */
+export interface TerminalDetail {
+  terminal: string;
+  state: { usable?: boolean; reason?: string | null };
+  account: {
+    available?: boolean;
+    login?: number | string;
+    server?: string;
+    balance?: number;
+    equity?: number;
+    currency?: string;
+    reason?: string;
+  } | null;
+  positions: Array<{
+    ticket: number | string;
+    symbol: string;
+    side: string;
+    volume: number;
+    price_open: number;
+    stop: number | null;
+    target: number | null;
+    profit: number;
+  }>;
+  decisions: Array<{
+    id: string;
+    symbol: string;
+    decision: string;
+    strategy: string | null;
+    timeframe: string | null;
+    opened_at: string | null;
+    closed_at: string | null;
+    outcome: string | null;
+    r_multiple: number | null;
+    price_source: string | null;
+  }>;
+  summary: {
+    days: number;
+    decisions: number;
+    resolved: number;
+    open: number;
+    wins: number;
+    hit_rate: number | null;
+    total_r: number;
+    average_r: number | null;
+  };
+  note: string;
+}
+
 export interface ReadinessCheck {
   name: string;
   grade: "blocking" | "important" | "advisory";
@@ -1226,6 +1274,10 @@ export const api = {
       ).toString()}`,
     ),
   brokers: () => request<BrokerView>("/api/v1/brokers"),
+  terminalDetail: (terminal: string) =>
+    request<TerminalDetail>(
+      `/api/v1/brokers/terminals/${encodeURIComponent(terminal)}`,
+    ),
   rulebooks: () => request<RulebookView>("/api/v1/risk/rulebooks"),
   executionPolicy: () => request<ExecutionPolicyView>("/api/v1/execution/policy"),
   accounts: () => request<AccountsView>("/api/v1/execution/accounts"),

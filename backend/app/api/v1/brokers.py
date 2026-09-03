@@ -15,16 +15,21 @@ in writing. So this reports connections, not candidates.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import structlog
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from app.api.deps import Principal, require
 from app.brain import rulebooks as rulebook_module
 from app.core.config import get_settings
 from app.core.enums import Permission
+from app.core.errors import ValidationFailedError
+from app.db.session import get_db
 from app.execution import broker as broker_module
 from app.providers.metatrader import MetaTraderBridge, bridge_dirs
 from app.services import mt5_link
@@ -378,3 +383,103 @@ def read_metatrader(_: Principal = READ) -> dict[str, Any]:
     payload["positions"] = bridge.positions()
     payload["next_step"] = None
     return payload
+
+
+@router.get("/terminals/{terminal}")
+def read_terminal_detail(
+    terminal: str,
+    session: Session = Depends(get_db),
+    days: int = Query(default=30, ge=1, le=365),
+    _: Principal = READ,
+) -> dict[str, Any]:
+    """One terminal: its account, what it holds, and what it has done.
+
+    The fleet table answers "are they all alive". It cannot answer the next
+    question anybody asks, which is "what is *this* one doing" - and that was
+    reachable only by reading three other pages and matching logins by eye.
+
+    Everything here is read for this terminal alone. The positions come from
+    its own bridge rather than from a fleet-wide file, because a fleet-wide
+    read attributes a position to whichever terminal happened to be first.
+    The decisions come from the journal filtered by this account's key, which
+    is how the cycle records them, so what shows here is what this account was
+    actually offered rather than what the fleet was.
+    """
+    from app.models.journal import ARM_RULE, JournalEntry
+    from app.providers.metatrader import MetaTraderBridge, bridge_dirs
+
+    directories = bridge_dirs()
+    if terminal not in directories:
+        raise ValidationFailedError(
+            f"no terminal is registered under {terminal!r}. Known: "
+            + ", ".join(sorted(directories))
+        )
+
+    bridge = MetaTraderBridge(directory=directories[terminal])
+    state = bridge.state()
+    account = bridge.account() if state.usable else {"available": False, "reason": state.reason}
+    positions = bridge.positions() if state.usable else {"positions": []}
+    login = str(account.get("login") or "") if account.get("available") else ""
+
+    # The account key the cycle writes decisions under. `terminal` is that key
+    # in this deployment; looked up rather than assumed so a rename shows as a
+    # missing history instead of somebody else's.
+    rows: list[dict[str, Any]] = []
+    if login:
+        since = datetime.now(UTC) - timedelta(days=days)
+        entries = (
+            session.execute(
+                select(JournalEntry)
+                .where(
+                    JournalEntry.account_key == terminal,
+                    JournalEntry.arm == ARM_RULE,
+                    JournalEntry.opened_at >= since,
+                )
+                .order_by(JournalEntry.opened_at.desc())
+                .limit(200)
+            )
+            .scalars()
+            .all()
+        )
+        for entry in entries:
+            rows.append(
+                {
+                    "id": str(entry.id),
+                    "symbol": entry.symbol,
+                    "decision": entry.decision,
+                    "strategy": entry.strategy,
+                    "timeframe": entry.timeframe,
+                    "opened_at": entry.opened_at.isoformat() if entry.opened_at else None,
+                    "closed_at": entry.closed_at.isoformat() if entry.closed_at else None,
+                    "outcome": entry.outcome,
+                    "r_multiple": entry.r_multiple,
+                    "price_source": entry.price_source,
+                }
+            )
+
+    resolved = [r for r in rows if r["outcome"]]
+    wins = [r for r in resolved if r["outcome"] == "win"]
+    total_r = sum(float(r["r_multiple"] or 0.0) for r in resolved)
+
+    return {
+        "terminal": terminal,
+        "state": state.as_dict(),
+        "account": account,
+        "positions": positions.get("positions") or [],
+        "decisions": rows,
+        "summary": {
+            "days": days,
+            "decisions": len(rows),
+            "resolved": len(resolved),
+            "open": len(rows) - len(resolved),
+            "wins": len(wins),
+            "hit_rate": round(len(wins) / len(resolved), 4) if resolved else None,
+            "total_r": round(total_r, 3),
+            "average_r": round(total_r / len(resolved), 4) if resolved else None,
+        },
+        "note": (
+            "positions are read from this terminal's own bridge and decisions "
+            "from the journal under this account's key, so neither is the "
+            "fleet's answer attributed to one member of it"
+        ),
+    }
