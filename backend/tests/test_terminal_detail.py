@@ -29,13 +29,21 @@ def client(session):
 
 
 def bridge_dir(tmp_path, key: str, *, login: str, positions: list[dict]):
-    """A directory shaped like a terminal's Common\\Files."""
+    """A directory shaped like a live terminal's Common Files folder.
+
+    The heartbeat and the account are stamped with the real clock, not
+    with NOW. The bridge measures staleness against `datetime.now`, so a
+    fixture that hard-codes a timestamp is a test that passes until the
+    wall clock walks past it - these went green all morning and turned
+    red at 12:22, with nothing between but time.
+    """
+    published_now = datetime.now(UTC).strftime("%Y.%m.%d %H:%M:%S")
     directory = tmp_path / key
     directory.mkdir(parents=True, exist_ok=True)
     (directory / "molido_account.json").write_text(
         json.dumps(
             {
-                "published_at": NOW.strftime("%Y.%m.%d %H:%M:%S"),
+                "published_at": published_now,
                 "login": int(login),
                 "server": "MetaQuotes-Demo",
                 "company": "MetaQuotes Ltd.",
@@ -58,7 +66,7 @@ def bridge_dir(tmp_path, key: str, *, login: str, positions: list[dict]):
     (directory / "molido_heartbeat.json").write_text(
         json.dumps(
             {
-                "published_at": NOW.strftime("%Y.%m.%d %H:%M:%S"),
+                "published_at": published_now,
                 "connected": True,
                 "trade_allowed": True,
                 "refresh_seconds": 20,

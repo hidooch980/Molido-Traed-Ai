@@ -148,3 +148,50 @@ class TestItNamesItself:
         )
 
         assert "JPY" in " ".join(verdict.breaches)
+
+
+class TestItReportsTheWorstBreachNotTheFirst:
+    def test_the_deeper_pile_is_the_one_named(self):
+        """The live book was three deep on USD and seven deep on JPY, both at
+        zero headroom, and it reported USD. True, and not the sentence
+        somebody needs to read."""
+        book = [
+            leg("XAGUSD", "sell"),   # long USD
+            leg("AUDUSD", "sell"),   # long USD
+            leg("AUDJPY", "buy"),    # short JPY
+            leg("EURJPY", "buy"),
+            leg("CHFJPY", "buy"),
+            leg("GBPJPY", "buy"),
+            leg("NZDJPY", "buy"),
+            leg("CADJPY", "buy"),
+        ]
+
+        verdict = portfolio.evaluate(
+            symbol="USDJPY",
+            direction="buy",  # long USD and short JPY at once
+            proposed_risk_r=0.04,
+            positions=book,
+            base_currency="USD",
+            quote_currency="JPY",
+        )
+
+        assert not verdict.allowed
+        assert "currency-count:JPY" in " ".join(verdict.breaches)
+
+    def test_a_currency_inside_the_limit_never_caps_a_trade(self):
+        """A count headroom compared against headrooms measured in R would
+        make "one position of room" cap a trade at 1.0 R, which is a limit
+        nobody chose and a unit nobody meant."""
+        book = [leg("EURUSD", "buy", risk_r=0.5)]
+
+        verdict = portfolio.evaluate(
+            symbol="EURJPY",
+            direction="buy",
+            proposed_risk_r=1.5,
+            positions=book,
+            base_currency="EUR",
+            quote_currency="JPY",
+        )
+
+        assert verdict.allowed
+        assert verdict.max_additional_risk_r == 1.5

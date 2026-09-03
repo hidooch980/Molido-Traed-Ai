@@ -215,11 +215,26 @@ def evaluate(
             if held_currency == currency and held_leg != 0 and (held_leg > 0) == (leg > 0)
         )
         if same_side >= MAX_SAME_CURRENCY_POSITIONS:
-            # Expressed as zero headroom rather than as its own veto, so it
-            # travels the same path as every other limit: one reported cause,
-            # one place that decides, and a caller that cannot forget to check
-            # this one.
-            headrooms.append((f"currency-count:{currency}", 0.0))
+            # Expressed as headroom rather than as its own veto, so it travels
+            # the same path as every other limit: one reported cause, one place
+            # that decides, and a caller that cannot forget to check this one.
+            #
+            # The value is how far past the limit this currency already is,
+            # negative, rather than a flat zero. `min` then reports the worst
+            # breach instead of whichever was appended first - the live book
+            # was three deep on USD and seven deep on JPY, both at zero
+            # headroom, and it named USD. That is true and it is not the
+            # sentence somebody needs to read.
+            #
+            # Only added when it is breached. A positive count headroom would
+            # be compared against headrooms measured in R, and "1 position of
+            # room" would cap a trade at 1.0 R for no reason anybody chose.
+            headrooms.append(
+                (
+                    f"currency-count:{currency}",
+                    float(MAX_SAME_CURRENCY_POSITIONS - same_side),
+                )
+            )
 
     limiting_name, headroom = min(headrooms, key=lambda item: item[1])
     headroom = max(0.0, headroom)
