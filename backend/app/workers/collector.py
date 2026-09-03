@@ -81,6 +81,11 @@ class CycleReport:
     started_at: datetime
     entries: int = 0
     skipped_closed: int = 0
+    #: Entries whose next bar cannot have closed yet, so a fetch was certain
+    #: to return nothing. Counted separately from `skipped_closed`: one is a
+    #: shut market, the other is a clock, and conflating them would hide
+    #: whichever was actually happening.
+    skipped_fresh: int = 0
     ingested: int = 0
     written: int = 0
     features_written: int = 0
@@ -147,6 +152,35 @@ def run_cycle(entries: list[WatchEntry] | None = None) -> CycleReport:
                     log.debug("collector.skipped_closed", symbol=entry.symbol)
                     continue
 
+                # A bar that cannot have closed yet has nothing to fetch.
+                #
+                # The cycle runs every fifteen minutes and asked every entry
+                # for data every time, whatever its timeframe. A daily bar
+                # closes once a day and was being fetched ninety-six times;
+                # an hourly bar four times an hour. Measured across the
+                # watchlist that was 4,869 of 10,848 fetches a day - forty-five
+                # per cent - each one a network round trip the cycle waited
+                # for, and each one certain in advance to return nothing new.
+                #
+                # The margin is deliberate. `last_event_time` is the last bar
+                # this provider gave us, so the next one closes an interval
+                # after it; waiting only one interval starts fetching before
+                # that, which over-fetches slightly rather than risking a
+                # missed bar. A late-arriving bar self-heals for the same
+                # reason: if the provider has not yet handed over a bar that
+                # closed, our watermark stays old and the entry keeps being
+                # fetched until it arrives.
+                fresh_until = _fresh_until(session, instrument, entry)
+                if fresh_until is not None and now < fresh_until:
+                    report.skipped_fresh += 1
+                    log.debug(
+                        "collector.skipped_fresh",
+                        symbol=entry.symbol,
+                        timeframe=entry.timeframe.value,
+                        next_possible_bar=fresh_until.isoformat(),
+                    )
+                    continue
+
                 provider_row = ingestion.get_or_create_provider(
                     session,
                     code=provider.code,
@@ -205,6 +239,28 @@ def run_cycle(entries: list[WatchEntry] | None = None) -> CycleReport:
         )
     log.info("collector.cycle_complete", **report.as_payload())
     return report
+
+
+def _fresh_until(session, instrument: Instrument, entry: WatchEntry) -> datetime | None:
+    """When this entry could next have a new closed bar - None if unknown.
+
+    None on purpose for an instrument nothing has been ingested for yet: an
+    unknown watermark must read as "fetch it", never as "it is fresh".
+    """
+    from app.models.ingestion import IngestionCheckpoint
+
+    checkpoint = session.scalar(
+        select(IngestionCheckpoint).where(
+            IngestionCheckpoint.instrument_id == instrument.id,
+            IngestionCheckpoint.timeframe == entry.timeframe,
+        )
+    )
+    if checkpoint is None or checkpoint.last_event_time is None:
+        return None
+    last = checkpoint.last_event_time
+    if last.tzinfo is None:
+        last = last.replace(tzinfo=UTC)
+    return last + entry.timeframe.delta
 
 
 def _window_start(
