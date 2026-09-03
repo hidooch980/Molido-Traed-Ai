@@ -245,7 +245,14 @@ def authorise(
     if not health.calibrated:
         reduce_to(0.5, "no calibrated probability for this source — risk halved")
     if not health.training_eligible:
-        reduce_to(0.5, "dataset failed the quality gate — risk halved")
+        # "failed the quality gate" was a false report and it cost real time.
+        # Both of these default to False meaning *not established*, and the
+        # cycle never sets them, so this fires on every order of every day.
+        # Reading it, an operator goes looking for the dataset that failed and
+        # the gate that failed it, and neither exists: nothing was evaluated.
+        # A reduction has to name its own cause accurately or it sends the
+        # person who reads it somewhere else.
+        reduce_to(0.5, "no dataset has passed the quality gate yet — risk halved")
     if health.correlation_unknown:
         reduce_to(
             0.75,

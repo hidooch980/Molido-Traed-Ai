@@ -1749,6 +1749,25 @@ def run_cycle(
                     "fill": report.average_price,
                     "reason": report.reason,
                     "at": moment.isoformat(),
+                    # Why this size, and not the configured one.
+                    #
+                    # The record held lots and a fill and nothing else, so
+                    # "why is this position a twenty-fifth of the configured
+                    # risk?" could only be answered by re-deriving the whole
+                    # chain from source against a live account - which is
+                    # what it took the day somebody asked. Every step that
+                    # took something away is written down here instead, in
+                    # the order it was applied, so the answer is in the row.
+                    "sizing": {
+                        "configured_risk_r": round(_risk_percent(login) / 100.0, 6),
+                        "after_risk_brain_r": round(verdict.permitted_risk_r, 6),
+                        "after_portfolio_r": round(permitted_before_conviction, 6),
+                        "after_conviction_r": round(risk_for_this, 6),
+                        "conviction_multiplier": round(judgement.risk_multiplier, 4),
+                        # The brain's own words for what it took away.
+                        "reductions": list(verdict.reductions or []),
+                        "money_at_risk": round(equity * risk_for_this, 2),
+                    },
                 },
             },
         }
