@@ -32,7 +32,7 @@ from app.core.errors import ValidationFailedError
 from app.db.session import get_db
 from app.execution import broker as broker_module
 from app.providers.metatrader import MetaTraderBridge, bridge_dirs
-from app.services import mt5_link
+from app.services import mt5_link, terminal_names
 
 router = APIRouter(prefix="/brokers", tags=["brokers"])
 
@@ -70,6 +70,16 @@ class ClearPayload(BaseModel):
     """Log one terminal out. Names its terminal, carries no credential."""
 
     terminal: str = Field(min_length=2, max_length=32)
+
+
+class NamePayload(BaseModel):
+    """What to call a terminal. Decoration, and nothing else.
+
+    Blank clears the name and the terminal shows under its key again, which
+    is what it did before anybody named it. There is no separate delete.
+    """
+
+    label: str = Field(default="", max_length=60)
 
 #: Where MetaTrader lives on the host. The application runs in a container and
 #: cannot see it, which is itself worth reporting rather than hiding: a bridge
@@ -142,6 +152,12 @@ def _metatrader_summary() -> dict[str, Any]:
     for key, path in sorted(bridge_dirs().items()):
         each = MetaTraderBridge(directory=path)
         account = each.account()
+        # The operator's own name for this terminal, carried beside its
+        # account rather than in place of it. `term-e` is unique and says
+        # nothing; "cent 500" says which money this is. The key stays in
+        # the payload because every log line, directory and other page is
+        # named after it, and a reader given only the label cannot get back.
+        account["label"] = terminal_names.label_for(key)
         terminals[key] = account
         # `connected` lives inside the bridge state, not beside the balance.
         if account.get("available") and account.get("state", {}).get("connected"):
@@ -504,6 +520,7 @@ def read_terminal_detail(
 
     return {
         "terminal": terminal,
+        "label": terminal_names.label_for(terminal),
         "state": state.as_dict(),
         "account": account,
         "positions": positions.get("positions") or [],
@@ -525,3 +542,56 @@ def read_terminal_detail(
             "recorded once and shown to every account"
         ),
     }
+
+
+@router.put("/terminals/{terminal}/name")
+def write_terminal_name(
+    terminal: str,
+    payload: NamePayload,
+    session: Session = Depends(get_db),
+    principal: Principal = BROKER_MANAGE,
+) -> dict[str, Any]:
+    """Rename a terminal, or clear the name with a blank one.
+
+    Behind BROKER_MANAGE for the same reason connecting one is: this is
+    configuration authority, not trading authority. It is a display name and
+    it still decides which row an operator reaches for at two in the morning,
+    which is close enough to money to keep behind the same door.
+
+    The terminal must be one that exists. A row for a key nothing publishes
+    would sit in the table naming nothing, and the day that key is reused by
+    a different account it would name that instead - a stale label on live
+    money is worse than no label at all.
+    """
+    from app.models.terminal_name import TerminalName
+
+    known = bridge_dirs()
+    if terminal not in known:
+        raise ValidationFailedError(
+            f"no terminal is registered under {terminal!r}. Known: "
+            + ", ".join(sorted(known))
+        )
+
+    label = terminal_names.clean(payload.label, terminal=terminal, known=known)
+    row = session.scalar(select(TerminalName).where(TerminalName.terminal == terminal))
+    if not label:
+        # Cleared rather than stored empty, so "has no name" is one state in
+        # the table instead of two that have to agree.
+        if row is not None:
+            session.delete(row)
+        session.commit()
+        terminal_names.invalidate()
+        return {"terminal": terminal, "label": None, "stored": None}
+
+    if row is None:
+        row = TerminalName(terminal=terminal)
+        session.add(row)
+    row.label = label
+    row.changed_by = str(getattr(principal, "subject", "") or "")[:120]
+    session.commit()
+
+    # Otherwise the operator saves, sees the old name for twenty seconds, and
+    # reasonably concludes it did not save.
+    terminal_names.invalidate()
+    log.info("terminal.renamed", terminal=terminal, label=label)
+    return {"terminal": terminal, "label": label, "stored": row.as_dict()}

@@ -70,11 +70,28 @@ class Digest:
         """The message a person reads on a phone."""
         lines: list[str] = []
 
+        def named(key: str) -> str:
+            """`term-e` with whatever the operator calls it, if anything.
+
+            Both, not either. The label is what tells a half-awake reader
+            which account this is; the key is what every page, log line and
+            directory is named after, and a message giving only the label
+            leaves them with nothing to search for.
+            """
+            try:
+                from app.services import terminal_names
+
+                label = terminal_names.label_for(key)
+            except Exception:  # noqa: BLE001 - a digest never raises at 6am
+                label = None
+            return f"{label} ({key})" if label else str(key)
+
         # Trouble first. A digest that led with yesterday's profit while a
         # terminal was down would bury the only line worth acting on.
         if self.silent_terminals:
             lines.append(
-                "⚠ not publishing: " + ", ".join(sorted(self.silent_terminals))
+                "⚠ not publishing: "
+                + ", ".join(named(key) for key in sorted(self.silent_terminals))
             )
             lines.append("")
 
@@ -84,7 +101,7 @@ class Digest:
                 orders = row.get("orders", 0)
                 what = f"{orders} order(s)" if orders else "no orders"
                 lines.append(
-                    f"  {row['terminal']}  equity {row['equity']:,.2f}"
+                    f"  {named(row['terminal'])}  equity {row['equity']:,.2f}"
                     f"  {row['positions']} open  {what}"
                 )
             lines.append("")

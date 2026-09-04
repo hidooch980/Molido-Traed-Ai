@@ -2,6 +2,7 @@ import Link from "next/link";
 
 import { AccountPolicyForm } from "@/components/AccountPolicyForm";
 import { LiveTerminalPositions } from "@/components/LiveTerminalPositions";
+import { TerminalNameForm } from "@/components/TerminalNameForm";
 import { Empty, Offline, Panel, Stat, StatusBadge } from "@/components/ui";
 import { api } from "@/lib/api";
 import { getT } from "@/lib/locale";
@@ -38,7 +39,7 @@ export default async function TerminalPage({
 
   if (!detail.ok) return <Offline error={detail.error} />;
 
-  const { account, positions, decisions, summary, state } = detail.data;
+  const { account, positions, decisions, summary, state, label } = detail.data;
   const connected = account?.available === true;
 
   // The account's own settings, fetched only when there is an account to
@@ -63,10 +64,20 @@ export default async function TerminalPage({
     <div className="space-y-6">
       <header className="page-header">
         <div className="min-w-0">
-          <h1 className="display" dir="ltr">
-            {terminal}
+          {/* The operator's name leads when there is one, and the key stays
+              directly under it. Not either/or: the label is what identifies
+              the account to a person, and the key is what the logs, the
+              bridge directory and every other page are named after. */}
+          <h1 className="display" dir={label ? undefined : "ltr"}>
+            {label || terminal}
           </h1>
           <p className="page-lede">
+            {label && (
+              <>
+                <span dir="ltr">{terminal}</span>
+                {" · "}
+              </>
+            )}
             {connected
               ? `${account?.login} · ${account?.server}`
               : t("terminalDetail.notConnected")}
@@ -231,6 +242,25 @@ export default async function TerminalPage({
             </table>
           </div>
         )}
+      </Panel>
+
+      <Panel
+        title={t("terminalName.title")}
+        subtitle={t("terminalName.subtitle")}
+      >
+        <TerminalNameForm
+          terminal={terminal}
+          initial={label}
+          labels={{
+            field: t("terminalName.field"),
+            hint: t("terminalName.hint"),
+            placeholder: terminal,
+            save: t("terminalName.save"),
+            saving: t("terminalName.saving"),
+            saved: t("terminalName.saved"),
+            failed: t("terminalName.failed"),
+          }}
+        />
       </Panel>
 
       {policy?.ok && (

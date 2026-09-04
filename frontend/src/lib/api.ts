@@ -426,6 +426,10 @@ export interface BrokerView {
       {
         available: boolean;
         reason?: string;
+        /** What the operator calls this terminal, if they have named it.
+         *  Decoration: the key it is filed under stays the identity, and
+         *  nothing routes on this. */
+        label?: string | null;
         login?: number;
         server?: string | null;
         currency?: string | null;
@@ -817,6 +821,8 @@ export interface AccountPolicyView {
 /** One terminal's own account, book and history - never the fleet's. */
 export interface TerminalDetail {
   terminal: string;
+  /** The operator's own name for it, or null if it has never been named. */
+  label: string | null;
   state: { usable?: boolean; reason?: string | null };
   account: {
     available?: boolean;

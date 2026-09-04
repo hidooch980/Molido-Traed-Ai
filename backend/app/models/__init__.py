@@ -30,10 +30,12 @@ from app.models.recovery_codes import RecoveryCode
 from app.models.symbol_dna import SymbolProfile
 from app.models.telegram_config import TelegramConfig
 from app.models.tenancy import ApiKey, Tenant, User
+from app.models.terminal_name import TerminalName
 from app.models.terminals import Terminal
 
 __all__ = [
     "AccountPolicy",
+    "TerminalName",
     "HumanChallenge",
     "Incident",
     "JournalEntry",

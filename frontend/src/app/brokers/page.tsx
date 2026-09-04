@@ -154,10 +154,23 @@ export default async function BrokersPage() {
                       anybody asks is what *this* one is doing, and until now
                       that meant reading three other pages and matching
                       logins by eye. */}
-                  <td className="font-semibold" dir="ltr">
-                    <Link href={`/brokers/${key}`} className="underline underline-offset-2">
-                      {key}
+                  <td className="font-semibold">
+                    <Link
+                      href={`/brokers/${key}`}
+                      className="underline underline-offset-2"
+                      dir={term.label ? undefined : "ltr"}
+                    >
+                      {term.label || key}
                     </Link>
+                    {/* The key stays under the name rather than being
+                        replaced by it. A row that reads only "cent 500"
+                        leaves nothing to search the logs or the bridge
+                        directories for. */}
+                    {term.label && (
+                      <span className="block text-xs ink-3" dir="ltr">
+                        {key}
+                      </span>
+                    )}
                   </td>
                   <td dir="ltr">
                     {term.available ? (
