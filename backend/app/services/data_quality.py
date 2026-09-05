@@ -764,7 +764,47 @@ def persist_findings(
 #: re-check over the window alone would be a different, weaker test wearing
 #: the same name. `provider_conflict` needs a second provider's series.
 RECHECKABLE: frozenset[DataQualityIssue] = frozenset(
-    {DataQualityIssue.INVALID_OHLC_RELATION, DataQualityIssue.NON_POSITIVE_PRICE}
+    {
+        DataQualityIssue.INVALID_OHLC_RELATION,
+        DataQualityIssue.NON_POSITIVE_PRICE,
+        # Re-checkable because `compare_providers` already reads the bars back
+        # out of storage rather than comparing an ingestion batch, so the
+        # question "do these feeds still disagree at this instant" can be put
+        # to the data as it stands. It was excluded on the assumption that a
+        # conflict needed more than the window it names; it needs exactly the
+        # window it names, from every provider that stored it.
+        DataQualityIssue.PROVIDER_CONFLICT,
+    }
+)
+
+#: Which issues make a dataset untrustworthy to train on.
+#:
+#: Separate from severity, because they answer different questions. Severity
+#: is how bad the thing that happened was; this is whether it says the stored
+#: data is wrong. Conflating them made `duplicate_bar` - an ERROR - gate
+#: training eligibility, and `duplicate_bar` reports that a provider's
+#: *batch* carried one timestamp twice. Storage keys bars by revision and
+#: de-duplicates, so the rows a reader gets are correct either way: the
+#: finding is about the provider's transport hygiene and says nothing about
+#: the data anyone reads.
+#:
+#: It is also the one finding that can never be re-checked - the batch is
+#: gone - so as a gate it was a check that could not be false and could not
+#: be closed. That is not a check, it is a permanent penalty. It still costs
+#: quality score, which is the right place for it: worth seeing, not worth
+#: blocking on.
+#:
+#: 27 of the 38 datasets that could never become eligible were held by this
+#: alone.
+BLOCKING_ISSUES: frozenset[DataQualityIssue] = frozenset(
+    {
+        DataQualityIssue.INVALID_OHLC_RELATION,
+        DataQualityIssue.NON_POSITIVE_PRICE,
+        DataQualityIssue.PROVIDER_CONFLICT,
+        DataQualityIssue.STALE_DATA,
+        DataQualityIssue.INVALID_TIMESTAMP,
+        DataQualityIssue.NON_MONOTONIC_TIMESTAMP,
+    }
 )
 
 #: How many findings one re-evaluation settles.
@@ -812,6 +852,58 @@ def _newest_stored_bar(
         close=float(row.close),
         volume=None if row.volume is None else float(row.volume),
     )
+
+
+def _conflicts_at(
+    session: Session,
+    instrument_id: uuid.UUID,
+    timeframe: Timeframe,
+    event_time: datetime,
+) -> bool | None:
+    """Do the stored feeds still disagree at this instant?
+
+    True, False, or None when the question cannot be put - fewer than two
+    providers hold that instant any more, so there is nothing left to
+    disagree. None keeps the finding open rather than closing it: a conflict
+    that vanished because a feed was deleted has not been resolved, it has
+    been forgotten, and those need to look different to whoever reads the
+    table.
+
+    Re-runs `detect_provider_conflicts`, the same detector that raised it,
+    over the newest revision each provider holds. A second implementation of
+    the same test would drift, and the drift would show up as bad data
+    quietly readmitted.
+    """
+    from app.models.instruments import Provider
+    from app.models.market_data import Bar
+
+    rows = session.execute(
+        select(Provider.code, Bar.event_time, Bar.open, Bar.high, Bar.low, Bar.close)
+        .join(Provider, Provider.id == Bar.provider_id)
+        .where(
+            Bar.instrument_id == instrument_id,
+            Bar.timeframe == timeframe,
+            Bar.event_time == event_time,
+        )
+        .order_by(Bar.revision)
+    ).all()
+
+    latest: dict[str, RawBar] = {}
+    for code, stamp, open_, high, low, close in rows:
+        # Ascending revision, so the last write per provider wins - the bar a
+        # reader would actually be served.
+        latest[code] = RawBar(
+            event_time=stamp,
+            open=float(open_),
+            high=float(high),
+            low=float(low),
+            close=float(close),
+            volume=0.0,
+        )
+
+    if len(latest) < 2:
+        return None
+    return bool(detect_provider_conflicts({c: [b] for c, b in latest.items()}))
 
 
 def recheck_findings(
@@ -872,6 +964,18 @@ def recheck_findings(
             # describes is over - which is a fact about stored data and needs
             # no calendar to settle.
             if last_bar is not None and last_bar > finding.window_start:
+                finding.resolved_at = moment
+                resolved += 1
+            continue
+
+        if issue is DataQualityIssue.PROVIDER_CONFLICT:
+            # Put the same question to storage: do the feeds still disagree at
+            # this instant? `_conflicts_at` re-runs the detector the finding
+            # came from, over every provider's newest revision - so a feed
+            # that has since corrected itself closes the finding, and one
+            # that has not keeps it open.
+            still = _conflicts_at(session, instrument_id, timeframe, finding.window_start)
+            if still is False:
                 finding.resolved_at = moment
                 resolved += 1
             continue
@@ -1028,9 +1132,26 @@ def _persisted_finding_stats(
         severity = Severity(row.severity)
         penalty += weights[severity] * row.affected_rows
         open_count += 1
-        if severity in (Severity.ERROR, Severity.CRITICAL):
+        # Both questions, not one read off the other: serious enough to
+        # matter, and about whether the stored data is wrong. An ERROR that
+        # describes the provider's transport rather than its data costs
+        # score without closing the gate.
+        if severity in (Severity.ERROR, Severity.CRITICAL) and _is_blocking(row.issue):
             blocking += 1
     return penalty, open_count, blocking
+
+
+def _is_blocking(issue: Any) -> bool:
+    """Whether this issue says the stored data itself cannot be trusted.
+
+    Unknown issues block. A new detector added without a decision here is a
+    property nobody has judged, and the safe reading of "nobody has judged
+    it" is not "it is fine".
+    """
+    try:
+        return DataQualityIssue(issue) in BLOCKING_ISSUES
+    except ValueError:
+        return True
 
 
 def coverage_window(bars: list[RawBar]) -> tuple[datetime | None, datetime | None]:

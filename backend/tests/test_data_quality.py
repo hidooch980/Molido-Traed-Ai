@@ -392,12 +392,22 @@ def test_small_batch_cannot_reset_a_blocked_dataset(session, instrument, provide
     to `is_training_eligible = true`. Every collection cycle silently undid the
     gate.
     """
-    # 500 unique bars are stored. The duplicate the provider sent is *not*
-    # stored — the primary key prevents that — but it is still a defect in the
-    # feed, so it lives on as an error-level finding.
+    # 500 bars are stored and one of them is incoherent - its high sits below
+    # its low, which is a statement about the row a reader is served.
+    #
+    # This used to send a duplicate timestamp instead, which raised an
+    # error-level finding and blocked. It no longer blocks, and the reason is
+    # written two lines above where it used to be: the duplicate is *not*
+    # stored, the primary key prevents it, so the finding described the
+    # provider's batch rather than the data. `BLOCKING_ISSUES` now separates
+    # those, and a test of the incremental-reset regression needs a defect
+    # that is genuinely in the stored rows - otherwise it is measuring the
+    # gate's old confusion rather than the reset it was written for.
     bars = make_bars(500)
+    broken = replace(bars[10], high=bars[10].low - 0.01)
+    bars = [*bars[:10], broken, *bars[11:]]
     _store(session, instrument, provider, bars)
-    full = data_quality.evaluate_bars([*bars, bars[10]], Timeframe.H1)
+    full = data_quality.evaluate_bars(bars, Timeframe.H1)
     data_quality.persist_findings(
         session,
         instrument_id=instrument.id,
