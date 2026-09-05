@@ -24,7 +24,8 @@ that cannot reproduce a known negative is not measuring anything.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import bisect
+from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from app.brain import crosssection
@@ -40,6 +41,33 @@ class Picks:
     #: cross-section was thin and one that returns nothing because it saw no
     #: signal are different facts, and the measurement counts them apart.
     declined: str | None = None
+
+    #: How strongly the rule wanted each pick, 0..1, by symbol.
+    #:
+    #: Called strength rather than conviction because
+    #: `app.execution.conviction` already owns that word for something else -
+    #: the multiplier that shrinks a permitted order at execution time. This
+    #: is upstream of that and different in kind: it is what the rule saw,
+    #: before any gate has had an opinion.
+    #:
+    #: Every rule here already computes a number to choose by - a return, a
+    #: rate differential, an oscillator reading - and every one of them threw
+    #: it away at the last step, leaving a set with no strength attached. The
+    #: cost of that was not obvious: `app.brain.calibration` exists to measure
+    #: whether a confidence behaves like a probability, and it had nothing to
+    #: measure, so `calibrated` stayed false forever and the risk brain halved
+    #: every order for it. A penalty the system cannot ever work off is not a
+    #: penalty, it is a constant.
+    #:
+    #: **This is a strength, not a probability**, and the distinction is the
+    #: whole point: calibration measures whether it deserves to be read as
+    #: one. If a high strength wins no more often than a low one, that is a
+    #: finding about the rule, and it can only be found once the number is
+    #: written down.
+    #:
+    #: Empty when a rule has no natural strength to report. Absent is not
+    #: 0.5 - a made-up middle would enter the reliability curve as evidence.
+    scores: dict[str, float] = field(default_factory=dict)
 
     @property
     def empty(self) -> bool:
@@ -58,6 +86,106 @@ class Rule(Protocol):
 
 def _closes(snapshot: dict[str, dict[str, Any]], symbol: str) -> list[float]:
     return list(snapshot.get(symbol, {}).get("closes") or [])
+
+
+#: Where stretch strength saturates, in ATR.
+#:
+#: Two ATR from the cross-sectional mean is a wide move on any instrument on
+#: any day. Named here rather than written at each use because the incumbent
+#: is scored in two places - the rule and the forward recorder - and two
+#: copies of a scale is two scales the moment one of them is edited.
+STRETCH_FULL_AT = 2.0
+
+
+def _tail_strength(
+    scored: list[tuple[float, str]],
+    *,
+    picked: tuple[str, ...],
+    strong_when_high: bool,
+) -> dict[str, float]:
+    """Where each pick sits in the cross-section it was chosen from, 0..1.
+
+    Every rule below ranks a list and takes from one end. How far into that
+    end a pick sits is the strength the rule already used and then discarded,
+    so this recovers it rather than inventing anything.
+
+    `strong_when_high` is the rule's own orientation and cannot be guessed
+    from the list: momentum buys the top of the ranking and reversal buys the
+    bottom, and reading the position without knowing which would report the
+    weakest reversal pick as the strongest one - a number that is exactly
+    backwards is worse for a measurement than no number at all.
+
+    The extreme pick scores 1.0 and the median 0.5. A cross-section of one
+    carries no position to report, so it reports nothing.
+    """
+    if len(scored) < 2:
+        return {}
+    ordered = sorted(value for value, _ in scored)
+    last = len(ordered) - 1
+    out: dict[str, float] = {}
+    for value, symbol in scored:
+        if symbol not in picked:
+            continue
+        # Fraction of the cross-section this value sits above. `bisect_left`
+        # on ties puts equal values at the same place, so two instruments with
+        # identical readings get identical strengths rather than an order
+        # that came out of the sort.
+        below = bisect.bisect_left(ordered, value)
+        position = below / last
+        out[symbol] = round(position if strong_when_high else 1.0 - position, 4)
+    return out
+
+
+def _strength(
+    scored: list[tuple[float, str]],
+    *,
+    longs: tuple[str, ...],
+    shorts: tuple[str, ...],
+    buy_high: bool,
+) -> dict[str, float]:
+    """Conviction for both sides of one ranking.
+
+    The two sides read the same ranking from opposite ends, so they need
+    opposite orientations: a momentum short taken from the bottom of the list
+    is a *strong* short, and scoring it by the long's orientation would record
+    the rule's best short as its weakest signal.
+    """
+    return {
+        **_tail_strength(scored, picked=longs, strong_when_high=buy_high),
+        **_tail_strength(scored, picked=shorts, strong_when_high=not buy_high),
+    }
+
+
+def scaled_strength(
+    magnitudes: dict[str, float], *, full_at: float
+) -> dict[str, float]:
+    """Conviction from a magnitude on a fixed scale, saturating at `full_at`.
+
+    For rules whose picks are not ends of a shared ranking - a breakout is
+    against its own channel, not against its peers - there is no position in
+    a cross-section to read. Normalising by the strongest pick in the cycle
+    would look like an answer and is not one: it makes the best pick of every
+    cycle exactly 1.0, however weak the day was, and a forecast whose meaning
+    moves from cycle to cycle cannot be calibrated against anything.
+
+    So the scale is absolute and stated by the caller in the rule's own units.
+    """
+    if full_at <= 0:
+        return {}
+    return {
+        symbol: strength_from(value, full_at=full_at)
+        for symbol, value in magnitudes.items()
+    }
+
+
+def strength_from(value: float, *, full_at: float) -> float:
+    """One magnitude on that same scale.
+
+    The forward recorder scores the incumbent without going through the rule
+    object, so it needs the scalar. Same function underneath, so the two
+    cannot come to disagree about what a strength of 0.7 means.
+    """
+    return round(min(abs(value) / full_at, 1.0), 4)
 
 
 def _eligible(
@@ -102,6 +230,17 @@ class CrossSectionalStretch:
         return Picks(
             longs=tuple(pick.symbol for pick in ranked.longs),
             shorts=tuple(pick.symbol for pick in ranked.shorts),
+            # Stretch is already in ATR units, which is an absolute scale and
+            # the reason it is used directly. Two ATR from the mean is a wide
+            # move on any instrument on any day, so that is where strength
+            # saturates.
+            scores=scaled_strength(
+                {
+                    pick.symbol: pick.stretch
+                    for pick in (*ranked.longs, *ranked.shorts)
+                },
+                full_at=STRETCH_FULL_AT,
+            ),
         )
 
 
@@ -156,9 +295,12 @@ class TimeSeriesMomentum:
             )
 
         scored.sort()
+        longs = tuple(symbol for _, symbol in scored[-self.per_side :])
+        shorts = tuple(symbol for _, symbol in scored[: self.per_side])
         return Picks(
-            longs=tuple(symbol for _, symbol in scored[-self.per_side :]),
-            shorts=tuple(symbol for _, symbol in scored[: self.per_side]),
+            longs=longs,
+            shorts=shorts,
+            scores=_strength(scored, longs=longs, shorts=shorts, buy_high=True),
         )
 
 
@@ -201,9 +343,13 @@ class ShortHorizonReversal:
         # Reversal: buy what fell, sell what rose. The opposite end from
         # momentum, deliberately, so the two cannot both be right and the
         # measurement has to choose.
+        longs = tuple(symbol for _, symbol in scored[: self.per_side])
+        shorts = tuple(symbol for _, symbol in scored[-self.per_side :])
         return Picks(
-            longs=tuple(symbol for _, symbol in scored[: self.per_side]),
-            shorts=tuple(symbol for _, symbol in scored[-self.per_side :]),
+            longs=longs,
+            shorts=shorts,
+            # Buys what fell, so the bottom of the ranking is the strong end.
+            scores=_strength(scored, longs=longs, shorts=shorts, buy_high=False),
         )
 
 
@@ -336,9 +482,12 @@ class CarryDifferential:
             )
 
         scored.sort()
+        longs = tuple(symbol for _, symbol in scored[-self.per_side :])
+        shorts = tuple(symbol for _, symbol in scored[: self.per_side])
         return Picks(
-            longs=tuple(symbol for _, symbol in scored[-self.per_side :]),
-            shorts=tuple(symbol for _, symbol in scored[: self.per_side]),
+            longs=longs,
+            shorts=shorts,
+            scores=_strength(scored, longs=longs, shorts=shorts, buy_high=True),
         )
 
 
@@ -391,9 +540,12 @@ class TrendFollowing:
             )
 
         scored.sort()
+        longs = tuple(symbol for _, symbol in scored[-self.per_side :])
+        shorts = tuple(symbol for _, symbol in scored[: self.per_side])
         return Picks(
-            longs=tuple(symbol for _, symbol in scored[-self.per_side :]),
-            shorts=tuple(symbol for _, symbol in scored[: self.per_side]),
+            longs=longs,
+            shorts=shorts,
+            scores=_strength(scored, longs=longs, shorts=shorts, buy_high=True),
         )
 
 
@@ -449,8 +601,19 @@ class RSIMeanReversion:
             # failure: an oscillator that always has an opinion is not an
             # oscillator, it is a coin.
             return Picks(declined="nothing is oversold or overbought")
+        kept_longs = longs[: self.per_side]
+        kept_shorts = shorts[: self.per_side]
         return Picks(
-            longs=longs[: self.per_side], shorts=shorts[: self.per_side]
+            longs=kept_longs,
+            shorts=kept_shorts,
+            # An oscillator buys the bottom of its own range, so the low end
+            # is the strong end for a long. Position is read against every
+            # instrument that had a reading, not only the ones that crossed a
+            # threshold: what calibration asks is how far into the tail this
+            # pick sat, and a threshold is not the tail.
+            scores=_strength(
+                scored, longs=kept_longs, shorts=kept_shorts, buy_high=False
+            ),
         )
 
 
@@ -498,9 +661,19 @@ class DonchianBreakout:
             return Picks(declined="no instrument broke its channel")
         longs.sort(reverse=True)
         shorts.sort(reverse=True)
+        kept = [*longs[: self.per_side], *shorts[: self.per_side]]
         return Picks(
             longs=tuple(s for _, s in longs[: self.per_side]),
             shorts=tuple(s for _, s in shorts[: self.per_side]),
+            # A breakout is measured against its own channel, not against the
+            # other instruments, so there is no cross-section to take a
+            # position in. The distance past the channel in ATR is the
+            # strength, and half an ATR beyond a 55-bar extreme is already a
+            # decisive break - beyond that the rule is not more sure, the
+            # instrument is just more volatile.
+            scores=scaled_strength(
+                {symbol: distance for distance, symbol in kept}, full_at=0.5
+            ),
         )
 
 
@@ -585,7 +758,20 @@ class StochasticReversion:
             # bounded oscillator is for. An indicator with an opinion every
             # bar is not an oscillator, it is a coin.
             return Picks(declined="nothing is at the edge of its range")
-        return Picks(longs=longs[: self.per_side], shorts=shorts[: self.per_side])
+        kept_longs = longs[: self.per_side]
+        kept_shorts = shorts[: self.per_side]
+        return Picks(
+            longs=kept_longs,
+            shorts=kept_shorts,
+            # An oscillator buys the bottom of its own range, so the low end
+            # is the strong end for a long. Position is read against every
+            # instrument that had a reading, not only the ones that crossed a
+            # threshold: what calibration asks is how far into the tail this
+            # pick sat, and a threshold is not the tail.
+            scores=_strength(
+                scored, longs=kept_longs, shorts=kept_shorts, buy_high=False
+            ),
+        )
 
 
 #: Every candidate, by name. Adding one here is the whole cost of testing it.

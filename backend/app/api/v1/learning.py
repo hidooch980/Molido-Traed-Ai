@@ -331,6 +331,32 @@ def read_journal(
     return journal_log.summary(session)
 
 
+@router.get("/calibration")
+def read_calibration_distance(
+    days: int = Query(default=365, ge=1, le=3650),
+    _: Principal = READ,
+    session: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """How far this deployment is from sizing a full trade.
+
+    The risk brain halves the permitted risk for `calibrated: false` and
+    halves it again for `training_eligible: false`, so every order goes out
+    at a quarter of the size it was asked for. That was read as caution for a
+    long time and it was not caution - it was unreachable, because
+    calibration needs a confidence paired with an outcome and no decision in
+    the forward record carried one.
+
+    They do now. This counts how many have resolved and what they say, so
+    "not yet" has a distance attached to it instead of being permanent.
+
+    Reporting only. Lifting either flag quadruples live risk and is not a
+    thing a report should do.
+    """
+    from app.ops import calibration_report
+
+    return calibration_report.assess(session, days=days)
+
+
 @router.get("/real-money")
 def read_real_money_readiness(
     _: Principal = READ,

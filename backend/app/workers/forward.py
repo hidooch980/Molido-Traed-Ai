@@ -334,6 +334,14 @@ def _record_candidates(
                     account_key=account_key,
                     before={
                         "rule": name,
+                        # Absent rather than 0.5 when a rule reports no
+                        # strength. A made-up middle would enter the
+                        # reliability curve as though it were evidence.
+                        **(
+                            {"strength": picks.scores[symbol]}
+                            if symbol in picks.scores
+                            else {}
+                        ),
                         "atr": atr,
                         "stop_multiple": STOP_MULTIPLE,
                         "price_source": price_source,
@@ -364,6 +372,8 @@ def record_cycle(
     so running twice over an overlapping window does not inflate the sample the
     entire measurement rests on.
     """
+
+    from app.learning import rules as rules_module
     built, latest = snapshot(
         session, timeframe=timeframe, as_of=as_of, provider_code=price_source
     )
@@ -442,6 +452,29 @@ def record_cycle(
                 before={
                     "rule": "cross-sectional-stretch",
                     "stretch": round(pick.stretch, 4),
+                    # How strongly the rule wanted this one, 0..1.
+                    #
+                    # Not called conviction: `app.execution.conviction`
+                    # already owns that word for the multiplier that
+                    # shrinks a permitted order. This is what the rule
+                    # saw, before any gate had an opinion.
+                    #
+                    # Recorded because `app.brain.calibration` exists to
+                    # measure whether a confidence behaves like a probability
+                    # and had nothing to measure: every decision in this
+                    # record was a set membership with no strength attached.
+                    # So `calibrated` stayed false, and the risk brain halved
+                    # every order for it - a penalty the system could never
+                    # work off, because the evidence that would lift it was
+                    # the one thing nothing was writing down.
+                    #
+                    # It is a strength and not a probability. Whether it
+                    # deserves to be read as one is exactly the question
+                    # calibration answers, and it cannot be asked until
+                    # enough of these have resolved.
+                    "strength": rules_module.strength_from(
+                        pick.stretch, full_at=rules_module.STRETCH_FULL_AT
+                    ),
                     "atr": pick.atr,
                     "stop_multiple": STOP_MULTIPLE,
                     "cross_section_size": ranked.considered,
