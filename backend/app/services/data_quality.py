@@ -742,6 +742,160 @@ def persist_findings(
     return written
 
 
+#: Issues a re-check can actually settle.
+#:
+#: Narrow on purpose, and the exclusions are the interesting part. A finding
+#: may only be resolved when the system can *prove* it no longer holds; a
+#: check that cannot fail is not evidence, it is a licence to readmit bad
+#: data quietly.
+#:
+#: `duplicate_bar` is the case that makes the point. It says the provider
+#: sent one timestamp twice **in a batch**, and the batch is gone. Storage
+#: keys bars by revision, so the same instant legitimately appears twice as a
+#: correction - re-checking would either always resolve (dedupe by instant)
+#: or never resolve (do not), and neither answer is about the defect that was
+#: reported. It stays open, because nothing here can honestly close it.
+#:
+#: `invalid_timestamp` is excluded for the mirror reason: stored timestamps
+#: are timezone-aware by construction, so the check could only ever pass.
+#:
+#: `missing_candle`, `price_gap`, `outlier` and `session_mismatch` need more
+#: than the window they name - a series, a distribution, a schedule - so a
+#: re-check over the window alone would be a different, weaker test wearing
+#: the same name. `provider_conflict` needs a second provider's series.
+RECHECKABLE: frozenset[DataQualityIssue] = frozenset(
+    {DataQualityIssue.INVALID_OHLC_RELATION, DataQualityIssue.NON_POSITIVE_PRICE}
+)
+
+#: How many findings one re-evaluation settles.
+#:
+#: Bounded because this runs inside the collector's per-entry work every
+#: cycle, and a dataset carrying three thousand open findings would turn a
+#: fifteen-minute sweep into a backlog drain. Oldest first, so the queue
+#: empties over cycles rather than never.
+RECHECK_BATCH = 50
+
+
+def _newest_stored_bar(
+    session: Session,
+    instrument_id: uuid.UUID,
+    provider_id: uuid.UUID,
+    timeframe: Timeframe,
+    event_time: datetime,
+) -> RawBar | None:
+    """The bar a reader would actually see at that instant, or None.
+
+    Newest revision, because that is what `point_in_time` serves and
+    therefore what every downstream consumer works from. Judging a superseded
+    revision would keep a finding open about data nothing reads.
+    """
+    from app.models.market_data import Bar
+
+    row = session.scalars(
+        select(Bar)
+        .where(
+            Bar.instrument_id == instrument_id,
+            Bar.provider_id == provider_id,
+            Bar.timeframe == timeframe,
+            Bar.event_time == event_time,
+        )
+        .order_by(Bar.revision.desc())
+        .limit(1)
+    ).first()
+    if row is None:
+        return None
+    return RawBar(
+        event_time=row.event_time,
+        open=float(row.open),
+        high=float(row.high),
+        low=float(row.low),
+        close=float(row.close),
+        volume=None if row.volume is None else float(row.volume),
+    )
+
+
+def recheck_findings(
+    session: Session,
+    *,
+    instrument_id: uuid.UUID,
+    provider_id: uuid.UUID,
+    timeframe: Timeframe,
+    now: datetime | None = None,
+    limit: int = RECHECK_BATCH,
+) -> int:
+    """Close findings that the stored data no longer supports. Returns how many.
+
+    Nothing in this codebase had ever set `resolved_at` - 0 of 95,795 on
+    production - and `_persisted_finding_stats` counts every unresolved
+    error-level finding as blocking, which the training-eligibility gate
+    requires to be zero. So one bad bar, once, blocked its dataset forever:
+    the gate had an entrance and no exit, and a dataset that had been
+    repaired looked exactly like one that never was.
+
+    A finding is closed only by re-running **the same detector** that raised
+    it, over the data as it stands now. Not by age, not by assumption, and
+    never by a second implementation of the same test - two checkers for one
+    property drift apart, and the drift shows up as data quietly readmitted.
+    """
+    moment = now or datetime.now(UTC)
+    open_findings = list(
+        session.scalars(
+            select(DataQualityFinding)
+            .where(
+                DataQualityFinding.instrument_id == instrument_id,
+                DataQualityFinding.provider_id == provider_id,
+                DataQualityFinding.timeframe == timeframe,
+                DataQualityFinding.resolved_at.is_(None),
+                DataQualityFinding.issue.in_(
+                    [issue.value for issue in RECHECKABLE]
+                    + [DataQualityIssue.STALE_DATA.value]
+                ),
+            )
+            .order_by(DataQualityFinding.detected_at)
+            .limit(limit)
+        )
+    )
+    if not open_findings:
+        return 0
+
+    _stored, _first, last_bar = _stored_bar_stats(
+        session, instrument_id, provider_id, timeframe
+    )
+
+    resolved = 0
+    for finding in open_findings:
+        issue = DataQualityIssue(finding.issue)
+
+        if issue is DataQualityIssue.STALE_DATA:
+            # The finding says the newest bar at the time was `window_start`.
+            # Any bar after it is the feed answering, so the outage it
+            # describes is over - which is a fact about stored data and needs
+            # no calendar to settle.
+            if last_bar is not None and last_bar > finding.window_start:
+                finding.resolved_at = moment
+                resolved += 1
+            continue
+
+        bar = _newest_stored_bar(
+            session, instrument_id, provider_id, timeframe, finding.window_start
+        )
+        if bar is None:
+            # The bar is not there to be wrong any more. Retention trimmed it
+            # or a correction replaced the instant; either way the defect this
+            # names is not in the data a reader would get.
+            finding.resolved_at = moment
+            resolved += 1
+            continue
+
+        if not any(f.issue is issue for f in _check_structure([bar])):
+            finding.resolved_at = moment
+            resolved += 1
+
+    if resolved:
+        session.flush()
+    return resolved
+
+
 def update_dataset_quality(
     session: Session,
     *,
@@ -778,6 +932,18 @@ def update_dataset_quality(
             instrument_id=instrument_id, provider_id=provider_id, timeframe=timeframe
         )
         session.add(record)
+
+    # Close what the data no longer supports, before counting what is left.
+    #
+    # The order matters: run after the count and a finding cleared on this
+    # pass still blocks for another fifteen minutes, which on a gate that had
+    # no exit at all for its whole life would be an odd place to add a delay.
+    recheck_findings(
+        session,
+        instrument_id=instrument_id,
+        provider_id=provider_id,
+        timeframe=timeframe,
+    )
 
     stored_bars, first_bar, last_bar = _stored_bar_stats(
         session, instrument_id, provider_id, timeframe

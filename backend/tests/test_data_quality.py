@@ -313,18 +313,35 @@ def test_persist_findings_is_idempotent(session, instrument, provider):
 
 
 def _store(session, instrument, provider, bars):
-    """Persist bars so the rollup has stored history to measure."""
-    from tests.conftest import insert_bar
+    """Persist bars so the rollup has stored history to measure.
+
+    Stores the bar's own open, high and low rather than letting the shared
+    `insert_bar` helper synthesise them around the close. That helper builds
+    a doji by construction, so a batch carrying a deliberately broken bar was
+    being stored as a clean one - which did not matter while findings were
+    permanent, and matters entirely now that a re-check settles them against
+    stored data. A fixture whose storage disagrees with the batch it
+    evaluated is not what ingestion does.
+    """
+    from app.models.market_data import Bar
 
     for bar in bars:
-        insert_bar(
-            session,
-            instrument.id,
-            provider.id,
-            event_time=bar.event_time,
-            ingested_at=BASE_TIME,
-            close=bar.close,
+        session.add(
+            Bar(
+                instrument_id=instrument.id,
+                provider_id=provider.id,
+                timeframe=Timeframe.H1,
+                event_time=bar.event_time,
+                revision=1,
+                ingested_at=BASE_TIME,
+                open=bar.open,
+                high=bar.high,
+                low=bar.low,
+                close=bar.close,
+                volume=bar.volume if bar.volume is not None else 1000.0,
+            )
         )
+    session.flush()
 
 
 def _evaluate_and_roll_up(session, instrument, provider, bars):
