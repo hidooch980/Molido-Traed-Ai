@@ -186,8 +186,7 @@ class TestTheBrokerSeriesArrives:
 
 
 class TestItStaysSeparateFromThePublicFeed:
-    def test_it_records_under_its_own_provider(self, session, bridge):  # noqa: D
-
+    def test_it_records_under_its_own_provider(self, session, bridge):
         """Two sources writing one series means the last writer wins and the
         disagreement is never seen."""
         from app.models.instruments import Provider

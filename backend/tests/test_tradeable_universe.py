@@ -14,8 +14,6 @@ from __future__ import annotations
 
 import json
 
-import pytest
-
 from app.providers import metatrader
 
 

@@ -57,7 +57,12 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "status":
         switch = killswitch_store.load()
-        print(json.dumps({"path": str(killswitch_store.DEFAULT_STATE_PATH), **switch.as_dict()}, indent=2))
+        print(
+            json.dumps(
+                {"path": str(killswitch_store.DEFAULT_STATE_PATH), **switch.as_dict()},
+                indent=2,
+            )
+        )
         return 0
 
     if not args.by.strip() or not args.reason.strip():

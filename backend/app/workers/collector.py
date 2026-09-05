@@ -571,7 +571,7 @@ def send_orders() -> dict[str, Any]:
                     1.0 - len(described) / len(per_account),
                     detail={"undescribed": len(per_account) - len(described)},
                 )
-        except Exception:  # noqa: BLE001 - an observation never fails the cycle
+        except Exception:  # noqa: BLE001, S110 - an observation never fails the cycle
             pass
         return report
 

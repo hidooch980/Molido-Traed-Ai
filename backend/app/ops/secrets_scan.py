@@ -38,13 +38,13 @@ import pathlib
 import re
 import subprocess
 import sys
+from collections.abc import Iterable
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
-from typing import Iterable
+from datetime import UTC, datetime
 
 #: The host runs this with its system python (3.10), which has no
 #: `datetime.UTC`. Spelled the long way so the same file runs there and here.
-UTC = timezone.utc
+UTC = UTC
 
 #: Files whose names suggest they hold credentials. Matched on the path's last
 #: segment so `docs/secrets-policy.md` is not caught by "secret".
@@ -91,12 +91,24 @@ VALUE_PATTERNS: tuple[tuple[str, re.Pattern[bytes]], ...] = (
 #: What a template value looks like. A credential-assignment whose value
 #: matches one of these is a placeholder, and a placeholder is the point.
 PLACEHOLDER = re.compile(
-    rb"(?i)(change[-_ ]?me|replace[-_ ]?me|example|placeholder|your[-_]|xxx+|<[^>]*>|\$\{|dummy|sample|todo|redacted|\*{4,})"
+    rb"(?i)(change[-_ ]?me|replace[-_ ]?me|example|placeholder|your[-_]"
+    rb"|xxx+|<[^>]*>|\$\{|dummy|sample|todo|redacted|\*{4,})"
 )
 
 #: Skipped outright: generated, vendored or binary trees where a hit is noise.
 SKIP_DIRS = frozenset(
-    {".git", "node_modules", ".next", "__pycache__", ".venv", "venv", "dist", "build", ".mypy_cache", ".pytest_cache"}
+    {
+        ".git",
+        "node_modules",
+        ".next",
+        "__pycache__",
+        ".venv",
+        "venv",
+        "dist",
+        "build",
+        ".mypy_cache",
+        ".pytest_cache",
+    }
 )
 MAX_FILE_BYTES = 2 * 1024 * 1024
 
@@ -209,8 +221,8 @@ def tracked_files(root: pathlib.Path) -> list[str] | None:
     """Paths git tracks, or None when git is unavailable - the caller then
     walks the tree, and says so, because a walk also sees untracked files."""
     try:
-        proc = subprocess.run(
-            ["git", "-C", str(root), "ls-files", "-z"],
+        proc = subprocess.run(  # noqa: S603 - a fixed argv, no shell, no user input
+            ["git", "-C", str(root), "ls-files", "-z"],  # noqa: S607 - git from PATH, by design
             capture_output=True,
             check=True,
             timeout=60,
@@ -275,8 +287,8 @@ def scan_history(root: pathlib.Path, result: ScanResult, *, max_blobs: int = 200
     exists at all.
     """
     try:
-        rev = subprocess.run(
-            ["git", "-C", str(root), "rev-list", "--objects", "--all"],
+        rev = subprocess.run(  # noqa: S603 - a fixed argv, no shell, no user input
+            ["git", "-C", str(root), "rev-list", "--objects", "--all"],  # noqa: S607 - git from PATH, by design
             capture_output=True,
             check=True,
             timeout=120,
@@ -299,8 +311,8 @@ def scan_history(root: pathlib.Path, result: ScanResult, *, max_blobs: int = 200
             result.complete = False
             break
         try:
-            blob = subprocess.run(
-                ["git", "-C", str(root), "cat-file", "-p", sha],
+            blob = subprocess.run(  # noqa: S603 - a fixed argv, no shell, no user input
+                ["git", "-C", str(root), "cat-file", "-p", sha],  # noqa: S607 - git from PATH, by design
                 capture_output=True,
                 check=True,
                 timeout=30,
@@ -351,7 +363,8 @@ def main(argv: list[str] | None = None) -> int:
     verdict = "PASS" if result.passed else ("FAIL" if result.secrets else "UNKNOWN")
     sys.stderr.write(
         f"secrets scan: {verdict} - {result.scanned_files} files, "
-        f"{len(result.secrets)} secret(s), {len(result.findings) - len(result.secrets)} shape finding(s)\n"
+        f"{len(result.secrets)} secret(s), "
+        f"{len(result.findings) - len(result.secrets)} shape finding(s)\n"
     )
     return 0 if result.passed else 1
 

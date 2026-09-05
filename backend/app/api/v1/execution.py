@@ -659,7 +659,7 @@ def set_account_state(
 @router.get("/authorization")
 def read_authorization(
     _: Principal = READ,
-    session: "Session" = Depends(_get_db_for_authorization),
+    session: Session = Depends(_get_db_for_authorization),
 ) -> dict[str, Any]:
     """May an order go right now, and every reason it may not.
 

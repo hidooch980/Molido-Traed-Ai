@@ -81,7 +81,7 @@ async def trace_middleware(request: Request, call_next):
 
             with SessionLocal() as db:
                 slo_module.flush_requests(db)
-    except Exception:  # noqa: BLE001 - an observation must never fail a request
+    except Exception:  # noqa: BLE001, S110 - an observation must never fail a request
         pass
     return response
 

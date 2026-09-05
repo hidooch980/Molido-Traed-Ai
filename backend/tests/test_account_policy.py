@@ -159,7 +159,6 @@ class TestTheWriteRouteIsGatedCorrectly:
         import inspect
 
         from app.api.v1 import execution
-
         from app.core.enums import Permission
 
         source = inspect.getsource(execution.write_account_policy)

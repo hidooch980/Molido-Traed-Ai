@@ -33,6 +33,7 @@ from app.core.enums import Timeframe
 from app.learning import robustness as rb
 from app.learning.measure import load_series, measure
 
+
 #: How many instants one horizon spans, for the bootstrap's block length.
 #: HORIZON is in bars and the rule fires on every bar it can rank, so on a
 #: fully-covered series the two are the same number. Passed explicitly rather
@@ -179,7 +180,9 @@ def run(
     # that finished and found nothing. The threshold is deliberately generous:
     # the two-year hourly series is 516,000 bars and needs about 0.12 GB, so
     # this refuses nothing that a working host can do.
-    too_big = _refuse_if_too_large(session, provider=provider, timeframe=timeframe, start=start, end=end)
+    too_big = _refuse_if_too_large(
+        session, provider=provider, timeframe=timeframe, start=start, end=end
+    )
     if too_big:
         return too_big
 
@@ -267,7 +270,11 @@ def run(
         "regime": regime.as_dict() if regime else None,
         "registry": {
             "listed_as": (
-                "PENDING_FORWARD" if name in pending else "REJECTED" if name in rejected else "not registered"
+                "PENDING_FORWARD"
+                if name in pending
+                else "REJECTED"
+                if name in rejected
+                else "not registered"
             ),
             "verdict": entry.verdict.as_dict() if entry else None,
             "live_trading_allowed": registry.live_trading_allowed()[1],
@@ -340,7 +347,8 @@ def render(payload: dict[str, Any]) -> str:
     for s in thick:
         mark = " " if s["positive"] else "*"
         lines.append(
-            f"   {mark}{s['name']:<20} n {s['instants']:<6} edge {s['edge_r']:+.4f} R  t {s['t']:.2f}"
+            f"   {mark}{s['name']:<20} n {s['instants']:<6} "
+            f"edge {s['edge_r']:+.4f} R  t {s['t']:.2f}"
         )
     if not thick:
         lines.append("    none - every slice is below the minimum")
@@ -384,7 +392,8 @@ def render(payload: dict[str, Any]) -> str:
             for side in ("high", "low"):
                 half = block[side]
                 lines.append(
-                    f"    {side:<5} n {half['instants']:<6} edge {half['edge_r']:+.4f} R  t {half['t']:.2f}"
+                    f"    {side:<5} n {half['instants']:<6} "
+                    f"edge {half['edge_r']:+.4f} R  t {half['t']:.2f}"
                 )
             lines.append(
                 f"    separation {block['separation_r']:+.4f} R  t {block['separation_t']:.2f}"

@@ -242,7 +242,12 @@ def decide(facts: Facts, *, now: datetime | None = None) -> Decision:
 
     if facts.data_age_bars is None:
         gates.append(
-            Gate("data_fresh", False, "the age of the data is unknown, and unknown is stale", observed=None)
+            Gate(
+                "data_fresh",
+                False,
+                "the age of the data is unknown, and unknown is stale",
+                observed=None,
+            )
         )
     else:
         fresh = facts.data_age_bars <= facts.max_data_age_bars
@@ -284,7 +289,8 @@ def decide(facts: Facts, *, now: datetime | None = None) -> Decision:
                     facts.account_reason or "the terminal describes the account"
                     if facts.account_available
                     else facts.account_reason
-                    or "the bridge cannot describe the account, so it is treated as real money and refused"
+                    or "the bridge cannot describe the account, so it is "
+                    "treated as real money and refused"
                 ),
                 observed=facts.account_available,
             )
@@ -292,7 +298,12 @@ def decide(facts: Facts, *, now: datetime | None = None) -> Decision:
 
     if facts.proven_edge:
         gates.append(
-            Gate("proven_edge", True, facts.proven_edge_reason or "a registered edge clears the bar", observed=True)
+            Gate(
+                "proven_edge",
+                True,
+                facts.proven_edge_reason or "a registered edge clears the bar",
+                observed=True,
+            )
         )
     elif facts.trade_without_proven_edge:
         # Permitted, and said in full on every decision it touches. The
@@ -333,7 +344,11 @@ def decide(facts: Facts, *, now: datetime | None = None) -> Decision:
                 "risk_approved",
                 facts.risk_approved,
                 facts.risk_reason
-                or ("the risk brain approves" if facts.risk_approved else "the risk brain has not approved"),
+                or (
+                    "the risk brain approves"
+                    if facts.risk_approved
+                    else "the risk brain has not approved"
+                ),
                 observed=facts.risk_approved,
             )
         )

@@ -32,7 +32,7 @@ class TestEveryRefusalIsRecorded:
     def test_the_one_remaining_append_is_the_recorder_itself(self):
         source = inspect.getsource(autotrade.run_cycle)
         line = next(
-            l for l in source.splitlines() if "skipped.append(" in l
+            text for text in source.splitlines() if "skipped.append(" in text
         )
 
         assert "candidate.symbol" in line

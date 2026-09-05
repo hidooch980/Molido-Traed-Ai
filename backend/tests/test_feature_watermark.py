@@ -11,9 +11,7 @@ judgement.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
-
-import pytest
+from datetime import UTC, datetime
 
 from app.core.enums import Timeframe
 from app.services import feature_store

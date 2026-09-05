@@ -50,8 +50,8 @@ def upgrade() -> None:
     op.execute(
         sa.text(
             "INSERT INTO audit_chain_head (id, sequence, entry_hash) "
-            f"VALUES (1, -1, '{GENESIS}')"
-        )
+            "VALUES (1, -1, :genesis)"
+        ).bindparams(genesis=GENESIS)
     )
 
 

@@ -20,16 +20,18 @@ reason attached.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any, Callable
+from typing import Any
 
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.execution import killswitch_store, modes
 from app.learning import edge as edge_registry
-from app.ops import authorization, calibration, disk, evidence, freshness, readiness as rd, slo
+from app.ops import authorization, calibration, disk, evidence, freshness, slo
+from app.ops import readiness as rd
 
 
 @dataclass
@@ -50,7 +52,12 @@ class Posture:
         return payload
 
 
-def _try(name: str, reader: Callable[[], Any], failures: dict[str, str], default: Any = None) -> Any:
+def _try(
+    name: str,
+    reader: Callable[[], Any],
+    failures: dict[str, str],
+    default: Any = None,
+) -> Any:
     try:
         return reader()
     except Exception as problem:  # noqa: BLE001 - one bad reader is one failed check
@@ -97,7 +104,9 @@ def gather(
 
     chain = _try("audit_chain", _chain, failures)
 
-    log_rotation = _try("log_rotation", lambda: evidence.log_rotation_configured(now=moment), failures)
+    log_rotation = _try(
+        "log_rotation", lambda: evidence.log_rotation_configured(now=moment), failures
+    )
     restore = _try("restore_drill", lambda: evidence.last_successful_restore(now=moment), failures)
     secrets = _try("secrets", lambda: evidence.secrets_in_repository(now=moment), failures)
 
@@ -151,7 +160,9 @@ def gather(
         # switch that starts open protects nothing. The *file's* state is a
         # different fact and is in the decision below.
         kill_switch_default_engaged=True,
-        ungated_mutating_routes=ungated_mutating_routes if ungated_mutating_routes is not None else [],
+        ungated_mutating_routes=(
+            ungated_mutating_routes if ungated_mutating_routes is not None else []
+        ),
         log_rotation_configured=log_rotation,
         retention_configured=_try("retention", _retention_configured, failures),
         last_successful_restore=restore,
@@ -165,7 +176,12 @@ def gather(
     )
     report = rd.assess(deployment, now=moment)
 
-    allowed, why = _try("edge_registry", edge_registry.live_trading_allowed, failures, default=(None, "the edge registry could not be read"))
+    allowed, why = _try(
+        "edge_registry",
+        edge_registry.live_trading_allowed,
+        failures,
+        default=(None, "the edge registry could not be read"),
+    )
 
     facts = authorization.Facts(
         engine_running=bool(settings.enable_execution),

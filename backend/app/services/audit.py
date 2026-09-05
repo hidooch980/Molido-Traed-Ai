@@ -197,7 +197,9 @@ def verify(session: Session, *, tail: int | None = None) -> ChainVerification:
             text("SELECT count(*) FROM audit_events WHERE sequence IS NULL")
         ).scalar_one()
     )
-    head = session.execute(select(AuditChainHead).where(AuditChainHead.id == 1)).scalar_one_or_none()
+    head = session.execute(
+        select(AuditChainHead).where(AuditChainHead.id == 1)
+    ).scalar_one_or_none()
     statement = (
         select(AuditEvent)
         .where(AuditEvent.sequence.is_not(None))
@@ -224,7 +226,10 @@ def verify(session: Session, *, tail: int | None = None) -> ChainVerification:
             broken_at = broken_at if broken_at is not None else sequence
             break
         if event.previous_hash != previous:
-            problems.append(f"sequence {sequence} names a previous hash that is not the one before it")
+            problems.append(
+                f"sequence {sequence} names a previous hash that is not the one "
+                "before it"
+            )
             broken_at = broken_at if broken_at is not None else sequence
             break
         if event.entry_hash != entry_hash(event, previous_hash=previous):
@@ -240,7 +245,10 @@ def verify(session: Session, *, tail: int | None = None) -> ChainVerification:
         expected_sequence += 1
 
     if not problems and events and head is not None:
-        if int(head.sequence) != int(events[-1].sequence) or head.entry_hash != events[-1].entry_hash:
+        if (
+            int(head.sequence) != int(events[-1].sequence)
+            or head.entry_hash != events[-1].entry_hash
+        ):
             problems.append("the chain head does not agree with the last chained event")
             broken_at = int(events[-1].sequence)
 

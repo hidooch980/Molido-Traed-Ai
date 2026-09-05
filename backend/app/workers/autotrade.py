@@ -51,6 +51,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.errors import ValidationFailedError
+from app.core.logging import get_logger
 from app.execution.broker import BrokerAdapter
 from app.execution.contracts import (
     Approval,
@@ -62,6 +63,8 @@ from app.execution.contracts import (
 from app.execution.metatrader_broker import MetaTraderBroker
 from app.models.journal import ARM_RULE, SOURCE_BROKER, JournalEntry
 
+log = get_logger(__name__)
+
 #: Fraction of equity risked per position. Small on purpose: the rule proposes
 #: several positions per instant and the edge it is chasing is a fiftieth of a
 #: stop distance, so size is not where the return comes from.
@@ -69,10 +72,6 @@ from app.models.journal import ARM_RULE, SOURCE_BROKER, JournalEntry
 #: deployment sets nothing. Read through the accessors below rather than used
 #: directly: binding them at import means a deployment cannot change how hard
 #: it trades without a rebuild.
-from app.core.logging import get_logger
-
-log = get_logger(__name__)
-
 RISK_PERCENT = 0.25
 
 #: How many positions may be open at the broker at once.
@@ -1304,7 +1303,6 @@ def run_cycle(
     """
     from app.execution import autopilot, conviction, killswitch_store
     from app.learning import edge as edge_registry
-    from app.learning import rules as rules_module
     from app.ops import calibration
     from app.providers.metatrader import MetaTraderBridge
 

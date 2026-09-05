@@ -33,7 +33,7 @@ import math
 import random
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Any
 
 from app.learning.measure import COST_R, Measurement, _paired_t
@@ -294,7 +294,7 @@ def permutation_test(
     if n < 2:
         return Permutation(0, 0.0, 1.0, 0.0, 0.0, 0)
     observed = sum(differences) / n
-    rng = random.Random(seed)
+    rng = random.Random(seed)  # noqa: S311 - a seeded permutation test, not a secret
     beats = 0
     total = 0.0
     total_square = 0.0
@@ -368,7 +368,7 @@ def block_bootstrap(
     block = max(1, min(int(block), n))
     if n < 2:
         return Bootstrap(0, block, 0.0, 0.0, 0.0)
-    rng = random.Random(seed)
+    rng = random.Random(seed)  # noqa: S311 - a seeded block bootstrap, not a secret
     starts = n - block + 1
     needed = math.ceil(n / block)
     means: list[float] = []

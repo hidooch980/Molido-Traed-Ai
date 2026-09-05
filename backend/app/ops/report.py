@@ -53,11 +53,18 @@ def render(posture: posture_module.Posture) -> str:
         if check is None:
             lines.append(f"* {name}: UNKNOWN (not assessed)")
             continue
-        verdict = "PASS" if check.passed else ("UNKNOWN" if "could not be determined" in check.detail else "FAIL")
+        verdict = (
+            "PASS"
+            if check.passed
+            else ("UNKNOWN" if "could not be determined" in check.detail else "FAIL")
+        )
         lines.append(f"* {name}: {verdict} - {check.detail}")
     if posture.reader_failures:
         lines.append("")
-        lines.append("readers that failed: " + ", ".join(f"{k} ({v})" for k, v in posture.reader_failures.items()))
+        lines.append(
+            "readers that failed: "
+            + ", ".join(f"{k} ({v})" for k, v in posture.reader_failures.items())
+        )
 
     from app.execution import autopilot
 
@@ -66,7 +73,8 @@ def render(posture: posture_module.Posture) -> str:
         "",
         "ENGINE STATE",
         f"LIVE = {'ON' if settings.enable_execution else 'OFF'}",
-        f"AUTOPILOT = {'ON' if mode in (autopilot.LIVE, autopilot.PAPER) else 'OFF'} ({mode}: {why})",
+        f"AUTOPILOT = {'ON' if mode in (autopilot.LIVE, autopilot.PAPER) else 'OFF'} "
+        f"({mode}: {why})",
         f"EXECUTION ENGINE = {'ON' if decision.engine.value == 'running' else 'OFF'}",
         f"KILL SWITCH = {decision.kill_switch.value.upper()}",
         "",
@@ -90,7 +98,12 @@ def render(posture: posture_module.Posture) -> str:
         f"registered proven edges: {len([e for e in edge_registry.PROVEN if e.verdict.proven])}",
         f"live trading allowed by the registry: {'YES' if allowed else 'NO'}",
         f"  {reason}",
-        f"override in effect: {'YES (MOLIDO_TRADE_WITHOUT_PROVEN_EDGE)' if getattr(settings, 'trade_without_proven_edge', False) else 'NO'}",
+        "override in effect: "
+        + (
+            "YES (MOLIDO_TRADE_WITHOUT_PROVEN_EDGE)"
+            if getattr(settings, "trade_without_proven_edge", False)
+            else "NO"
+        ),
         "",
         "REQUIRED NEXT ACTIONS",
     ]
@@ -105,7 +118,10 @@ def render(posture: posture_module.Posture) -> str:
         if not any(reason.startswith(c.name) for c in blockers):
             lines.append(f"  [order] {reason}")
     lines.append("")
-    lines.append(f"checked at {posture.checked_at.isoformat()} from runtime evidence; nothing cached")
+    lines.append(
+        f"checked at {posture.checked_at.isoformat()} from runtime evidence; "
+        "nothing cached"
+    )
     return "\n".join(lines)
 
 

@@ -43,7 +43,6 @@ from app.db.session import get_db
 from app.execution.safety import ExecutionPolicy, KillSwitch
 from app.ops import bottlenecks, disk, health_score, self_healing
 from app.ops import incidents as incident_memory
-from app.ops import readiness as rd
 from app.pipeline import decide as pipeline
 from app.services import policy_rates, retention, security_log
 from app.services.instruments import get_instrument

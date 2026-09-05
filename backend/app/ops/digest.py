@@ -204,14 +204,14 @@ def build(session: Any, *, now: datetime | None = None) -> Digest:
                     "orders": traded,
                 }
             )
-        except Exception:  # noqa: BLE001 - one unreadable bridge is not the day
+        except Exception:  # noqa: BLE001, S112 - one unreadable bridge is not the day
             continue
 
     # What closed, from the terminal's own deal history.
     for key, path in sorted(bridge_dirs().items()):
         try:
             published = MetaTraderBridge(directory=path).deals()
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001, S112 - one unreadable bridge is not the day
             continue
         for deal in published.get("deals") or []:
             closed_at = str(deal.get("closed_at") or "")

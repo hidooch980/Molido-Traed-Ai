@@ -7,7 +7,6 @@ Alembic autogenerate reads. New model modules must be imported here.
 from app.db.base import Base
 from app.models.account_policy import AccountPolicy
 from app.models.audit import AuditChainHead, AuditEvent
-from app.models.slo import SloObservation
 from app.models.calendar import MarketHoliday
 from app.models.challenge_accounts import ChallengeAccount
 from app.models.episodes import Episode
@@ -27,6 +26,7 @@ from app.models.login_attempts import LoginAttempt
 from app.models.market_data import Bar, Tick
 from app.models.policy_rates import PolicyRateObservation
 from app.models.recovery_codes import RecoveryCode
+from app.models.slo import SloObservation
 from app.models.symbol_dna import SymbolProfile
 from app.models.telegram_config import TelegramConfig
 from app.models.tenancy import ApiKey, Tenant, User
