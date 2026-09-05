@@ -569,14 +569,67 @@ def compare_providers(
     }
 
 
+#: How long a market could plausibly be shut.
+#:
+#: Beyond this a feed is stale whatever any calendar says: no exchange closes
+#: for ten days, so a gap this wide is the feed rather than the schedule. It
+#: also bounds the walk below, which would otherwise step a dead M1 feed one
+#: minute at a time across however long it has been dead.
+MAX_PLAUSIBLE_CLOSURE = timedelta(days=10)
+
+
+def _missed_open_bars(
+    calendar: Any,
+    latest_event_time: datetime,
+    timeframe: Timeframe,
+    now: datetime,
+    *,
+    stop_after: int,
+) -> int:
+    """Bars the market should have produced since `latest_event_time`.
+
+    Counts slots the calendar calls open, and stops as soon as the answer can
+    no longer change the verdict - the caller only needs to know whether the
+    count exceeds a threshold, and walking a whole weekend of M1 slots to
+    return 2880 when 4 would do is work nobody reads.
+    """
+    step = timeframe.delta
+    cursor = latest_event_time + step
+    missed = 0
+    while cursor < now and missed <= stop_after:
+        if calendar.is_open(cursor):
+            missed += 1
+        cursor += step
+    return missed
+
+
 def check_staleness(
     latest_event_time: datetime | None,
     timeframe: Timeframe,
     *,
     now: datetime | None = None,
     max_missed_bars: int = 3,
+    calendar: Any | None = None,
 ) -> Finding | None:
-    """Stale-feed check backing the market-data failure policy (spec §40)."""
+    """Stale-feed check backing the market-data failure policy (spec §40).
+
+    **A shut market is not a dead feed.** Without a calendar this measures
+    wall-clock age, and every Saturday at 02:45 that reported every
+    instrument on every timeframe as CRITICAL stale: the collector skips a
+    market only once it has been closed for six hours - deliberately, because
+    a session's final bars often arrive late - so the first cycle inside that
+    grace window ran this check against a market that had been shut since
+    Friday and was behaving exactly as it should.
+
+    Those findings are permanent. Nothing in this codebase resolves a
+    finding, and an unresolved error-level one blocks its dataset's training
+    eligibility for good, so a weekend was quietly costing eligibility that
+    could never be won back.
+
+    Given a calendar, staleness is counted in bars the market should have
+    produced. Without one the old wall-clock behaviour is kept exactly, so a
+    caller that has no calendar to offer is no worse off than before.
+    """
     now = now or datetime.now(UTC)
     if latest_event_time is None:
         return Finding(
@@ -589,17 +642,44 @@ def check_staleness(
         )
     age = now - latest_event_time
     limit = timeframe.delta * max_missed_bars
-    if age > limit:
+    if age <= limit:
+        # Market-open time can never exceed wall-clock time, so a feed inside
+        # the wall-clock limit is inside the calendar limit too. Checked
+        # first because it is the ordinary case and costs nothing.
+        return None
+
+    if (
+        calendar is not None
+        and not timeframe.is_calendar_based
+        and age <= MAX_PLAUSIBLE_CLOSURE
+    ):
+        missed = _missed_open_bars(
+            calendar, latest_event_time, timeframe, now, stop_after=max_missed_bars
+        )
+        if missed <= max_missed_bars:
+            return None
         return Finding(
             DataQualityIssue.STALE_DATA,
             Severity.CRITICAL,
             latest_event_time,
             now,
-            expected=f"data newer than {limit}",
-            observed=f"{age} old",
-            details={"age_seconds": age.total_seconds()},
+            expected=f"no more than {max_missed_bars} missed open bars",
+            # The count is reported rather than the wall-clock age, because
+            # the age is the thing that was misleading: "31 hours old" over a
+            # weekend reads as a broken feed and is a closed market.
+            observed=f"{missed}+ open bars missed, {age} of wall clock",
+            details={"age_seconds": age.total_seconds(), "missed_open_bars": missed},
         )
-    return None
+
+    return Finding(
+        DataQualityIssue.STALE_DATA,
+        Severity.CRITICAL,
+        latest_event_time,
+        now,
+        expected=f"data newer than {limit}",
+        observed=f"{age} old",
+        details={"age_seconds": age.total_seconds()},
+    )
 
 
 # ------------------------------------------------------------- persistence

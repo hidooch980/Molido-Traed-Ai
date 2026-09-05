@@ -218,7 +218,16 @@ def run_cycle(entries: list[WatchEntry] | None = None) -> CycleReport:
                 # for, so running it only after a successful write would skip
                 # exactly the symbol that went quiet.
                 report.stale_findings += _record_staleness(
-                    session, instrument, provider_row.id, entry.timeframe, now
+                    session,
+                    instrument,
+                    provider_row.id,
+                    entry.timeframe,
+                    now,
+                    # The same calendar the skip above consulted. Without it
+                    # the check measures wall-clock age, and the six-hour
+                    # grace on that skip is exactly the window where a shut
+                    # market looks like a dead feed.
+                    calendar=calendar,
                 )
         except MolidoError as exc:
             report.failures.append(f"{entry.key}: {exc.code}: {exc.message}")
@@ -294,6 +303,7 @@ def _record_staleness(
     provider_id: uuid.UUID,
     timeframe: Timeframe,
     now: datetime,
+    calendar: Any | None = None,
 ) -> int:
     """Write a finding when a feed has stopped producing bars.
 
@@ -313,7 +323,9 @@ def _record_staleness(
         .limit(1)
         .scalar()
     )
-    finding = data_quality.check_staleness(latest, timeframe, now=now)
+    finding = data_quality.check_staleness(
+        latest, timeframe, now=now, calendar=calendar
+    )
     if finding is None:
         return 0
     return data_quality.persist_findings(
