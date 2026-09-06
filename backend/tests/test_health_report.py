@@ -130,20 +130,23 @@ class TestEveryWatchedJobNamesRealEvidence:
 
         assert {"decisions", "resolutions"} <= jobs
 
-    def test_the_frequent_jobs_are_watched_at_the_cycle_cadence(self):
+    def test_the_bar_driven_jobs_are_watched_at_the_bar(self):
+        """Every frequent job here writes when a bar closes, not when the
+        cycle runs: the cycle skips an entry whose next bar cannot have closed
+        yet, and the journal is unique on (symbol, bar, arm). On a weekend the
+        only open market is crypto on H1, so all four write once an hour and
+        are meant to - judged against the cycle they went red every weekend."""
         by_job = {job: cadence for job, _, _, cadence, _, _ in health_report.WATCHED}
 
-        assert by_job["collect"] <= timedelta(minutes=15)
-        assert by_job["features"] <= timedelta(minutes=15)
-        assert by_job["bars"] <= timedelta(minutes=15)
+        for job in ("collect", "features", "bars", "decisions"):
+            assert by_job[job] == timedelta(hours=1), job
 
-    def test_decisions_are_watched_at_the_bar_they_are_taken_on(self):
-        """The journal is unique on (symbol, bar, arm), so three of every four
-        cycles inside an H1 bar write nothing and are meant to. Judging that
-        against the cycle's cadence calls a working job dead every hour."""
+    def test_two_hours_of_silence_on_an_open_market_is_still_caught(self):
+        """The relaxation must not go so far that the check stops working.
+        Whatever the cadence, `GRACE` misses are the alarm."""
         by_job = {job: cadence for job, _, _, cadence, _, _ in health_report.WATCHED}
 
-        assert by_job["decisions"] == timedelta(hours=1)
+        assert by_job["collect"] * health_report.GRACE <= timedelta(hours=2)
 
 
 class TestTheReportRefusesToLookHealthyWhenItIsNot:

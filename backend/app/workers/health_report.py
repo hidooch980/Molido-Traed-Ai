@@ -63,9 +63,19 @@ from sqlalchemy.orm import Session
 #: because the ranking is narrowed to what the broker offers before it runs,
 #: so a union that included it would call a correctly quiet Sunday a failure.
 WATCHED: tuple[tuple[str, str, str, timedelta, bool, str | None], ...] = (
-    ("collect", "ingestion_runs", "started_at", timedelta(minutes=15), True, None),
-    ("features", "feature_values", "computed_at", timedelta(minutes=15), True, None),
-    ("bars", "ohlcv", "ingested_at", timedelta(minutes=15), True, None),
+    # An hour, not the cycle's fifteen minutes, for the three that ride the
+    # bars. The cycle skips an entry whose next bar cannot have closed yet -
+    # a daily bar was being fetched ninety-six times a day before that was
+    # fixed - so on a weekend, when the only open market is crypto on H1,
+    # these three write once an hour and are meant to. Judged against the
+    # cycle they went red every weekend, which is the fault this whole file
+    # exists to avoid: a check nobody reads because it is usually wrong.
+    #
+    # Two hours of silence on an open market is still caught, which is what
+    # the check is for. It has never taken less than that to notice by hand.
+    ("collect", "ingestion_runs", "started_at", timedelta(hours=1), True, None),
+    ("features", "feature_values", "computed_at", timedelta(hours=1), True, None),
+    ("bars", "ohlcv", "ingested_at", timedelta(hours=1), True, None),
     # An hour, not the cycle's fifteen minutes: the journal is unique on
     # (symbol, bar, arm), so a cycle that runs four times inside one H1 bar
     # writes on the first and is idempotent on the other three. The cadence a
