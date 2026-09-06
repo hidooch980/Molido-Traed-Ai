@@ -231,7 +231,7 @@ def _calendars(session: Session, check: Check) -> list[Any]:
     """
     try:
         from app.core.config import get_settings
-        from app.db.models import Instrument
+        from app.models.instruments import Instrument
         from app.services import sessions as session_service
         from app.workers.watchlist import parse_watchlist
 

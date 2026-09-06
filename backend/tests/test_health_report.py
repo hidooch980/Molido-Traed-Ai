@@ -287,6 +287,39 @@ class TestAJobIsAgedAgainstTheMarketsItActsOn:
         assert by_job["bars"] is None
 
 
+class TestTheCalendarLookupActuallyResolves:
+    """The lookup is wrapped in a catch-all, because a health check that
+    raises instead of printing is the least useful thing in the room - but
+    that also means a wrong import reads exactly like a shut market.
+
+    It did: the first deployment of this returned no calendars at all and
+    every market-hours line went red on a Sunday morning for a second wrong
+    reason. So the lookup is exercised against a real session here rather than
+    trusted to a name."""
+
+    def test_a_watched_instrument_yields_a_calendar(self, session):
+        from app.core.enums import AssetClass
+        from app.models.instruments import Instrument
+
+        session.add(
+            Instrument(symbol="EURUSD", name="Euro", asset_class=AssetClass.FOREX)
+        )
+        session.flush()
+        entry = Check(
+            job="collect",
+            table="ingestion_runs",
+            rows=1,
+            newest=NOW,
+            cadence=timedelta(minutes=15),
+            open_only=True,
+        )
+
+        calendars = health_report._calendars(session, entry)
+
+        assert calendars, "the watchlist's instruments must produce calendars"
+        assert all(hasattr(c, "is_open") for c in calendars)
+
+
 class TestOpenTimeIsCountedNotGuessed:
     def test_a_shut_market_contributes_nothing(self):
         span = health_report.open_time_since(
