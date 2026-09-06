@@ -107,11 +107,12 @@ class TestTheAgeReadsAtAGlance:
 class TestEveryWatchedJobNamesRealEvidence:
     def test_each_entry_is_a_job_a_table_a_column_and_a_cadence(self):
         for entry in health_report.WATCHED:
-            job, table, column, cadence, open_only, symbol_column = entry
+            job, table, column, cadence, open_only, symbol_column, quorum = entry
             assert job and table and column
             assert cadence > timedelta(0)
             assert isinstance(open_only, bool)
             assert symbol_column is None or symbol_column
+            assert quorum >= 1
 
     def test_no_two_jobs_read_the_same_evidence(self):
         """Two jobs reading one column means one of them is not really being
@@ -121,7 +122,9 @@ class TestEveryWatchedJobNamesRealEvidence:
         them are different jobs that share `journal_entries` and fail
         separately - which is exactly how a resolver that had stopped for
         three days sat under a green line while the journal filled."""
-        evidence = [(table, column) for _, table, column, _, _, _ in health_report.WATCHED]
+        evidence = [
+            (table, column) for _, table, column, _, _, _, _ in health_report.WATCHED
+        ]
 
         assert len(evidence) == len(set(evidence))
 
@@ -136,7 +139,7 @@ class TestEveryWatchedJobNamesRealEvidence:
         yet, and the journal is unique on (symbol, bar, arm). On a weekend the
         only open market is crypto on H1, so all four write once an hour and
         are meant to - judged against the cycle they went red every weekend."""
-        by_job = {job: cadence for job, _, _, cadence, _, _ in health_report.WATCHED}
+        by_job = {job: cadence for job, _, _, cadence, _, _, _ in health_report.WATCHED}
 
         for job in ("collect", "features", "bars", "decisions"):
             assert by_job[job] == timedelta(hours=1), job
@@ -144,7 +147,7 @@ class TestEveryWatchedJobNamesRealEvidence:
     def test_two_hours_of_silence_on_an_open_market_is_still_caught(self):
         """The relaxation must not go so far that the check stops working.
         Whatever the cadence, `GRACE` misses are the alarm."""
-        by_job = {job: cadence for job, _, _, cadence, _, _ in health_report.WATCHED}
+        by_job = {job: cadence for job, _, _, cadence, _, _, _ in health_report.WATCHED}
 
         assert by_job["collect"] * health_report.GRACE <= timedelta(hours=2)
 
@@ -202,7 +205,7 @@ class TestFreshnessIsReadFromAWriteTime:
     """
 
     def test_no_watched_column_is_an_event_time(self):
-        columns = {job: column for job, _, column, _, _, _ in health_report.WATCHED}
+        columns = {job: column for job, _, column, _, _, _, _ in health_report.WATCHED}
 
         assert columns["features"] == "computed_at"
         assert columns["bars"] == "ingested_at"
@@ -272,7 +275,7 @@ class TestAJobIsAgedAgainstTheMarketsItActsOn:
     def test_decisions_are_narrowed_by_the_symbols_they_wrote(self):
         by_job = {
             job: symbol_column
-            for job, _, _, _, _, symbol_column in health_report.WATCHED
+            for job, _, _, _, _, symbol_column, _ in health_report.WATCHED
         }
 
         assert by_job["decisions"] == "symbol"
@@ -282,7 +285,7 @@ class TestAJobIsAgedAgainstTheMarketsItActsOn:
         open market anywhere is work they owed."""
         by_job = {
             job: symbol_column
-            for job, _, _, _, _, symbol_column in health_report.WATCHED
+            for job, _, _, _, _, symbol_column, _ in health_report.WATCHED
         }
 
         assert by_job["collect"] is None
@@ -378,3 +381,56 @@ class _One:
 
     def one(self):
         return self._row
+
+
+class TestACrossSectionNeedsMoreThanOneOpenMarket:
+    """`decisions` and `resolutions` come from a ranking, and a ranking of
+    four is not a ranking. On a Sunday the only open markets are the four
+    crypto series - which do reach the journal, contrary to what the first
+    version of this assumed - so a quorum of one called a correctly silent
+    weekend a dead cycle, every week."""
+
+    class Open:
+        def is_open(self, moment):
+            return True
+
+    def test_the_ranking_jobs_need_the_cross_section_minimum(self):
+        by_job = {job: quorum for job, _, _, _, _, _, quorum in health_report.WATCHED}
+
+        assert by_job["decisions"] == health_report.MIN_TO_RANK
+        assert by_job["resolutions"] == health_report.MIN_TO_RANK
+
+    def test_the_sweeping_jobs_need_only_one(self):
+        by_job = {job: quorum for job, _, _, _, _, _, quorum in health_report.WATCHED}
+
+        for job in ("collect", "features", "bars"):
+            assert by_job[job] == 1, job
+
+    def test_four_open_markets_do_not_meet_a_quorum_of_twenty(self):
+        span = health_report.open_time_since(
+            [self.Open() for _ in range(4)],
+            NOW - timedelta(hours=6),
+            NOW,
+            stop_after=timedelta(hours=2),
+            quorum=20,
+        )
+
+        assert span == timedelta(0)
+
+    def test_twenty_open_markets_do(self):
+        span = health_report.open_time_since(
+            [self.Open() for _ in range(20)],
+            NOW - timedelta(hours=6),
+            NOW,
+            stop_after=timedelta(hours=2),
+            quorum=20,
+        )
+
+        assert span > timedelta(hours=2)
+
+    def test_the_minimum_is_the_ranking_s_own(self):
+        """Taken from the cross-section rather than chosen here, or the two
+        drift and this check starts excusing a real outage."""
+        from app.brain.crosssection import MIN_CROSS_SECTION
+
+        assert health_report.MIN_TO_RANK == MIN_CROSS_SECTION

@@ -22,6 +22,11 @@ x-backend-env: &backend-env
   # Which brain each account trades, "login=strategy,...". Unset means every
   # account trades the incumbent, exactly as before brains were separable.
   MOLIDO_ACCOUNT_STRATEGIES: ${MOLIDO_ACCOUNT_STRATEGIES:-}
+  # The instruments an order may be placed in, by the symbol the order is
+  # sent as - XAUUSD, not the GCFUT series it was ranked on. Empty means no
+  # restriction. Narrows execution only: every brain still ranks the whole
+  # watchlist and every decision is still journalled.
+  MOLIDO_TRADED_SYMBOLS: ${MOLIDO_TRADED_SYMBOLS:-}
   # The council gate: how many brains must agree before an order is sent.
   MOLIDO_CONSENSUS_REQUIRED: ${MOLIDO_CONSENSUS_REQUIRED:-1}
   MOLIDO_ENV: production

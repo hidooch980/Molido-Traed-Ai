@@ -54,6 +54,11 @@ from sqlalchemy.orm import Session
 #: A job absent from here is a job this report cannot see, which is why the
 #: list is checked against the worker's schedule by a test rather than left
 #: to drift as jobs are added.
+#: How many markets must trade at once before a cross-sectional job has work.
+#: Taken from the ranking itself rather than chosen here: below this the
+#: cross-section is not a ranking and nothing is decided.
+MIN_TO_RANK = 20
+
 #: The fifth field says the job only has work while a market trades; the
 #: sixth names a column holding the symbol each row is about, when the table
 #: has one. That column is what makes the weekend judgement specific: a job is
@@ -62,7 +67,7 @@ from sqlalchemy.orm import Session
 #: crypto trades every hour of the weekend and never appears in the journal,
 #: because the ranking is narrowed to what the broker offers before it runs,
 #: so a union that included it would call a correctly quiet Sunday a failure.
-WATCHED: tuple[tuple[str, str, str, timedelta, bool, str | None], ...] = (
+WATCHED: tuple[tuple[str, str, str, timedelta, bool, str | None, int], ...] = (
     # An hour, not the cycle's fifteen minutes, for the three that ride the
     # bars. The cycle skips an entry whose next bar cannot have closed yet -
     # a daily bar was being fetched ninety-six times a day before that was
@@ -73,14 +78,14 @@ WATCHED: tuple[tuple[str, str, str, timedelta, bool, str | None], ...] = (
     #
     # Two hours of silence on an open market is still caught, which is what
     # the check is for. It has never taken less than that to notice by hand.
-    ("collect", "ingestion_runs", "started_at", timedelta(hours=1), True, None),
-    ("features", "feature_values", "computed_at", timedelta(hours=1), True, None),
-    ("bars", "ohlcv", "ingested_at", timedelta(hours=1), True, None),
+    ("collect", "ingestion_runs", "started_at", timedelta(hours=1), True, None, 1),
+    ("features", "feature_values", "computed_at", timedelta(hours=1), True, None, 1),
+    ("bars", "ohlcv", "ingested_at", timedelta(hours=1), True, None, 1),
     # An hour, not the cycle's fifteen minutes: the journal is unique on
     # (symbol, bar, arm), so a cycle that runs four times inside one H1 bar
     # writes on the first and is idempotent on the other three. The cadence a
     # job can achieve is the one it must be judged against.
-    ("decisions", "journal_entries", "created_at", timedelta(hours=1), True, "symbol"),
+    ("decisions", "journal_entries", "created_at", timedelta(hours=1), True, "symbol", MIN_TO_RANK),
     # Writing decisions and scoring them are different jobs that happen to
     # share a table, and only one of them was being watched. The resolver
     # stopped on 3 September with 82,622 entries open and the report stayed
@@ -89,11 +94,27 @@ WATCHED: tuple[tuple[str, str, str, timedelta, bool, str | None], ...] = (
     # Six hours, from what a working resolver actually did: 1,920, 4,777 and
     # 3,641 closures on the three days before it stopped. Half a working day
     # in which the whole fleet answered nothing is not a quiet patch.
-    ("resolutions", "journal_entries", "closed_at", timedelta(hours=6), True, "symbol"),
-    ("equity", "equity_samples", "recorded_at", timedelta(minutes=15), False, None),
-    ("episodes", "episodes", "created_at", timedelta(days=1), False, None),
-    ("provider conflicts", "data_quality_findings", "created_at", timedelta(days=1), False, None),
-    ("instrument dna", "symbol_profiles", "updated_at", timedelta(days=1), False, None),
+    (
+        "resolutions",
+        "journal_entries",
+        "closed_at",
+        timedelta(hours=6),
+        True,
+        "symbol",
+        MIN_TO_RANK,
+    ),
+    ("equity", "equity_samples", "recorded_at", timedelta(minutes=15), False, None, 1),
+    ("episodes", "episodes", "created_at", timedelta(days=1), False, None, 1),
+    (
+        "provider conflicts",
+        "data_quality_findings",
+        "created_at",
+        timedelta(days=1),
+        False,
+        None,
+        1,
+    ),
+    ("instrument dna", "symbol_profiles", "updated_at", timedelta(days=1), False, None, 1),
 )
 
 #: How many times its own cadence a job may miss before it is called stale.
@@ -119,6 +140,10 @@ class Check:
     #: the table has one. Used to age this job against the markets it is
     #: actually writing about rather than against every symbol watched.
     symbol_column: str | None = None
+    #: How many of those markets must be open at once before this job had
+    #: work to do. One for a job that sweeps instrument by instrument; the
+    #: cross-section minimum for one that ranks them against each other.
+    quorum: int = 1
 
     def age(self, now: datetime) -> timedelta | None:
         return None if self.newest is None else now - self.newest
@@ -193,14 +218,26 @@ OPEN_STEP = timedelta(minutes=15)
 
 
 def open_time_since(
-    calendars: list[Any], since: datetime, now: datetime, *, stop_after: timedelta
+    calendars: list[Any],
+    since: datetime,
+    now: datetime,
+    *,
+    stop_after: timedelta,
+    quorum: int = 1,
 ) -> timedelta:
-    """How long *any* watched market was open between `since` and `now`.
+    """How long enough of these markets were open between `since` and `now`.
 
-    The union rather than an average: these jobs sweep the whole watchlist, so
-    one open market is enough to give them work, and asking whether the median
-    instrument was trading would excuse a job that had stopped while crypto
-    was still running.
+    `quorum` is how many must be trading at once for the job to have had work.
+    One - the default - is the union: `collect`, `features` and `bars` sweep
+    the watchlist instrument by instrument, so a single open market is work
+    they owed, and asking whether the median instrument traded would excuse a
+    job that had stopped while crypto was still running.
+
+    `decisions` needs more than one, and that is not a refinement. The rule
+    ranks a cross-section, and a cross-section of four is not a ranking: on a
+    Sunday the only open markets are the four crypto series, which do reach
+    the journal, so a quorum of one called a correctly silent weekend a dead
+    cycle every week.
 
     Stops as soon as the answer can no longer change a verdict - the caller
     only needs to know whether the span exceeds a threshold, and counting a
@@ -216,7 +253,7 @@ def open_time_since(
     cursor = max(since, now - MAX_PLAUSIBLE_CLOSURE)
     span = cursor - since
     while cursor < now and span <= stop_after:
-        if any(c.is_open(cursor) for c in calendars):
+        if sum(1 for c in calendars if c.is_open(cursor)) >= quorum:
             span += OPEN_STEP
         cursor += OPEN_STEP
     return span
@@ -283,7 +320,7 @@ def gather(session: Session, *, watched: Any = WATCHED) -> list[Check]:
     reading this because it is busy.
     """
     checks: list[Check] = []
-    for job, table, column, cadence, open_only, symbol_column in watched:
+    for job, table, column, cadence, open_only, symbol_column, quorum in watched:
         # The table and column names come from the constant above, never from
         # a caller, so there is nothing here for a parameter to bind.
         row = session.execute(
@@ -301,6 +338,7 @@ def gather(session: Session, *, watched: Any = WATCHED) -> list[Check]:
                 cadence=cadence,
                 open_only=open_only,
                 symbol_column=symbol_column,
+                quorum=quorum,
             )
         )
     return checks
@@ -323,7 +361,11 @@ def report(session: Session, *, now: datetime | None = None) -> tuple[bool, str]
     for check in suspect:
         assert check.newest is not None
         open_ages[check.job] = open_time_since(
-            _calendars(session, check), check.newest, moment, stop_after=check.limit
+            _calendars(session, check),
+            check.newest,
+            moment,
+            stop_after=check.limit,
+            quorum=check.quorum,
         )
 
     stale = [c for c in checks if c.stale(moment, open_age=open_ages.get(c.job))]
