@@ -195,6 +195,18 @@ class Settings(BaseSettings):
     #: account trading a brain nobody assigned is the mistake this exists
     #: to prevent.
     account_strategies: str = ""
+    #: The instruments an order may be placed in, named by the symbol the
+    #: order is actually sent as - `XAUUSD`, not the `GCFUT` series it was
+    #: ranked on. Comma-separated; empty means no restriction, which is what
+    #: every deployment did before this existed.
+    #:
+    #: This narrows *execution* only. Every brain still ranks the whole
+    #: watchlist and every decision is still journalled, because narrowing the
+    #: ranking would change the measurement rather than the trading - and the
+    #: cross-section has a minimum of twenty below which it stops being a
+    #: ranking at all. What is chosen here is which instruments the accounts
+    #: carry, which is a decision about the book, not about the evidence.
+    traded_symbols: str = ""
     #: How many brains must agree on a symbol and side before an order is
     #: sent. 1 is a brain acting alone; 2 is the roadmap's agreement gate.
     #: Non-trading brains vote too - recording them is what buys their vote.

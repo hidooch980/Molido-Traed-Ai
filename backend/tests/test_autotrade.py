@@ -2017,6 +2017,60 @@ class TestGoldIsAdmittedOnTheInstrumentNotTheFeed:
         assert autotrade._tradeable_symbol("GCFUT") in {"XAUUSD"}
 
 
+class TestTheTradedUniverse:
+    """The owner's list of what the accounts may carry.
+
+    Checked on the symbol the order is *sent* as, and only there. Narrowing
+    the ranking instead would change the measurement rather than the trading,
+    and below twenty instruments the cross-section stops being a ranking at
+    all - so a list of twenty written into the universe would either break the
+    ranking or be silently discarded, which is worse than an error.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _forget_the_setting_afterwards(self):
+        """The settings object is cached for the process. A test that leaves
+        a universe cached refuses every symbol in every test that follows,
+        which is how this class first broke fifteen unrelated ones."""
+        from app.core.config import get_settings
+
+        get_settings.cache_clear()
+        yield
+        get_settings.cache_clear()
+
+    def test_an_empty_setting_restricts_nothing(self, monkeypatch):
+        """Every deployment before this list existed, and the one that comes
+        after the list is removed again."""
+        from app.core.config import get_settings
+
+        monkeypatch.setenv("MOLIDO_TRADED_SYMBOLS", "")
+        get_settings.cache_clear()
+
+        assert autotrade.traded_universe() == frozenset()
+
+    def test_the_list_is_read_case_and_space_insensitively(self, monkeypatch):
+        from app.core.config import get_settings
+
+        monkeypatch.setenv("MOLIDO_TRADED_SYMBOLS", " eurusd , XAUUSD ")
+        get_settings.cache_clear()
+
+        assert autotrade.traded_universe() == frozenset({"EURUSD", "XAUUSD"})
+
+    def test_gold_is_named_by_the_instrument_that_fills(self, monkeypatch):
+        """The rule ranks GCFUT and the broker fills XAUUSD. A list written in
+        the analysis names would refuse the one instrument it was written to
+        allow - and it is the cheapest one the account can trade."""
+        from app.core.config import get_settings
+
+        monkeypatch.setenv("MOLIDO_TRADED_SYMBOLS", "XAUUSD")
+        get_settings.cache_clear()
+
+        universe = autotrade.traded_universe()
+
+        assert autotrade._tradeable_symbol("GCFUT") in universe
+        assert "GCFUT" not in universe
+
+
 class TestTheCouncil:
     """The agreement gate. One brain moving alone is a hypothesis, not a
     trade - and a brain that only records still gets a vote, because

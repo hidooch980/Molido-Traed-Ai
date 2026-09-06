@@ -1,7 +1,7 @@
 """Why a decision was not traded, kept with the decision.
 
-Sixteen different refusals are produced in the order stage and not one of
-them was written down. They went into the cycle report, which is a log line,
+Seventeen different refusals are produced in the order stage and not one of
+them was written down when this was first counted. They went into the cycle report, which is a log line,
 and when the log rotated the reason was gone for good.
 
 The journal already resolves every rule-arm decision whether or not an order
@@ -27,7 +27,7 @@ class TestEveryRefusalIsRecorded:
         source = inspect.getsource(autotrade)
 
         assert source.count("skipped.append(") == 1
-        assert source.count("refuse(entry,") == 16
+        assert source.count("refuse(entry,") == 17
 
     def test_the_one_remaining_append_is_the_recorder_itself(self):
         source = inspect.getsource(autotrade.run_cycle)

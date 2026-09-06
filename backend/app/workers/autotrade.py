@@ -842,6 +842,20 @@ def _currencies(symbol: str) -> tuple[str | None, str | None]:
     return base, quote
 
 
+def traded_universe() -> frozenset[str]:
+    """The instruments an order may be placed in, or empty for no limit.
+
+    Named by the symbol the order is *sent* as, which is not always the one
+    the rule ranked: a gold decision is ranked on the futures series and
+    filled in spot XAUUSD, and a list written in the analysis names would
+    quietly refuse the one instrument it was written to allow.
+    """
+    from app.core.config import get_settings
+
+    raw = str(getattr(get_settings(), "traded_symbols", "") or "")
+    return frozenset(piece.strip().upper() for piece in raw.split(",") if piece.strip())
+
+
 def _tradeable_symbol(symbol: str) -> str:
     """The instrument an order for this analysis symbol is placed in."""
     return EXECUTION_SYMBOL.get(symbol, symbol)
@@ -1512,6 +1526,22 @@ def run_cycle(
         # instrument the account will actually carry: a GCFUT decision and
         # an XAUUSD position are the same exposure under two names.
         traded_as = _tradeable_symbol(entry.symbol)
+
+        # The owner's list of what the accounts may carry, checked on the
+        # symbol the order is sent as. Empty means no list, which is every
+        # deployment before one was written.
+        #
+        # Here rather than in the ranking: the cross-section stops being a
+        # ranking below twenty instruments, so narrowing the universe there
+        # would either break the measurement or - because the narrowing is
+        # discarded when too little survives - silently do nothing at all,
+        # which is the worse of the two.
+        universe = traded_universe()
+        if universe and traded_as not in universe:
+            refuse(entry, f"{traded_as} is not in the instruments this "
+                "deployment is set to trade")
+            continue
+
         if traded_as in held:
             refuse(entry, "the account already holds a position in it, "
                 "and a second one doubles an exposure that was sized for one")
