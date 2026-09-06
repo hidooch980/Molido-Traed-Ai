@@ -71,6 +71,15 @@ WATCHED: tuple[tuple[str, str, str, timedelta, bool, str | None], ...] = (
     # writes on the first and is idempotent on the other three. The cadence a
     # job can achieve is the one it must be judged against.
     ("decisions", "journal_entries", "created_at", timedelta(hours=1), True, "symbol"),
+    # Writing decisions and scoring them are different jobs that happen to
+    # share a table, and only one of them was being watched. The resolver
+    # stopped on 3 September with 82,622 entries open and the report stayed
+    # green for three days, because the journal kept being written to.
+    #
+    # Six hours, from what a working resolver actually did: 1,920, 4,777 and
+    # 3,641 closures on the three days before it stopped. Half a working day
+    # in which the whole fleet answered nothing is not a quiet patch.
+    ("resolutions", "journal_entries", "closed_at", timedelta(hours=6), True, "symbol"),
     ("equity", "equity_samples", "recorded_at", timedelta(minutes=15), False, None),
     ("episodes", "episodes", "created_at", timedelta(days=1), False, None),
     ("provider conflicts", "data_quality_findings", "created_at", timedelta(days=1), False, None),

@@ -113,12 +113,22 @@ class TestEveryWatchedJobNamesRealEvidence:
             assert isinstance(open_only, bool)
             assert symbol_column is None or symbol_column
 
-    def test_no_table_is_watched_twice_under_two_names(self):
-        """Two jobs sharing one table means one of them is not really being
-        checked, and the report would say both are fine when one had died."""
-        tables = [table for _, table, _, _, _, _ in health_report.WATCHED]
+    def test_no_two_jobs_read_the_same_evidence(self):
+        """Two jobs reading one column means one of them is not really being
+        checked, and the report would say both are fine when one had died.
 
-        assert len(tables) == len(set(tables))
+        The table alone is not the evidence. Writing decisions and scoring
+        them are different jobs that share `journal_entries` and fail
+        separately - which is exactly how a resolver that had stopped for
+        three days sat under a green line while the journal filled."""
+        evidence = [(table, column) for _, table, column, _, _, _ in health_report.WATCHED]
+
+        assert len(evidence) == len(set(evidence))
+
+    def test_scoring_the_journal_is_watched_as_well_as_filling_it(self):
+        jobs = {job for job, *_ in health_report.WATCHED}
+
+        assert {"decisions", "resolutions"} <= jobs
 
     def test_the_frequent_jobs_are_watched_at_the_cycle_cadence(self):
         by_job = {job: cadence for job, _, _, cadence, _, _ in health_report.WATCHED}
