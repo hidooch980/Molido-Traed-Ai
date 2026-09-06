@@ -79,6 +79,7 @@ def entry(
     target=102.5,
     at=NOW,
     price_source=SOURCE_PUBLIC,
+    timeframe=None,
 ):
     row = JournalEntry(
         symbol="TESTFX",
@@ -86,6 +87,7 @@ def entry(
         opened_at=at,
         arm=ARM_RULE,
         price_source=price_source,
+        timeframe=timeframe,
         before={
             "entry": price,
             "stop": stop,
@@ -374,3 +376,109 @@ class TestAnEntryThatCanNeverResolveIsRetiredOnce:
         assert report["excluded_unscoreable"] == 0
         assert report["still_open"] == 1
         assert session.get(JournalEntry, row.id).closed_at is None
+
+
+class TestADecisionIsScoredOnItsOwnTimeframe:
+    """The collector calls this once. Before the second brain arrived every
+    entry was H1 and the caller's default was harmless; afterwards every M5
+    and M15 decision the fleet recorded was being read against H1 bars - the
+    wrong prices, and a horizon 120 hours wide instead of 120 five-minute
+    bars."""
+
+    def m5_bars(self, session, provider, instrument, prices, *, start=NOW):
+        for i, (low, high) in enumerate(prices, start=1):
+            session.add(
+                Bar(
+                    instrument_id=instrument.id,
+                    timeframe=Timeframe.M5.value,
+                    provider_id=provider.id,
+                    event_time=start + timedelta(minutes=5 * i),
+                    revision=1,
+                    ingested_at=start,
+                    open=(low + high) / 2,
+                    high=high,
+                    low=low,
+                    close=(low + high) / 2,
+                    volume=1,
+                    quality_score=1.0,
+                )
+            )
+        session.flush()
+
+    def test_an_m5_entry_resolves_on_m5_bars(self, session, provider, symbol):
+        row = entry(session, timeframe=Timeframe.M5.value)
+        self.m5_bars(session, provider, symbol, [(99.0, 101.0), (101.0, 103.0)])
+
+        report = resolve.resolve_open(session, now=NOW + timedelta(hours=5))
+
+        assert report["resolved"] == 1
+        assert row.outcome == "win"
+
+    def test_h1_bars_cannot_answer_an_m5_entry(self, session, provider, symbol):
+        """The bars of another timeframe are another instrument's prices as
+        far as this decision is concerned, and scoring on them would agree
+        with nothing the measurement did."""
+        row = entry(session, timeframe=Timeframe.M5.value)
+        bars(session, provider, symbol, [(99.0, 101.0), (101.0, 103.0)])
+
+        report = resolve.resolve_open(session, now=NOW + timedelta(hours=5))
+
+        assert report["resolved"] == 0
+        assert row.outcome is None
+
+    def test_an_entry_without_a_timeframe_still_uses_the_caller_s(self, session, provider, symbol):
+        """Entries older than the column exist, and they were all H1."""
+        row = entry(session)
+        bars(session, provider, symbol, [(99.0, 101.0), (101.0, 103.0)])
+
+        resolve.resolve_open(session, now=NOW + timedelta(hours=5))
+
+        assert row.outcome == "win"
+
+
+class TestTheBoundedPassRotates:
+    """Ordered by `opened_at`, the same oldest entries came back every cycle.
+    Once the head of that queue was entries the market had not answered yet,
+    nothing behind it was ever looked at again - production stopped resolving
+    anything on 3 September with 82,622 entries open, every cycle reporting
+    `resolved: 0` while doing exactly what it was written to do."""
+
+    def test_an_unanswerable_entry_does_not_hide_the_one_behind_it(
+        self, session, provider, symbol
+    ):
+        # Open, and nothing on its own timeframe can answer it yet.
+        blocking = entry(
+            session, at=NOW - timedelta(days=1), timeframe=Timeframe.M5.value
+        )
+        answerable = entry(session)
+        bars(session, provider, symbol, [(99.0, 101.0), (101.0, 103.0)])
+        # Both last examined at the same instant, so the tie falls to the
+        # older entry and the blocking one is genuinely at the head.
+        blocking.updated_at = answerable.updated_at = NOW
+        session.flush()
+
+        first = resolve.resolve_open(
+            session, now=NOW + timedelta(hours=5), limit=1
+        )
+        second = resolve.resolve_open(
+            session, now=NOW + timedelta(hours=5), limit=1
+        )
+
+        assert first["resolved"] == 0
+        assert blocking.outcome is None
+        assert second["resolved"] == 1
+        assert answerable.outcome == "win"
+
+    def test_examining_an_entry_stamps_it_even_when_nothing_changed(
+        self, session, provider, symbol
+    ):
+        """A pass that resolves nothing still has to move the queue on, or the
+        rotation is not a rotation."""
+        row = entry(session)
+        row.updated_at = NOW
+        session.flush()
+        moment = NOW + timedelta(hours=5)
+
+        resolve.resolve_open(session, now=moment, limit=1)
+
+        assert row.updated_at == moment

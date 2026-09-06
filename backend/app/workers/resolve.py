@@ -131,6 +131,22 @@ def resolve_open(
 
     Bounded per pass so one cycle cannot spend an hour walking a backlog and
     starve the collection it rides on.
+
+    **The bound has to rotate.** Ordered by `opened_at`, the same oldest five
+    hundred entries came back every cycle, and once the head of that queue was
+    entries the market had not answered yet, nothing behind it was ever looked
+    at again. Production stopped resolving anything at all on 3 September with
+    82,622 entries open and growing by thousands a day, and every cycle after
+    that reported `resolved: 0` while working exactly as written. So the queue
+    is ordered by when each entry was last examined, and examining one stamps
+    it - a pass that resolves nothing still moves the queue on.
+
+    **`timeframe` is a fallback, not the answer.** Entries are scored on the
+    bars of their own timeframe. The collector calls this once, so every M5
+    and M15 decision the fleet has recorded since the second brain arrived was
+    being read against H1 bars: the wrong prices, a horizon 120 hours wide
+    instead of 120 five-minute bars, and a resolution that could not agree
+    with the measurement it exists to confirm.
     """
     moment = (now or datetime.now(UTC)).astimezone(UTC)
 
@@ -143,10 +159,15 @@ def resolve_open(
         ).all()
     }
 
+    # Least recently examined first. `updated_at` means "when the market was
+    # last asked about this entry", which is what makes the pass rotate: an
+    # entry that stays open is stamped anyway and goes to the back of the
+    # queue, so a head of unanswerable entries cannot hide the rest of the
+    # journal behind it.
     open_entries = session.scalars(
         select(JournalEntry)
         .where(JournalEntry.closed_at.is_(None))
-        .order_by(JournalEntry.opened_at)
+        .order_by(JournalEntry.updated_at, JournalEntry.opened_at)
         .limit(limit)
     ).all()
 
@@ -158,6 +179,11 @@ def resolve_open(
     by_source: dict[str, int] = {}
 
     for entry in open_entries:
+        # Stamped before anything can `continue`, because every path below is
+        # a path this entry has been examined on and none of them may leave it
+        # at the head of the queue.
+        entry.updated_at = moment
+
         instrument = session.scalar(
             select(Instrument).where(Instrument.symbol == entry.symbol)
         )
@@ -220,11 +246,16 @@ def resolve_open(
         # Strictly after the entry bar. The entry bar's own high and low say
         # nothing about what happened next, and using them is lookahead
         # wearing the costume of a fill.
+        # The timeframe the decision was taken on, never the caller's. An M5
+        # entry read against H1 bars is scored on prices it never saw, over a
+        # window twelve times too wide.
+        scale = entry.timeframe or timeframe.value
+
         bars = session.scalars(
             select(Bar)
             .where(
                 Bar.instrument_id == instrument.id,
-                Bar.timeframe == timeframe.value,
+                Bar.timeframe == scale,
                 # The series the decision was taken on, never the other one.
                 # The two differ by a third of the stop distance, and the edge
                 # being measured is a fiftieth of it.
