@@ -120,6 +120,22 @@ def _outcome(
     return None
 
 
+def _with_retraction(entry: JournalEntry, verdict: dict[str, Any]) -> dict[str, Any]:
+    """The new verdict, carrying any withdrawn one along with it.
+
+    `after` is written whole, which quietly erased the record of a verdict
+    that had been retracted - and a retraction that disappears the moment the
+    entry is re-scored is not a correction beside history, it is a rewrite of
+    it with an extra step. 486 entries lost theirs that way before this
+    existed, on the morning the mis-scored ones were re-opened.
+    """
+    previous = entry.after or {}
+    retracted = previous.get("retracted")
+    if retracted is None:
+        return verdict
+    return {**verdict, "retracted": retracted, "retracted_reason": previous.get("reason")}
+
+
 def resolve_open(
     session: Session,
     *,
@@ -278,13 +294,16 @@ def resolve_open(
                 entry.closed_at = moment
                 entry.outcome = "abandoned"
                 entry.r_multiple = None
-                entry.after = {
-                    "reason": (
-                        "neither the stop nor the target was reached within "
-                        f"{HORIZON} bars, so this is dropped rather than scored "
-                        "- the historical measurement dropped these too"
-                    )
-                }
+                entry.after = _with_retraction(
+                    entry,
+                    {
+                        "reason": (
+                            "neither the stop nor the target was reached within "
+                            f"{HORIZON} bars, so this is dropped rather than "
+                            "scored - the historical measurement dropped these too"
+                        )
+                    },
+                )
                 abandoned += 1
             else:
                 still_open += 1
@@ -294,10 +313,13 @@ def resolve_open(
         entry.closed_at = bars[-1].event_time
         entry.outcome = outcome
         entry.r_multiple = r_multiple
-        entry.after = {
-            "bars_to_resolve": len(bars),
-            "price_source": entry.price_source,
-        }
+        entry.after = _with_retraction(
+            entry,
+            {
+                "bars_to_resolve": len(bars),
+                "price_source": entry.price_source,
+            },
+        )
         resolved += 1
         by_source[entry.price_source] = by_source.get(entry.price_source, 0) + 1
 

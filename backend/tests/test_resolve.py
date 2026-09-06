@@ -482,3 +482,46 @@ class TestTheBoundedPassRotates:
         resolve.resolve_open(session, now=moment, limit=1)
 
         assert row.updated_at == moment
+
+
+class TestARetractedVerdictSurvivesTheRescore:
+    """`after` is written whole, which erased the record of a withdrawn
+    verdict the moment the entry was scored again - a retraction that vanishes
+    on re-scoring is a rewrite of history with an extra step. 486 entries lost
+    theirs before this test existed."""
+
+    def test_the_withdrawn_verdict_is_still_there_afterwards(
+        self, session, provider, symbol
+    ):
+        row = entry(session)
+        row.after = {"retracted": {"outcome": "win"}, "reason": "scored on H1 bars"}
+        session.flush()
+        bars(session, provider, symbol, [(99.0, 101.0), (101.0, 103.0)])
+
+        resolve.resolve_open(session, now=NOW + timedelta(hours=5))
+
+        assert row.outcome == "win"
+        assert row.after["retracted"] == {"outcome": "win"}
+        assert row.after["retracted_reason"] == "scored on H1 bars"
+        assert row.after["bars_to_resolve"] == 2
+
+    def test_an_entry_that_was_never_retracted_gains_no_such_key(
+        self, session, provider, symbol
+    ):
+        row = entry(session)
+        bars(session, provider, symbol, [(99.0, 101.0), (101.0, 103.0)])
+
+        resolve.resolve_open(session, now=NOW + timedelta(hours=5))
+
+        assert "retracted" not in row.after
+
+    def test_it_survives_an_abandonment_too(self, session, provider, symbol):
+        row = entry(session)
+        row.after = {"retracted": {"outcome": "loss"}, "reason": "scored on H1 bars"}
+        session.flush()
+        bars(session, provider, symbol, [(99.5, 100.5)] * (resolve.HORIZON + 5))
+
+        resolve.resolve_open(session, now=NOW + timedelta(days=30))
+
+        assert row.outcome == "abandoned"
+        assert row.after["retracted"] == {"outcome": "loss"}
