@@ -12,6 +12,22 @@ const nextConfig = {
       process.env.NEXT_PUBLIC_BUILD ||
       new Date().toISOString().slice(0, 16).replace("T", " "),
   },
+  // In production Caddy owns `/api/*` and forwards it to the API before Next
+  // ever sees the request. Locally there is no Caddy, so the relative fetches
+  // the components make - `Shell.tsx` asks for `/api/v1/execution/autopilot`
+  // on its own origin - had nothing to answer them and every page loaded with
+  // a 404 behind it.
+  //
+  // Development only, and deliberately so: in production this would point at
+  // the deployment's own public URL, which is the address Caddy is already
+  // serving, and a rewrite there would route the request back into the server
+  // that sent it.
+  async rewrites() {
+    if (process.env.NODE_ENV === "production") return [];
+    const api = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+    return [{ source: "/api/:path*", destination: `${api}/api/:path*` }];
+  },
+
   async headers() {
     return [
       {
