@@ -107,22 +107,33 @@ class TestTheAgeReadsAtAGlance:
 class TestEveryWatchedJobNamesRealEvidence:
     def test_each_entry_is_a_job_a_table_a_column_and_a_cadence(self):
         for entry in health_report.WATCHED:
-            job, table, column, cadence = entry
+            job, table, column, cadence, open_only, symbol_column = entry
             assert job and table and column
             assert cadence > timedelta(0)
+            assert isinstance(open_only, bool)
+            assert symbol_column is None or symbol_column
 
     def test_no_table_is_watched_twice_under_two_names(self):
         """Two jobs sharing one table means one of them is not really being
         checked, and the report would say both are fine when one had died."""
-        tables = [table for _, table, _, _ in health_report.WATCHED]
+        tables = [table for _, table, _, _, _, _ in health_report.WATCHED]
 
         assert len(tables) == len(set(tables))
 
     def test_the_frequent_jobs_are_watched_at_the_cycle_cadence(self):
-        by_job = {job: cadence for job, _, _, cadence in health_report.WATCHED}
+        by_job = {job: cadence for job, _, _, cadence, _, _ in health_report.WATCHED}
 
         assert by_job["collect"] <= timedelta(minutes=15)
-        assert by_job["decisions"] <= timedelta(minutes=15)
+        assert by_job["features"] <= timedelta(minutes=15)
+        assert by_job["bars"] <= timedelta(minutes=15)
+
+    def test_decisions_are_watched_at_the_bar_they_are_taken_on(self):
+        """The journal is unique on (symbol, bar, arm), so three of every four
+        cycles inside an H1 bar write nothing and are meant to. Judging that
+        against the cycle's cadence calls a working job dead every hour."""
+        by_job = {job: cadence for job, _, _, cadence, _, _ in health_report.WATCHED}
+
+        assert by_job["decisions"] == timedelta(hours=1)
 
 
 class TestTheReportRefusesToLookHealthyWhenItIsNot:
@@ -165,6 +176,154 @@ class TestTheReportRefusesToLookHealthyWhenItIsNot:
 
         assert "geometry stop" in text
         assert "risk" in text
+
+
+class TestFreshnessIsReadFromAWriteTime:
+    """The bar's own timestamp is not evidence that a job ran.
+
+    `features` and `bars` were read from `event_time`. The newest H1 bar's
+    event_time is never fresher than the last hourly close, so against a
+    fifteen-minute threshold both lines went red for three quarters of every
+    hour while both jobs were running perfectly - and a check that is red
+    most of the time is a check nobody reads.
+    """
+
+    def test_no_watched_column_is_an_event_time(self):
+        columns = {job: column for job, _, column, _, _, _ in health_report.WATCHED}
+
+        assert columns["features"] == "computed_at"
+        assert columns["bars"] == "ingested_at"
+        assert "event_time" not in set(columns.values())
+
+
+class TestAShutMarketIsNotAStoppedJob:
+    """A job that only has work while a market trades goes quiet at the
+    weekend by design. The calendar is consulted only when wall-clock time
+    has already failed, because open time can never exceed wall-clock time."""
+
+    class AlwaysShut:
+        def is_open(self, moment):
+            return False
+
+    class AlwaysOpen:
+        def is_open(self, moment):
+            return True
+
+    def open_check(self, **over):
+        base = dict(
+            job="decisions",
+            table="journal_entries",
+            rows=100,
+            newest=NOW - timedelta(hours=6),
+            cadence=timedelta(minutes=15),
+            open_only=True,
+        )
+        base.update(over)
+        return Check(**base)
+
+    def test_six_quiet_weekend_hours_are_not_stale(self):
+        assert self.open_check().stale(NOW, open_age=timedelta(0)) is False
+
+    def test_the_same_six_hours_on_an_open_market_are_stale(self):
+        assert self.open_check().stale(NOW, open_age=timedelta(hours=6)) is True
+
+    def test_a_job_that_runs_regardless_gets_no_such_excuse(self):
+        """`equity` samples whether or not anything is trading, so a calendar
+        must not be able to explain its silence away."""
+        entry = self.open_check(job="equity", open_only=False)
+
+        assert entry.stale(NOW, open_age=timedelta(0)) is True
+
+    def test_the_line_says_how_much_of_the_age_was_open(self):
+        line = self.open_check().line(NOW, open_age=timedelta(0))
+
+        assert "6h ago" in line
+        assert "0s of it open" in line
+
+    def test_a_fresh_job_never_mentions_open_time(self):
+        """On an open market the two numbers are the same, and a column that
+        repeats itself is a column nobody reads."""
+        line = self.open_check(newest=NOW - timedelta(minutes=5)).line(
+            NOW, open_age=timedelta(minutes=5)
+        )
+
+        assert "of it open" not in line
+
+
+class TestAJobIsAgedAgainstTheMarketsItActsOn:
+    """Crypto trades every hour of the weekend and never reaches the journal:
+    the ranking is narrowed to what the broker offers before it runs. Aging
+    `decisions` against the whole watchlist would therefore report a correct
+    Sunday silence as a dead cycle, every weekend."""
+
+    def test_decisions_are_narrowed_by_the_symbols_they_wrote(self):
+        by_job = {
+            job: symbol_column
+            for job, _, _, _, _, symbol_column in health_report.WATCHED
+        }
+
+        assert by_job["decisions"] == "symbol"
+
+    def test_the_sweeping_jobs_are_not_narrowed(self):
+        """`collect`, `features` and `bars` cover the whole watchlist, so one
+        open market anywhere is work they owed."""
+        by_job = {
+            job: symbol_column
+            for job, _, _, _, _, symbol_column in health_report.WATCHED
+        }
+
+        assert by_job["collect"] is None
+        assert by_job["features"] is None
+        assert by_job["bars"] is None
+
+
+class TestOpenTimeIsCountedNotGuessed:
+    def test_a_shut_market_contributes_nothing(self):
+        span = health_report.open_time_since(
+            [TestAShutMarketIsNotAStoppedJob.AlwaysShut()],
+            NOW - timedelta(hours=6),
+            NOW,
+            stop_after=timedelta(minutes=30),
+        )
+
+        assert span == timedelta(0)
+
+    def test_one_open_market_is_enough(self):
+        """The union, not the average: these jobs sweep the whole watchlist,
+        so one open market gives them work to do."""
+        span = health_report.open_time_since(
+            [
+                TestAShutMarketIsNotAStoppedJob.AlwaysShut(),
+                TestAShutMarketIsNotAStoppedJob.AlwaysOpen(),
+            ],
+            NOW - timedelta(hours=6),
+            NOW,
+            stop_after=timedelta(minutes=30),
+        )
+
+        assert span > timedelta(minutes=30)
+
+    def test_no_calendar_grants_no_excuse(self):
+        """A caller with no calendar to offer is exactly where the report was
+        before there was one."""
+        span = health_report.open_time_since(
+            [], NOW - timedelta(hours=6), NOW, stop_after=timedelta(minutes=30)
+        )
+
+        assert span == timedelta(hours=6)
+
+    def test_the_walk_is_bounded_by_the_longest_plausible_closure(self):
+        """No exchange shuts for ten days, so past that the feed is the
+        explanation - and the bound stops a dead job walking a year of
+        fifteen-minute slots."""
+        span = health_report.open_time_since(
+            [TestAShutMarketIsNotAStoppedJob.AlwaysOpen()],
+            NOW - timedelta(days=365),
+            NOW,
+            stop_after=timedelta(days=400),
+        )
+
+        assert span > timedelta(days=354)
 
 
 class _One:
