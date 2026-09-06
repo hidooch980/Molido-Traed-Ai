@@ -434,3 +434,54 @@ class TestACrossSectionNeedsMoreThanOneOpenMarket:
         from app.brain.crosssection import MIN_CROSS_SECTION
 
         assert health_report.MIN_TO_RANK == MIN_CROSS_SECTION
+
+
+class TestTheAlertChannelIsReportedBesideTheCycles:
+    """A channel nobody can hear from is the same failure as a job nobody
+    watches, and this deployment already spent three days on that. So the one
+    command an operator runs says whether an alert would reach anybody."""
+
+    def test_a_working_channel_says_so(self, monkeypatch):
+        from app.integrations import telegram
+
+        monkeypatch.setattr(telegram, "configured", lambda session=None: (True, None))
+        session = TestTheReportRefusesToLookHealthyWhenItIsNot.FakeSession(
+            [(10, NOW - timedelta(minutes=1)) for _ in health_report.WATCHED]
+        )
+
+        _, text = health_report.report(session, now=NOW)
+
+        assert "alerts: reachable" in text
+
+    def test_an_unconfigured_channel_says_why(self, monkeypatch):
+        from app.integrations import telegram
+
+        monkeypatch.setattr(
+            telegram, "configured", lambda session=None: (False, "no bot token is set")
+        )
+        session = TestTheReportRefusesToLookHealthyWhenItIsNot.FakeSession(
+            [(10, NOW - timedelta(minutes=1)) for _ in health_report.WATCHED]
+        )
+
+        _, text = health_report.report(session, now=NOW)
+
+        assert "alerts: OFF - no bot token is set" in text
+
+    def test_a_broken_lookup_does_not_break_the_report(self, monkeypatch):
+        """Every other line still has to print. A health report that dies on
+        one detail is read exactly when it is least able to fail."""
+        from app.integrations import telegram
+
+        def boom(session=None):
+            raise RuntimeError("no")
+
+        monkeypatch.setattr(telegram, "configured", boom)
+        session = TestTheReportRefusesToLookHealthyWhenItIsNot.FakeSession(
+            [(10, NOW - timedelta(minutes=1)) for _ in health_report.WATCHED]
+        )
+
+        healthy, text = health_report.report(session, now=NOW)
+
+        assert healthy is True
+        assert "alerts: could not be read" in text
+        assert "all cycles fresh" in text

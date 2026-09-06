@@ -389,6 +389,28 @@ def report(session: Session, *, now: datetime | None = None) -> tuple[bool, str]
     for piece in [p for p in strategies.split(",") if p.strip()]:
         lines.append(f"  ---   {piece.strip()}")
 
+    # Whether an alert would reach anybody, printed beside the cycles.
+    #
+    # A channel nobody can hear from is the same failure as a job nobody
+    # watches, and this deployment already spent three days on that: the
+    # resolver was dead and the evidence lived only where nobody looked. So
+    # the one command an operator runs says whether the alert path is open.
+    #
+    # `configured` reads the stored settings and asks nothing of the network.
+    # `check` would prove the token by calling Telegram, and a health report
+    # that waits on somebody else's API has become the outage it reports.
+    try:
+        from app.integrations import telegram
+
+        open_channel, why = telegram.configured(session)
+        lines.append(
+            "  ---   alerts: reachable"
+            if open_channel
+            else f"  ---   alerts: OFF - {why}"
+        )
+    except Exception:  # noqa: BLE001 - a health report never fails on a detail
+        lines.append("  ---   alerts: could not be read")
+
     if stale:
         lines.append(
             f"STALE: {', '.join(c.job for c in stale)} - "
