@@ -43,6 +43,7 @@ that.
 
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
@@ -478,6 +479,41 @@ def _portfolio_headroom(
     return verdict.max_additional_risk_r, ""
 
 
+#: Four digits or more. A shorter run in a label is as likely to be a phase,
+#: a year or a balance as an account number.
+_LOGIN_IN_LABEL = re.compile(r"\d{4,}")
+
+
+def _label_names(label: str, login: str) -> bool:
+    """True when this label claims the account currently published.
+
+    The bare number used to be the only form that bound one registration to
+    one account, and a label written the way anybody writes one -
+    "FTMO-Demo 1514533027" - fell through to the branch that governs every
+    terminal. A single challenge registration then refused all six demo
+    accounts against a rulebook that was not theirs, twenty minutes before
+    the week opened, and what it printed was about the rulebook being
+    incomplete rather than about the account it should never have been
+    applied to.
+
+    So a login number sitting inside a label binds it too.
+    """
+    label = (label or "").strip()
+    if not login:
+        return False
+    return label == login or login in _LOGIN_IN_LABEL.findall(label)
+
+
+def _names_a_login(label: str) -> bool:
+    """True when the label names some account number.
+
+    Reached only when it is not the published one, so it is somebody else's
+    registration and is dropped - the rule the bare-number form always had,
+    now reading numbers wherever they sit in the label.
+    """
+    return bool(_LOGIN_IN_LABEL.findall((label or "").strip()))
+
+
 def _challenge_gate(
     session: Session,
     published: dict[str, Any],
@@ -544,14 +580,12 @@ def _challenge_gate(
     # like "my challenge" - keeps the old behaviour, because a name is not a
     # claim about which login it belongs to.
     login = str(published.get("login") or "").strip()
-    mine = [v for v in registered if v.account.label.strip() == login]
+    mine = [v for v in registered if _label_names(v.account.label, login)]
     if mine:
         registered = mine
     else:
         registered = [
-            v
-            for v in registered
-            if not (v.account.label.strip().isdigit() and v.account.label.strip() != login)
+            v for v in registered if not _names_a_login(v.account.label)
         ]
         if not registered:
             return True, "", None

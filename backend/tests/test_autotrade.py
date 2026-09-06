@@ -2199,6 +2199,36 @@ class TestARulebookBindsItsOwnAccount:
 
         assert allowed is False
 
+    def test_a_login_inside_a_label_binds_it_too(self, session):
+        """The bare number was the only form that bound one registration to
+        one account, and nobody labels an account that way. "FTMO-Demo
+        1514533027" therefore governed every terminal: a single challenge
+        registration refused all six demo accounts against a rulebook that was
+        not theirs, twenty minutes before the week opened."""
+        self.register(session, "FTMO-Demo 34838666")
+
+        allowed, reason, _ = self.gate(session, "5055261836", 100.0)
+
+        assert allowed is True, reason
+
+    def test_and_it_still_binds_the_account_it_names(self, session):
+        self.register(session, "FTMO-Demo 34838666")
+
+        allowed, reason, _ = self.gate(session, "34838666", 100.0)
+
+        assert allowed is False
+        assert "drawdown" in reason or "challenge" in reason
+
+    def test_a_short_number_is_not_read_as_a_login(self, session):
+        """A label may carry a phase, a year or a size. Only a run of four
+        digits or more is treated as an account number."""
+        self.register(session, "challenge phase 2")
+
+        allowed, _, _ = self.gate(session, "5055261836", 100.0)
+
+        assert allowed is False
+
+
 
 class TestTheBrainsMustNotContradictEachOther:
     """Counting agreement does not catch a contradiction: each side has its
