@@ -54,6 +54,16 @@ terminal quiet     900        no       no    # stale for some other reason
 # A terminal nobody logged into: silent on purpose.
 mkdir -p "$ROOT/.mt5empty/$SUFFIX"; echo '{}' > "$ROOT/.mt5empty/$SUFFIX/molido_account.json"
 
+# A terminal nobody logged into that is *carrying a payload*. This is the case
+# the guard used to skip entirely: the login check gated both halves, so a
+# fresh prefix could never be defused. Terminal I was built by copying another
+# prefix, inherited its payload, and looped from its first start while the
+# guard passed over it every five minutes.
+mkdir -p "$ROOT/.mt5fresh/$SUFFIX" "$ROOT/.mt5fresh/drive_c/Program Files/MetaTrader 5/logs"
+mkdir -p "$ROOT/.mt5fresh/drive_c/users/root/AppData/Roaming/MetaQuotes/Terminal/ABC/liveupdate"
+echo binary > "$ROOT/.mt5fresh/drive_c/users/root/AppData/Roaming/MetaQuotes/Terminal/ABC/liveupdate/terminal64.exe"
+echo "LiveUpdate start terminal64.exe /upd" > "$ROOT/.mt5fresh/drive_c/Program Files/MetaTrader 5/logs/today.log"
+
 SYSTEMCTL_CALLS="$ACTIONS" PATH="$ROOT/bin:$PATH" \
   bash -c "sed 's#/root/.mt5\*#$ROOT/.mt5*#; s#/root/.mt5#$ROOT/.mt5#g' '$GUARD' > '$ROOT/guard.sh'; STALE_SECONDS=420 LOG='$LOG' bash '$ROOT/guard.sh'"
 
@@ -73,8 +83,13 @@ check "stale for another reason is left for a human, not restarted" "$(count 'mo
 check "and that decision is written down"      "$(grep -c 'left alone for a human' "$LOG")" "1"
 
 echo "A terminal nobody logged into is not a fault:"
-check "it is not counted or acted on" "$(count 'molido-mt5empty')" "0"
-check "four terminals were checked"   "$(grep -oE 'checked [0-9]+' "$LOG" | tail -1 | cut -d' ' -f2)" "4"
+check "it is not restarted"                 "$(count 'molido-mt5empty')" "0"
+check "nor is a fresh one carrying a payload" "$(count 'molido-mt5fresh')" "0"
+
+echo "But it is still defused - the one terminal that cannot recover alone:"
+check "a fresh prefix's payload is moved aside" "$(has_exe fresh)" "no"
+check "and kept, like every other"             "$(defused_dirs fresh)" "1"
+check "six terminals were checked"             "$(grep -oE 'checked [0-9]+' "$LOG" | tail -1 | cut -d' ' -f2)" "6"
 
 rm -rf "$ROOT"
 echo

@@ -52,9 +52,19 @@ for prefix in /root/.mt5*; do
 
   account="$prefix/$COMMON_SUFFIX/molido_account.json"
   heartbeat="$prefix/$COMMON_SUFFIX/molido_heartbeat.json"
-  # A terminal nobody has logged into is meant to be silent. Restarting it
-  # would be noise, and its silence is not a fault.
-  grep -q '"login"' "$account" 2>/dev/null || continue
+  # A terminal nobody has logged into is meant to be silent, so RECOVER skips
+  # it below - restarting it would be noise and its silence is not a fault.
+  #
+  # DEFUSE does not skip it, and that distinction was learned the hard way.
+  # This check used to sit here, before both halves, and a prefix nobody had
+  # logged into could therefore never be defused. Terminal I was built by
+  # copying another prefix, inherited its downloaded payload, and looped from
+  # its very first start - handing control to the updater, exiting, being
+  # restarted, forever - while the guard ran every five minutes and skipped
+  # it for not having an account file. The one terminal that could never
+  # recover on its own was the one terminal the guard would not look at.
+  logged_in=0
+  grep -q '"login"' "$account" 2>/dev/null && logged_in=1
   checked=$((checked + 1))
 
   # --- DEFUSE: a payload that would take it down at the next launch --------
@@ -75,6 +85,11 @@ for prefix in /root/.mt5*; do
   fi
 
   # --- RECOVER: already in the loop ---------------------------------------
+  # Only for a terminal somebody has logged in. A terminal with no account is
+  # meant to be quiet, and restarting it would turn its correct silence into
+  # a fault report.
+  [ "$logged_in" -eq 1 ] || continue
+
   now=$(date +%s)
   beat=$(stat -c %Y "$heartbeat" 2>/dev/null || echo 0)
   age=$((now - beat))

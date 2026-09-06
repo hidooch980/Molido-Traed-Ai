@@ -180,6 +180,7 @@ services:
       - ${MOLIDO_MT5_BRIDGE_F:-/root/.mt5f/drive_c/users/root/AppData/Roaming/MetaQuotes/Terminal/Common/Files}:/bridges/f:ro
       - ${MOLIDO_MT5_BRIDGE_G:-/root/.mt5g/drive_c/users/root/AppData/Roaming/MetaQuotes/Terminal/Common/Files}:/bridges/g:ro
       - ${MOLIDO_MT5_BRIDGE_H:-/root/.mt5h/drive_c/users/root/AppData/Roaming/MetaQuotes/Terminal/Common/Files}:/bridges/h:ro
+      - ${MOLIDO_MT5_BRIDGE_I:-/root/.mt5i/drive_c/users/root/AppData/Roaming/MetaQuotes/Terminal/Common/Files}:/bridges/i:ro
       # The kill switch, on the host so it survives a redeploy. A halt that a
       # rebuild clears is not a halt, and a rebuild is exactly when somebody is
       # changing things and not thinking about the stop they set yesterday.
@@ -237,6 +238,7 @@ services:
       - ${MOLIDO_MT5_BRIDGE_F:-/root/.mt5f/drive_c/users/root/AppData/Roaming/MetaQuotes/Terminal/Common/Files}:/bridges/f
       - ${MOLIDO_MT5_BRIDGE_G:-/root/.mt5g/drive_c/users/root/AppData/Roaming/MetaQuotes/Terminal/Common/Files}:/bridges/g
       - ${MOLIDO_MT5_BRIDGE_H:-/root/.mt5h/drive_c/users/root/AppData/Roaming/MetaQuotes/Terminal/Common/Files}:/bridges/h
+      - ${MOLIDO_MT5_BRIDGE_I:-/root/.mt5i/drive_c/users/root/AppData/Roaming/MetaQuotes/Terminal/Common/Files}:/bridges/i
       # The kill switch, on the host so it survives a redeploy. A halt that a
       # rebuild clears is not a halt, and a rebuild is exactly when somebody is
       # changing things and not thinking about the stop they set yesterday.
@@ -292,6 +294,7 @@ services:
       - ${MOLIDO_MT5_BRIDGE_F:-/root/.mt5f/drive_c/users/root/AppData/Roaming/MetaQuotes/Terminal/Common/Files}:/bridges/f:ro
       - ${MOLIDO_MT5_BRIDGE_G:-/root/.mt5g/drive_c/users/root/AppData/Roaming/MetaQuotes/Terminal/Common/Files}:/bridges/g:ro
       - ${MOLIDO_MT5_BRIDGE_H:-/root/.mt5h/drive_c/users/root/AppData/Roaming/MetaQuotes/Terminal/Common/Files}:/bridges/h:ro
+      - ${MOLIDO_MT5_BRIDGE_I:-/root/.mt5i/drive_c/users/root/AppData/Roaming/MetaQuotes/Terminal/Common/Files}:/bridges/i:ro
     depends_on:
       postgres:
         condition: service_healthy
