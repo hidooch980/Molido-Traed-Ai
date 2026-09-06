@@ -13,8 +13,14 @@
 # host. A log line inside a container does not survive `docker compose up`;
 # a line in /var/log does.
 #
-#   # two hours after the week's open, and every evening
-#   7 23 * * 0 /opt/molidotrade/infra/checkpoint.sh >> /var/log/molido-checkpoint.log 2>&1
+#   # Every six hours, so whenever anybody looks there is a recent picture and
+#   # a history behind it - the failure this exists to catch went unseen for
+#   # three days, and nobody was watching at any particular hour.
+#   17 */6 * * * /opt/molidotrade/infra/checkpoint.sh >> /var/log/molido-checkpoint.log 2>&1
+#   # Two hours after the week's open, the first Monday morning of trading,
+#   # and every evening: the same plus each brain's week.
+#   7 23 * * 0 /opt/molidotrade/infra/checkpoint.sh --scorecard >> /var/log/molido-checkpoint.log 2>&1
+#   17 5 * * 1 /opt/molidotrade/infra/checkpoint.sh --scorecard >> /var/log/molido-checkpoint.log 2>&1
 #   37 17 * * * /opt/molidotrade/infra/checkpoint.sh --scorecard >> /var/log/molido-checkpoint.log 2>&1
 #
 # `--scorecard` adds each brain's week beside its own control. It is separate
