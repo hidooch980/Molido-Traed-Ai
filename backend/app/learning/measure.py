@@ -268,6 +268,15 @@ def measure(
         for symbol, bars in series.items()
     }
 
+    # A rule that needs more history than the default gets it. Cutting every
+    # snapshot to 80 bars silently starved `trend-following` (100) and
+    # `time-series-momentum` (253): every instrument was skipped at every
+    # instant, and both reported "no instant in the window could be ranked"
+    # on every provider and timeframe - while trading live, unmeasurable.
+    from app.learning import rules as _rules
+
+    min_history = max(min_history, _rules.history_needed(rule))
+
     instants = sorted({bar.at for bars in series.values() for bar in bars})
 
     rule_by_instant: list[float] = []

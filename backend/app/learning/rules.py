@@ -84,6 +84,35 @@ class Rule(Protocol):
     ) -> Picks: ...
 
 
+def history_needed(rule: Rule | None) -> int:
+    """How many bars this rule has to see before it can say anything.
+
+    The harness used to cut every snapshot to a fixed 80 bars. Two rules in
+    live service need more than that - `trend-following` compares a 100-bar
+    average and `time-series-momentum` looks back 252 - so every instrument
+    was skipped at every instant and both answered "no measurement: no
+    instant in the window could be ranked" on every provider and every
+    timeframe tried.
+
+    They were trading the whole time. Twenty-six decisions each sat in the
+    forward record from rules the apparatus that decides whether a rule has
+    an edge could not see at all, which is the one combination this project
+    exists to prevent.
+
+    Read off the rule rather than configured, because a number kept in two
+    places drifts and this is the number that decides whether a measurement
+    happens.
+    """
+    if rule is None:
+        return 0
+    return max(
+        int(getattr(rule, "lookback", 0) or 0) + 1,
+        int(getattr(rule, "slow", 0) or 0),
+        int(getattr(rule, "window", 0) or 0),
+        int(getattr(rule, "period", 0) or 0) + 1,
+    )
+
+
 def _closes(snapshot: dict[str, dict[str, Any]], symbol: str) -> list[float]:
     return list(snapshot.get(symbol, {}).get("closes") or [])
 

@@ -530,3 +530,66 @@ class TestInstantRowsForSlicing:
             sum(r for _, r, _ in kept.instant_rows) / len(kept.instant_rows)
             - kept.rule_r
         ) < 1e-12
+
+
+class TestARuleThatNeedsMoreHistoryThanTheDefault:
+    """`trend-following` compares a 100-bar average and `time-series-momentum`
+    looks back 252. The harness cut every snapshot to 80 bars, so every
+    instrument was skipped at every instant and both answered "no measurement:
+    no instant in the window could be ranked" - on the broker series, on the
+    public one, on H1 and on D1 alike.
+
+    Both were trading. Twenty-six decisions each sat in the live forward
+    record, from rules the apparatus that decides whether a rule has an edge
+    could not see at all. Their own unit tests passed throughout, because
+    those call the rule directly with 160 bars and never go through the
+    harness - so nothing connected the two facts.
+    """
+
+    def test_a_hundred_bar_rule_is_measurable(self):
+        from app.learning.rules import TrendFollowing
+
+        result = measure.measure(
+            trending_market(bars=400),
+            bar_interval=timedelta(hours=1),
+            rule=TrendFollowing(),
+        )
+
+        assert result.instants > 0
+
+    def test_a_two_hundred_and_fifty_bar_rule_is_measurable(self):
+        from app.learning.rules import TimeSeriesMomentum
+
+        result = measure.measure(
+            trending_market(bars=600),
+            bar_interval=timedelta(hours=1),
+            rule=TimeSeriesMomentum(),
+        )
+
+        assert result.instants > 0
+
+    def test_the_window_still_stops_at_the_instant(self):
+        """Widening it must widen the past, never reach into the future -
+        that is the one property the whole measurement rests on."""
+        from app.learning.rules import TrendFollowing
+
+        market = trending_market(bars=400)
+        full = measure.measure(
+            market, bar_interval=timedelta(hours=1), rule=TrendFollowing()
+        )
+        truncated = measure.measure(
+            {k: v[: len(v) // 2] for k, v in market.items()},
+            bar_interval=timedelta(hours=1),
+            rule=TrendFollowing(),
+        )
+
+        assert truncated.instants < full.instants
+
+    def test_a_rule_that_needs_little_is_not_given_more(self):
+        """The default is a floor, not a target. Raising it for every rule
+        would shorten every usable window for no reason."""
+        from app.learning import rules
+
+        assert rules.history_needed(rules.get("short-horizon-reversal")) == 6
+        assert rules.history_needed(rules.get("carry-differential")) == 1
+        assert rules.history_needed(None) == 0
