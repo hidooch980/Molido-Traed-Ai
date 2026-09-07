@@ -118,7 +118,11 @@ class TestItIsInTheCouncilNow:
         from app.learning import rules
 
         assert "stochastic-reversion" in rules.CANDIDATES
-        assert PROPOSED == {}
+        # It left PROPOSED, which is the claim. Written as "PROPOSED is
+        # empty" until 2026-09-08, when three rules were written for the
+        # families that had no representative and this failed as a tripwire
+        # on a change that had nothing to do with it.
+        assert "stochastic-reversion" not in PROPOSED
 
     def test_the_council_is_eight_and_every_one_of_them_is_reachable(self):
         from app.learning import rules
