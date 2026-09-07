@@ -92,16 +92,26 @@ class TestItNeverWidens:
 
 
 class Bridge:
-    def __init__(self, login="111", positions=None, available=True):
+    def __init__(self, login="111", positions=None, available=True, quotes=None):
         self._login = login
         self._positions = positions or []
         self._available = available
+        self._quotes = quotes if quotes is not None else {}
 
     def account(self):
         return {"available": self._available, "login": self._login}
 
     def positions(self):
         return {"positions": self._positions}
+
+    def symbols(self):
+        return {
+            "available": True,
+            "symbols": [
+                {"name": name, "bid": bid, "ask": ask}
+                for name, (bid, ask) in self._quotes.items()
+            ],
+        }
 
 
 class Broker:
@@ -338,4 +348,85 @@ class TestTheWildcard:
         default."""
         report = trailing.run(Bridge(positions=[winner()]), Broker(), logins=set())
 
+        assert report.moves == []
+
+
+class TestTheQuoteComesFromTheBook:
+    """The position payload has never carried a current price. The first
+    version of this worker read a `price_current` field that does not exist,
+    so on 2026-09-07 it examined twelve live positions across four accounts,
+    moved none of them, and reported a successful sweep.
+
+    Every test above passed throughout, because the fake published the field
+    the real bridge does not. So these use a position shaped like the real
+    one - no price on it at all."""
+
+    def live(self, **over):
+        row = winner()
+        row.pop("price_current")
+        row.update(over)
+        return row
+
+    def test_a_long_is_measured_against_the_bid(self):
+        """What it would close at. The ask would count a spread the trade has
+        not paid, and count it as progress."""
+        broker = Broker()
+
+        report = trailing.run(
+            Bridge(
+                positions=[self.live()],
+                quotes={"EURUSD": (1.1100, 1.1103)},
+            ),
+            broker,
+            logins={trailing.EVERY_LOGIN},
+            dry_run=False,
+        )
+
+        assert len(broker.calls) == 1
+        assert report.moves[0].price == 1.1100
+
+    def test_a_short_is_measured_against_the_ask(self):
+        broker = Broker()
+        short = self.live(
+            side="sell", price_open=1.1000, stop=1.1100, target=1.0850
+        )
+
+        report = trailing.run(
+            # Comfortably past 1 R, so this test is about which side of the
+            # book is read and not about the boundary.
+            Bridge(positions=[short], quotes={"EURUSD": (1.0847, 1.0850)}),
+            broker,
+            logins={trailing.EVERY_LOGIN},
+            dry_run=False,
+        )
+
+        assert len(broker.calls) == 1
+        assert report.moves[0].price == 1.0850
+
+    def test_a_symbol_with_no_quote_is_skipped_rather_than_guessed(self):
+        broker = Broker()
+
+        report = trailing.run(
+            Bridge(positions=[self.live()], quotes={}),
+            broker,
+            logins={trailing.EVERY_LOGIN},
+            dry_run=False,
+        )
+
+        assert broker.calls == []
+        assert "the bridge published no quote, entry or ticket" in report.skipped
+
+    def test_an_unreadable_quote_file_is_not_the_whole_sweep(self):
+        class Broken(Bridge):
+            def symbols(self):
+                raise OSError("molido_symbols.json is half-written")
+
+        report = trailing.run(
+            Broken(positions=[self.live()]),
+            Broker(),
+            logins={trailing.EVERY_LOGIN},
+            dry_run=False,
+        )
+
+        assert report.considered == 1
         assert report.moves == []

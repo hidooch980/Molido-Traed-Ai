@@ -571,7 +571,12 @@ def tighten_stops() -> dict[str, Any]:
         except Exception as problem:  # noqa: BLE001 - one terminal is not the sweep
             per_terminal[key] = f"{type(problem).__name__}: {problem}"
             continue
-        if report.moves:
+        # Every terminal that had something to look at, not only the ones
+        # that moved. A sweep that examined twelve positions and moved none
+        # of them read exactly like a sweep with nothing to do, and that is
+        # how a worker reading a field the bridge does not publish ran for
+        # an afternoon looking successful.
+        if report.considered or report.moves:
             per_terminal[key] = report.as_dict()
             moved += sum(1 for m in report.moves if m.sent)
 

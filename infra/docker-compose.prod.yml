@@ -27,6 +27,11 @@ x-backend-env: &backend-env
   # restriction. Narrows execution only: every brain still ranks the whole
   # watchlist and every decision is still journalled.
   MOLIDO_TRADED_SYMBOLS: ${MOLIDO_TRADED_SYMBOLS:-}
+  # Which accounts have their stops tightened as a trade goes their way,
+  # "login,login" or "*" for every account. Unset means none: a stop that
+  # moves produces a different distribution of outcomes than the fixed
+  # geometry the forward record measures, so it is switched on deliberately.
+  MOLIDO_TRAILING_LOGINS: ${MOLIDO_TRAILING_LOGINS:-}
   # The council gate: how many brains must agree before an order is sent.
   MOLIDO_CONSENSUS_REQUIRED: ${MOLIDO_CONSENSUS_REQUIRED:-1}
   MOLIDO_ENV: production

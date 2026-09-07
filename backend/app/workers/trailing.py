@@ -185,6 +185,30 @@ def proposed_stop(
     return candidate, f"{r:.2f} R ahead"
 
 
+def closing_prices(bridge: Any) -> dict[str, tuple[float, float]]:
+    """Every symbol's bid and ask, by name.
+
+    The position payload carries no current price - it never has, and the
+    first version of this worker read a `price_current` field that does not
+    exist, so it examined twelve live positions and moved none of them while
+    reporting success. The quote belongs here anyway: a long closes at the
+    bid and a short at the ask, and taking both from the same published
+    snapshot is what makes the two sides comparable.
+    """
+    try:
+        payload = bridge.symbols()
+    except Exception:  # noqa: BLE001 - an unreadable quote file is not the sweep
+        return {}
+    quotes: dict[str, tuple[float, float]] = {}
+    for entry in payload.get("symbols") or []:
+        name = str(entry.get("name") or "")
+        bid = float(entry.get("bid") or 0.0)
+        ask = float(entry.get("ask") or 0.0)
+        if name and bid > 0 and ask > 0:
+            quotes[name] = (bid, ask)
+    return quotes
+
+
 def run(
     bridge: Any,
     broker: Any,
@@ -222,13 +246,22 @@ def run(
         report.skip(f"the positions could not be read: {type(problem).__name__}")
         return report
 
+    quotes = closing_prices(bridge)
+
     for position in positions:
         report.considered += 1
         side = str(position.get("side") or "")
         entry = float(position.get("price_open") or 0)
         stop = float(position.get("stop") or 0)
-        price = float(position.get("price_current") or 0)
         ticket = str(position.get("ticket") or "")
+
+        # The price this position would close at, not the one it would open
+        # at again: the other side of the book would count a spread the trade
+        # has not paid, and count it as progress.
+        bid, ask = quotes.get(str(position.get("symbol") or ""), (0.0, 0.0))
+        price = float(position.get("price_current") or 0) or (
+            bid if side == "buy" else ask
+        )
 
         if not stop:
             # Nothing to tighten, and nothing this worker should invent - a
@@ -236,7 +269,7 @@ def run(
             report.skip("no stop on the position")
             continue
         if not price or not entry or not ticket:
-            report.skip("the bridge published no price, entry or ticket")
+            report.skip("the bridge published no quote, entry or ticket")
             continue
 
         risk = original_risk(
@@ -284,6 +317,7 @@ def run(
 
 
 __all__ = [
+    "closing_prices",
     "EVERY_LOGIN",
     "MIN_STEP_FRACTION",
     "original_risk",
