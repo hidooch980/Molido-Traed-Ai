@@ -257,7 +257,7 @@ class TestARejectedOrderIsNotAnOrder:
 
         orders = (entry.during or {}).get("orders") or {}
         assert orders, "the attempt must be recorded even when refused"
-        assert any("REJECTED" in str(v.get("state")) for v in orders.values())
+        assert any(v.get("state") == str(OrderState.REJECTED) for v in orders.values())
 
     def test_a_filled_order_still_counts(self, session, live):
         decide(session)
