@@ -171,11 +171,70 @@ rule there is not proposing it, it is deploying it.
 
 ---
 
-## 5. Log
+## 5. Where the first full pass ended
+
+Eleven rules measured through one harness, on M15, H1 and D1, corrected for
+the number of hypotheses tried, with costs charged at three severities, a
+sign-flipped placebo, a block bootstrap, a block reshuffle, random omission
+and a two-bar execution delay.
+
+**NO ROBUST EDGE FOUND.** That is section 24 of the brief, and it is the
+honest answer rather than a placeholder for one.
+
+| label | rules |
+|---|---|
+| 🟢 DEPLOY CANDIDATE | none |
+| 🟡 RESEARCH FURTHER | `time-series-momentum` (D1 only) |
+| 🔴 REJECT | the other ten, on the timeframes measured |
+
+`time-series-momentum` on daily bars survives everything except itself: t =
+5.34 over 7,356 trades, intact at four times the measured cost, intact two
+bars late, positive in 100% of omission draws, never reproduced by a
+sign-flipped null in 400 draws — and a 141 R drawdown on a *typical*
+ordering, negative in 7 of 24 year slices. On a $200,000 account with a 10%
+drawdown rule the account is gone before the edge pays.
+
+Under §33, 🟡 means "worth forward testing", not "deploy". Nothing here is
+🟢.
+
+## 6. What the pass changed about the measurement itself
+
+Four defects were found in the apparatus, all of the same family — a count of
+rows mistaken for a count of evidence — and all found by asking the brief's
+Rule 2 of a number that looked good.
+
+| # | defect | effect |
+|---|---|---|
+| 1 | the forward journal counted 29 correlated decisions as 29 | 26 were one yen move |
+| 2 | two rules needed more history than the harness gave | unmeasurable while trading live |
+| 3 | the reshuffle dealt overlapping instants as independent | condemned every rule at the 99th percentile |
+| 4 | `carry-differential` held 2 books over 865 instants | its t was about two bets |
+
+The first three are corrected in code. The fourth cannot be corrected
+automatically — a rule that holds a good position for months is not thereby
+wrong — so the persistence is now printed beside every t.
+
+## 7. Log
 
 | date | what | result |
 |---|---|---|
 | 2026-09-07 | audited the harness against the brief's 34 sections | most of §10, §14–17, §33 already implemented |
 | 2026-09-07 | corrected forward measurement to cluster by instant | `8fc66f1` |
 | 2026-09-07 | built the journal → verdict path (`weekly.verdicts`) | 8 brains, 0 edges, 16 instants |
-| 2026-09-07 | measured donchian-breakout, H1, 2y | NOT_ROBUST, 🔴 REJECT |
+| 2026-09-07 | measured donchian-breakout, H1, 2y | NOT_ROBUST, 🔴 |
+| 2026-09-08 | a rule now declares the history it needs | two live rules became measurable at all |
+| 2026-09-08 | wrote the three missing families | all 🔴, none close |
+| 2026-09-08 | Monte Carlo and §21 ratios | `bf7ea63` |
+| 2026-09-08 | corrected the reshuffle to use blocks | it was measuring itself |
+| 2026-09-08 | execution delay, both arms | no rule is a latency artifact |
+| 2026-09-08 | counted distinct books per rule | the best rule on H1 had four decisions |
+
+## 8. Still open
+
+| item | why it is not done |
+|---|---|
+| H4 (§3) | no H4 bars are collected; derivable from H1 the way `aggregate.daily_from_hourly` derives D1 |
+| M30 (§3) | added recently — 38k bars against H1's 553k, too few for a one-year window |
+| news dependence (§18) | not implemented; `robustness.by_hour` is the half of it that exists |
+| XAGUSD (§2) | not yet checked against the collected universe |
+| walk-forward efficiency (§15) | `geometry.py` walks forward; the efficiency ratio is not computed |
