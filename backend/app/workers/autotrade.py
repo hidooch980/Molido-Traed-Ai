@@ -2087,17 +2087,32 @@ def _fresh_votes(
 
 #: Brains an unassigned account may be given, in a fixed order.
 #:
-#: Measured on this deployment's own journal rather than chosen by taste:
+#: **These were measured on a journal that has since been withdrawn.** The
+#: figures this list was chosen from -
 #:
 #:     cross-sectional-stretch  1878 resolved  +0.124 R  56% win
 #:     carry-differential        312 resolved  +0.218 R  61% win
 #:     short-horizon-reversal   1040 resolved  +0.056 R  53% win
 #:
-#: `time-series-momentum` is absent because it measured -0.119 R over 377
-#: resolved decisions, and the three brains added later are absent because
-#: they have no resolved decisions at all yet. A default is not the place to
-#: put something unmeasured - assign those by hand, deliberately, when
-#: somebody wants to start measuring them.
+#: - came from rows that no longer exist and could not be trusted if they
+#: did. The resolver was dead from 3 to 6 September, and before that every
+#: M5 and M15 decision was scored against H1 bars: 11,028 verdicts were
+#: retracted for it and the journal was taken to zero on the 6th. A ranking
+#: built on those numbers is a ranking of a scoring bug.
+#:
+#: Two independent readings now say the head of this list is the wrong
+#: default. `rules.CrossSectionalStretch` describes itself as "the
+#: incumbent, kept as the baseline that is known to fail", and an outside
+#: walk-forward of the same idea - cross-sectional currency strength -
+#: returned PF 0.80 on 23 of 80 folds.
+#:
+#: The list is left standing rather than reordered, because replacing one
+#: under-evidenced default with another is not an improvement. What changed
+#: is that nothing relies on it: every account in the fleet is now assigned
+#: by hand, including the FTMO challenge, which had landed here on the
+#: strength of its login digits alone. Reorder this only when the live
+#: journal - rebuilt from 6 September, with a resolver that works - has
+#: about fifty resolved trades per brain to say it with.
 DEFAULT_STRATEGIES: tuple[str, ...] = (
     "cross-sectional-stretch",
     "carry-differential",
@@ -2172,6 +2187,24 @@ def _strategy_for(login: str) -> tuple[frozenset[str] | None, str]:
         # keep. Two accounts can collide, which is fine: they are two samples
         # of one brain, not a lost one.
         raw_names = _default_strategy(login)
+        # Said out loud, every cycle it happens.
+        #
+        # Falling back is silent by design and that silence has a cost: the
+        # FTMO challenge account ran for a day on the brain its login digits
+        # happened to select - the one this codebase calls "the baseline that
+        # is known to fail" - and nothing anywhere said so. A default is a
+        # reasonable thing to have and an unreasonable thing to discover by
+        # reading source.
+        log.warning(
+            "autotrade.unassigned_account",
+            login=login,
+            fell_back_to=raw_names,
+            detail=(
+                "nobody assigned this account a brain, so it was given one "
+                "from its login digits. The default list was chosen on a "
+                "journal that has since been withdrawn - assign it by hand"
+            ),
+        )
     names = [piece.strip() for piece in str(raw_names).split("+") if piece.strip()]
     # An assignment of nothing at all is a typo, not an instruction to trade
     # the incumbent: `login=` reads as somebody meaning to name a brain.

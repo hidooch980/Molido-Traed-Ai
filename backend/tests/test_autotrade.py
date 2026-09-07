@@ -2904,3 +2904,67 @@ class TestOrderAuthorizationIsTheLastGate:
         assert broker.submitted == []
         assert "order authorization:" in report["refused"]
         assert "restore_drill_recent" in report["refused"] or "no_secrets_in_repository" in report["refused"]
+
+
+class TestAnUnassignedAccountIsNotSilent:
+    """Falling back to a default is reasonable; discovering it by reading
+    source is not. The FTMO challenge account ran for a day on the brain its
+    login digits happened to select - the one `rules.CrossSectionalStretch`
+    calls "the baseline that is known to fail" - and nothing said so."""
+
+    def recorder(self, monkeypatch):
+        """What the module actually logged, since structlog does not reach
+        caplog and a test that silently captures nothing asserts nothing."""
+        said: list = []
+        monkeypatch.setattr(
+            autotrade.log, "warning", lambda event, **kw: said.append((event, kw))
+        )
+        return said
+
+    def test_the_fallback_is_stable_for_one_login(self):
+        """Same account, same brain, across restarts and redeploys."""
+        first = autotrade._default_strategy("1514533027")
+        second = autotrade._default_strategy("1514533027")
+
+        assert first == second
+        assert first in autotrade.DEFAULT_STRATEGIES
+
+    def test_it_says_so_when_it_falls_back(self, session, monkeypatch):
+        said = self.recorder(monkeypatch)
+
+        names, why = autotrade._strategy_for("9999999999")
+
+        assert names, why
+        events = [e for e, _ in said]
+        assert "autotrade.unassigned_account" in events
+
+    def test_the_warning_names_the_account_and_the_brain(self, session, monkeypatch):
+        said = self.recorder(monkeypatch)
+
+        autotrade._strategy_for("9999999999")
+
+        payload = next(kw for event, kw in said if event == "autotrade.unassigned_account")
+        assert payload["login"] == "9999999999"
+        assert payload["fell_back_to"] in autotrade.DEFAULT_STRATEGIES
+
+    def test_an_assigned_account_stays_quiet(self, session, monkeypatch):
+        """The whole fleet is assigned by hand now, so this must stay silent
+        in the ordinary case or it becomes another warning nobody reads."""
+        from types import SimpleNamespace
+
+        from app.core import config
+
+        monkeypatch.setattr(
+            config,
+            "get_settings",
+            lambda: SimpleNamespace(
+                account_strategies="67209485=trend-following",
+                autotrade_risk_percent=0.75,
+            ),
+        )
+        said = self.recorder(monkeypatch)
+
+        names, why = autotrade._strategy_for("67209485")
+
+        assert names == frozenset({"trend-following"}), why
+        assert not [e for e, _ in said if e == "autotrade.unassigned_account"]
