@@ -298,3 +298,66 @@ For the one candidate worth the row:
 | a sign-flipped null | never reproduced in 400 draws |
 | **its own drawdown** | **fails — 141 R on a typical ordering** |
 | **year slices** | **fails — negative in 7 of 24** |
+
+---
+
+## 8. How often does the rule actually decide anything?
+
+`carry-differential` looked like the find of the week: on **M15** over a year
+it read t = 5.13 and survived execution costed at four times the measured
+figure — better than its own H1 reading of 3.63.
+
+A macro signal has no business being stronger on fifteen-minute bars than on
+hourly ones, so it was counted rather than believed. Over 865 M15 instants it
+produced **two distinct books** and changed its mind twice. The t of 5.13 is
+about two bets.
+
+Neither existing correction reaches this. Clustering by instant fixes *one
+move seen from several angles at the same moment*; this is *one bet seen at
+eight hundred consecutive moments*. The block bootstrap used blocks of 62
+instants while the signal persisted for 432 — seven times longer.
+
+So the measurement now counts distinct books and prints the persistence
+beside the t (commit `4bdb40e`):
+
+### 8.1 Every rule on H1, two years
+
+| rule | instants | distinct books | instants per change of mind | t |
+|---|---|---|---|---|
+| **carry-differential** | 441 | **4** | **110.2** | 3.63 |
+| trend-following | 438 | 118 | 3.7 | 2.38 |
+| cross-sectional-stretch | 492 | 362 | 1.4 | 0.17 |
+| short-horizon-reversal | 501 | 448 | 1.1 | 1.24 |
+| donchian-breakout | 179 | 156 | 1.1 | −0.87 |
+| rsi-mean-reversion | 365 | 407† | ~1 | 0.86 |
+| stochastic-reversion | 402 | 474† | ~1 | 1.60 |
+
+† measured before the count was corrected to run over kept instants only
+(`3e08047`); the ratio for these two is ~1 either way.
+
+**Only `carry-differential` is affected.** Every other rule changes its book
+roughly every instant, so its t is computed over as many decisions as it
+claims. The one rule that cleared the corrected t bar on H1 is the one rule
+whose sample was not what it appeared.
+
+### 8.2 What this does to the H1 table
+
+`carry-differential` was the only rule to clear t = 3.44 on H1, and §1 already
+noted its bootstrap interval spans zero. With four decisions behind it, the t
+should not be read as evidence at all.
+
+**That leaves nothing on H1 that clears its bar on an honest sample.**
+
+### 8.3 The same error, three times in two days
+
+| where | rows counted | evidence there really was |
+|---|---|---|
+| forward journal | 29 resolved decisions | 26 of them one yen move |
+| Monte Carlo reshuffle | 2,715 independent draws | consecutive instants share outcome bars |
+| carry-differential | 865 instants | 2 books |
+
+Each was found by the same question — *is this number of rows the same as
+this number of observations?* — and each answer was no. The first two are
+corrected in code. The third cannot be corrected automatically, because a
+rule that holds a good position for months is not thereby wrong; it is made
+impossible to miss instead.
