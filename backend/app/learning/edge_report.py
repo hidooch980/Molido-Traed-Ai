@@ -273,7 +273,7 @@ def run(
         # these answer whether the drawdown was lucky and whether the edge
         # rests on a handful of instants, which are the two questions an
         # account holder has to live with.
-        "montecarlo": mc.report(full.instant_rows or (), draws=draws),
+        "montecarlo": mc.report(full.instant_rows or (), block=block, draws=draws),
         "regime": regime.as_dict() if regime else None,
         "registry": {
             "listed_as": (

@@ -154,3 +154,52 @@ class TestTheReport:
         lines = mc.render(mc.report(rows([1.0])))
 
         assert any("too few instants" in line for line in lines)
+
+
+class TestTheBlockLengthIsTheWholeTest:
+    """Consecutive instants are not independent: a decision at one instant and
+    the next both resolve over the bars that follow, so they share outcome
+    bars and their edges move together.
+
+    The first version of this module shuffled them one at a time. Run across
+    four live rules it put every single one at the 99th or 100th percentile -
+    which is what a test says when it is measuring itself rather than the
+    strategy. The block length is the fix and it is not a refinement."""
+
+    def autocorrelated(self, *, run=60):
+        """Losses arriving together, the way an overlapping horizon makes them
+        arrive: a good stretch, one bad regime, a good stretch."""
+        return rows([0.2] * 100 + [-0.5] * run + [0.2] * 100)
+
+    def test_one_at_a_time_cannot_reproduce_the_observed_depth(self):
+        """The bug, kept as a test. Dealing an autocorrelated series as if it
+        were independent spreads the losing stretch out, so no draw gets near
+        the hole that actually happened and the real path is condemned by
+        construction."""
+        result = mc.reshuffled(self.autocorrelated(), block=1, draws=300)
+
+        assert result.percentile_of_observed > 95.0
+        assert result.median_r < result.observed_r * 0.5
+
+    def test_blocks_the_length_of_the_run_reproduce_it(self):
+        """Same series, blocks that keep the stretch together. Now a typical
+        draw is as deep as the one that happened, which is what it means for
+        the observed path to be ordinary rather than extreme."""
+        loose = mc.reshuffled(self.autocorrelated(), block=1, draws=300)
+        tight = mc.reshuffled(self.autocorrelated(), block=60, draws=300)
+
+        assert tight.median_r > loose.median_r
+        assert tight.median_r >= tight.observed_r * 0.6
+
+    def test_a_block_longer_than_the_sample_is_clamped(self):
+        result = mc.reshuffled(rows([0.5, -0.5, 0.5]), block=99, draws=10)
+
+        assert result is not None
+
+    def test_the_report_says_what_block_it_used(self):
+        """A percentile without its block length is not interpretable, and
+        this module has already been wrong about exactly that."""
+        payload = mc.report(self.autocorrelated(), block=60, draws=100)
+
+        assert payload["block_instants"] == 60
+        assert "blocks of 60 instants" in mc.render(payload)[0]

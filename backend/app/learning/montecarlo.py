@@ -126,13 +126,36 @@ class Reshuffle:
         }
 
 
-def reshuffled(rows: Sequence[Row], *, draws: int = DRAWS, seed: int = SEED) -> Reshuffle | None:
+def reshuffled(
+    rows: Sequence[Row],
+    *,
+    block: int = 1,
+    draws: int = DRAWS,
+    seed: int = SEED,
+) -> Reshuffle | None:
     """Deal the same instants in a different order, `draws` times.
 
     The multiset of outcomes is untouched - only their sequence changes - so
     the total is identical in every draw and the only thing that moves is the
     path. That is the point: expectancy is a property of the trades, drawdown
     is a property of their order, and only one of the two was observed.
+
+    **In blocks, and the block length is the whole test.** Consecutive
+    instants are not independent: a decision at one instant and the next both
+    resolve over the bars that follow, so they share outcome bars and their
+    edges move together. Shuffling them one at a time destroys that overlap,
+    and the observed path - which still has it - then looks deeper than every
+    draw by construction.
+
+    The first version of this function did exactly that, and it showed. Run
+    across four rules it put every single one at the 99th or 100th percentile,
+    which is what a test says when it is measuring itself. Blocks of
+    `horizon_instants` - the same length the bootstrap already uses, and for
+    the same reason - keep the overlap inside a block and randomise only the
+    order of the blocks.
+
+    `block=1` remains available and remains i.i.d.; it is meaningful only for
+    a series whose instants really are independent.
     """
     values = edges(rows)
     if len(values) < 2:
@@ -140,11 +163,12 @@ def reshuffled(rows: Sequence[Row], *, draws: int = DRAWS, seed: int = SEED) -> 
 
     observed = curve(values).max_drawdown_r
     rng = random.Random(seed)  # noqa: S311 - a seeded reshuffle, not a secret
-    pool = list(values)
+    size = max(1, min(block, len(values)))
+    blocks = [values[i : i + size] for i in range(0, len(values), size)]
     falls: list[float] = []
     for _ in range(draws):
-        rng.shuffle(pool)
-        falls.append(curve(pool).max_drawdown_r)
+        rng.shuffle(blocks)
+        falls.append(curve([value for chunk in blocks for value in chunk]).max_drawdown_r)
     falls.sort()
 
     below = sum(1 for fall in falls if fall <= observed)
@@ -295,14 +319,26 @@ def ratios(rows: Sequence[Row]) -> Ratios | None:
     )
 
 
-def report(rows: Sequence[Row], *, draws: int = DRAWS, seed: int = SEED) -> dict[str, Any]:
-    """Everything in this module for one measured sample."""
+def report(
+    rows: Sequence[Row],
+    *,
+    block: int = 1,
+    draws: int = DRAWS,
+    seed: int = SEED,
+) -> dict[str, Any]:
+    """Everything in this module for one measured sample.
+
+    `block` is the overlap length - pass the same `horizon_instants` the
+    bootstrap uses. Leaving it at 1 treats consecutive instants as
+    independent, which they are not.
+    """
     shape = curve(edges(rows))
-    shuffle = reshuffled(rows, draws=draws, seed=seed)
+    shuffle = reshuffled(rows, block=block, draws=draws, seed=seed)
     omit = with_random_omission(rows, draws=draws, seed=seed)
     read = ratios(rows)
     return {
         "seed": seed,
+        "block_instants": block,
         "curve": shape.as_dict(),
         "reshuffled": shuffle.as_dict() if shuffle else None,
         "omission": omit.as_dict() if omit else None,
@@ -312,7 +348,10 @@ def report(rows: Sequence[Row], *, draws: int = DRAWS, seed: int = SEED) -> dict
 
 def render(payload: dict[str, Any]) -> list[str]:
     """The report's lines, or an explanation of why there are none."""
-    lines = [f"  monte carlo (seed {payload.get('seed')}):"]
+    lines = [
+        f"  monte carlo (seed {payload.get('seed')}, blocks of "
+        f"{payload.get('block_instants')} instants):"
+    ]
     shuffle = payload.get("reshuffled")
     if shuffle:
         lines.append(

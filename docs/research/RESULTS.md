@@ -177,38 +177,56 @@ has to live with, and they are seeded so two runs agree (§28).
 ### 6.1 time-series-momentum, D1, 20 years
 
 ```
-monte carlo (seed 20260908):
-  drawdown observed 222.0833 R, median 21.2024, 95th 31.9911, worst 67.6131
-  the order that happened sits at the 100.0th percentile of orders
+monte carlo (seed 20260908, blocks of 83 instants):
+  drawdown observed 222.0833 R, median 141.5774, 95th 221.0685, worst 299.0982
+  the order that happened sits at the 95.1th percentile of orders
   dropping 20% at random leaves a positive edge in 100.0% of draws
   sharpe 0.1025  sortino 0.1588  calmar 0.0005  profit factor 1.3837
 ```
 
-Two findings, pulling in opposite directions.
-
 **The edge is real and broad.** Dropping a fifth of the sample at random
-leaves it positive in **100% of 2,000 draws**. It is not carried by a handful
-of instants; combined with t = 5.34, survival of 4x costs and a placebo that
-never reproduced it, this is the most solid measurement in the project.
+leaves it positive in **100% of draws**. It is not carried by a handful of
+instants; with t = 5.34, survival of 4x costs and a placebo that never
+reproduced it, this is the most solid measurement in the project.
 
-**And it is uninvestable as it stands.** The observed worst peak-to-trough
-fall is **222 R**. Reshuffling the *same trades* into a random order gives a
-median of 21 R and a worst of 68 R across 2,000 orders — the sequence that
-actually happened is worse than every single one of them.
+**And it is uninvestable as it stands.** The worst peak-to-trough fall was
+**222 R**, and reshuffling the same trades in blocks says that is not bad
+luck: a *typical* ordering still produces **141 R**, and the 95th percentile
+of orderings is 221 R. The hole is a property of the strategy, not of the
+sequence it happened to arrive in.
 
-That is not bad luck. It means the losses arrive **together**, in long
-consecutive runs, which is exactly what the slice table already hinted at
-(negative in 2016, 2017, 2018, 2020, 2024, 2025). Calmar of 0.0005 says the
-same thing in one number: the per-instant edge is nothing beside the hole it
-has to climb out of.
-
-On a $200,000 challenge account with a 10% total-drawdown rule, a 222 R
+On a $200,000 challenge account with a 10% total-drawdown rule, a 141 R
 excursion at 0.75% risk per trade is not survivable. **The edge exists and
-the account would be gone before it paid.**
+the account would be gone before it paid.** Calmar of 0.0005 says the same
+thing in one number.
 
-This is the finding the previous tooling could not produce. A bootstrap over
-instants deliberately destroys their order, so it can never see this; that is
-what reshuffling is for, and it took one run to show it.
+#### A correction, and why the block length is the whole test
+
+The first version of this section reported the observed drawdown at the
+**100th** percentile of reshuffled orders and concluded that the losses
+arrive together in runs no random ordering comes close to. That was an
+artifact of the test, not a property of the strategy.
+
+Consecutive instants are not independent: a decision at one instant and the
+next both resolve over the bars that follow, so they share outcome bars.
+Shuffling them one at a time destroys that overlap while the observed path
+keeps it, so the real path looks extreme by construction. The tell was that
+it said the same thing about every rule — four in a row at the 99th or 100th
+percentile is a test measuring itself.
+
+Reshuffling in blocks of `horizon_instants`, the length the bootstrap already
+uses and for the same reason, it now discriminates:
+
+| rule | observed drawdown | percentile of orderings |
+|---|---|---|
+| carry-differential | 118.0 R | 99.1 — genuinely clustered |
+| time-series-momentum (D1) | 222.1 R | 95.1 |
+| trend-following | 46.7 R | 24.2 — ordinary |
+| short-horizon-reversal | 22.0 R | 18.8 — mildly lucky |
+
+The corrected reading of time-series-momentum is worse for deployment, not
+better: the problem was never an unlucky sequence, it is the size of the hole
+under any sequence.
 
 ### 6.2 What the ratios are, and are not
 
