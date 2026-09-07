@@ -343,6 +343,12 @@ def render(payload: dict[str, Any]) -> str:
         "-" * 62,
         f"  instants {m['instants']}   trades {m['trades']}   "
         f"({m['trades_per_instant']} per instant)",
+        f"  books {m['distinct_books']} distinct"
+        + (
+            f"   ({m['instants_per_book']} instants per change of mind)"
+            if m.get("instants_per_book")
+            else ""
+        ),
         f"  rule {m['rule_r']:+.4f} R   control {m['control_r']:+.4f} R   "
         f"edge {m['edge_r']:+.4f} R",
         f"  t {m['t']:.2f} clustered, {m['unclustered_t']:.2f} unclustered "
@@ -380,6 +386,16 @@ def render(payload: dict[str, Any]) -> str:
         ]
     if payload.get("montecarlo"):
         lines += ["", *mc.render(payload["montecarlo"])]
+    held = m.get("instants_per_book")
+    block_len = (payload.get("montecarlo") or {}).get("block_instants") or 0
+    if held and block_len and held > block_len:
+        lines += [
+            "",
+            f"  * the book changed every {held} instants, and the bootstrap "
+            f"blocks are {block_len}. The sample counts one decision many",
+            "    times over, and no correction here reaches that far - "
+            "read the t as being about a handful of bets, not this many.",
+        ]
     if payload.get("entry_delay"):
         lines += ["", "  filled late:"]
         for late in payload["entry_delay"]:

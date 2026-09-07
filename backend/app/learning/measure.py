@@ -104,6 +104,20 @@ class Measurement:
     unclustered_t: float
     dropped_undecided: int
     window: tuple[datetime, datetime] | None
+    #: How many *different* books the rule asked for across those instants.
+    #:
+    #: Clustering by instant fixed the case where one move is seen from
+    #: several angles at the same moment. It does nothing for a rule whose
+    #: answer does not change from one instant to the next, and one of these
+    #: rules is exactly that: `carry-differential` reads policy rates, which
+    #: move a handful of times a year. Measured on M15 over a year it
+    #: produced 865 instants and **two distinct books**, and a t of 5.13
+    #: computed as though there were 865 observations.
+    #:
+    #: Counted rather than corrected for, because the correction is not
+    #: obvious - a rule that holds a good position for months is not
+    #: thereby wrong - but reading 865 where the truth is 2 is.
+    distinct_books: int = 0
     #: One row per scored instant - (stamp, rule mean R, control mean R) -
     #: kept only when the caller asked. This is what lets a single pass be
     #: sliced afterwards (by hour, by session, by year) without re-walking
@@ -138,6 +152,14 @@ class Measurement:
             "trades": self.trades,
             "trades_per_instant": (
                 round(self.trades / self.instants, 2) if self.instants else None
+            ),
+            "distinct_books": self.distinct_books,
+            #: Instants per change of mind. Large means the sample counts one
+            #: decision many times over.
+            "instants_per_book": (
+                round(self.instants / self.distinct_books, 1)
+                if self.distinct_books
+                else None
             ),
             "rule_r": round(self.rule_r, 4),
             "control_r": round(self.control_r, 4),
@@ -282,6 +304,7 @@ def measure(
 
     rule_by_instant: list[float] = []
     control_by_instant: list[float] = []
+    books: set[tuple[tuple[str, ...], tuple[str, ...]]] = set()
     kept_instants: list[datetime] = []
     per_trade: list[float] = []
     trades = 0
@@ -324,6 +347,8 @@ def measure(
             if picked.empty:
                 continue
             wanted = (picked.longs, picked.shorts)
+
+        books.add((tuple(sorted(wanted[0])), tuple(sorted(wanted[1]))))
 
         rule_here: list[float] = []
         control_here: list[float] = []
@@ -423,6 +448,7 @@ def measure(
         per_trade,
         trades=trades,
         dropped=dropped,
+        books=len(books),
         window=(instants[0], instants[-1]) if instants else None,
         stop_multiple=stop_mult,
         target_multiple=target_mult,
@@ -459,6 +485,7 @@ def _summarise(
     *,
     trades: int,
     dropped: int,
+    books: int,
     window: tuple[datetime, datetime] | None,
     stop_multiple: float = STOP_MULTIPLE,
     target_multiple: float = TARGET_MULTIPLE,
@@ -491,6 +518,7 @@ def _summarise(
         t_statistic=t_statistic,
         unclustered_t=unclustered,
         dropped_undecided=dropped,
+        distinct_books=books,
         window=window,
         stop_multiple=stop_multiple,
         target_multiple=target_multiple,

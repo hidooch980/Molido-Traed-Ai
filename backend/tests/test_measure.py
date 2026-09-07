@@ -660,3 +660,85 @@ class TestBeingLateToTheFill:
         assert far.instants < measure.measure(
             market, bar_interval=timedelta(hours=1)
         ).instants
+
+
+class TestCountingHowOftenTheRuleChangesItsMind:
+    """Clustering by instant fixed one move seen from several angles at the
+    same moment. It does nothing for a rule whose answer does not change from
+    one instant to the next.
+
+    `carry-differential` reads policy rates, which move a handful of times a
+    year. Measured on M15 over a year it produced **865 instants and two
+    distinct books** - and a t of 5.13, computed as though there were 865
+    observations. The bootstrap could not save it either: its blocks were 62
+    instants and the signal persisted for 432.
+
+    Counted rather than corrected for. A rule that holds a good position for
+    months is not thereby wrong; reporting 865 where the truth is 2 is."""
+
+    class Frozen:
+        """A rule that always wants the same book."""
+
+        name = "frozen"
+
+        def __call__(self, snapshot, *, universe):
+            from app.learning.rules import Picks
+
+            symbols = sorted(snapshot)
+            if len(symbols) < 4:
+                return Picks(declined="too few")
+            return Picks(longs=tuple(symbols[:2]), shorts=tuple(symbols[-2:]))
+
+    class Alternating:
+        """A rule that swaps sides every instant it is asked."""
+
+        name = "alternating"
+
+        def __init__(self):
+            self.calls = 0
+
+        def __call__(self, snapshot, *, universe):
+            from app.learning.rules import Picks
+
+            symbols = sorted(snapshot)
+            if len(symbols) < 4:
+                return Picks(declined="too few")
+            self.calls += 1
+            head, tail = tuple(symbols[:2]), tuple(symbols[-2:])
+            return (
+                Picks(longs=head, shorts=tail)
+                if self.calls % 2
+                else Picks(longs=tail, shorts=head)
+            )
+
+    def test_a_rule_that_never_changes_its_mind_has_one_book(self):
+        result = measure.measure(
+            trending_market(bars=300),
+            bar_interval=timedelta(hours=1),
+            rule=self.Frozen(),
+        )
+
+        assert result.instants > 50
+        assert result.distinct_books == 1
+
+    def test_a_rule_that_changes_every_instant_has_many(self):
+        result = measure.measure(
+            trending_market(bars=300),
+            bar_interval=timedelta(hours=1),
+            rule=self.Alternating(),
+        )
+
+        assert result.distinct_books == 2
+        assert result.as_dict()["instants_per_book"] > 1
+
+    def test_the_reading_is_published_not_only_held(self):
+        """A t computed over instants is not interpretable without it."""
+        result = measure.measure(
+            trending_market(bars=300),
+            bar_interval=timedelta(hours=1),
+            rule=self.Frozen(),
+        )
+        payload = result.as_dict()
+
+        assert payload["distinct_books"] == 1
+        assert payload["instants_per_book"] == payload["instants"]
