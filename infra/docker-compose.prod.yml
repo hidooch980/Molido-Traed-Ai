@@ -120,6 +120,14 @@ services:
     # default nobody set. Parallel scans on the larger chunks were hitting the
     # same ceiling and quietly falling back to a single worker.
     shm_size: 1gb
+    # Last to be killed, not first. On 2026-09-07 the OOM killer ran three
+    # times and chose postgres twice, because it was the largest resident
+    # process on a host where nine MetaTrader terminals had no memory limit
+    # between them. The terminals are capped and told to volunteer
+    # (infra/host/mt5-memory.conf); this is the other half. A terminal that
+    # dies restarts in ten seconds with its account and its expert. A
+    # database killed mid-write is a different kind of event.
+    oom_score_adj: -900
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
