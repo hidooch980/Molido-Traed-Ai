@@ -214,6 +214,20 @@ def run(
     if full.instants == 0:
         return {"available": False, "reason": "no instant in the window could be ranked"}
 
+    # One extra walk per delay. Two is enough to answer the question: if the
+    # edge is intact a bar late and gone two bars late it was never about
+    # latency, and if it is gone at one bar it was never about the market.
+    delays = {
+        late: measure(
+            series,
+            bar_interval=interval,
+            universe=frozenset(universe),
+            rule=rule,
+            entry_delay_bars=late,
+        )
+        for late in (1, 2)
+    }
+
     bars = max(len(b) for b in series.values())
     from app.workers.resolve import HORIZON
 
@@ -274,6 +288,21 @@ def run(
         # rests on a handful of instants, which are the two questions an
         # account holder has to live with.
         "montecarlo": mc.report(full.instant_rows or (), block=block, draws=draws),
+        # Section 16's execution-delay leg. A late fill is not a cost - the
+        # order goes on at a different price, so the stop and target sit
+        # elsewhere and different bars decide it. A rule whose edge lives in
+        # the bar after the decision is a rule about latency, and this
+        # deployment reaches its terminals through a file dropped on a Wine
+        # filesystem.
+        "entry_delay": [
+            {
+                "bars": late,
+                "edge_r": round(delayed.edge_r, 4),
+                "t": round(delayed.t_statistic, 2),
+                "instants": delayed.instants,
+            }
+            for late, delayed in delays.items()
+        ],
         "regime": regime.as_dict() if regime else None,
         "registry": {
             "listed_as": (
@@ -351,6 +380,13 @@ def render(payload: dict[str, Any]) -> str:
         ]
     if payload.get("montecarlo"):
         lines += ["", *mc.render(payload["montecarlo"])]
+    if payload.get("entry_delay"):
+        lines += ["", "  filled late:"]
+        for late in payload["entry_delay"]:
+            lines.append(
+                f"    {late['bars']} bar(s)  edge {late['edge_r']:+.4f} R  "
+                f"t {late['t']:.2f}  over {late['instants']} instants"
+            )
     lines += ["", "  slices with enough data:"]
     thick = [s for s in r["slices"] if not s["thin"]]
     for s in thick:

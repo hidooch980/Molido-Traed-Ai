@@ -224,6 +224,7 @@ def measure(
     only: frozenset[str] | None = None,
     rule: Any = None,
     keep_instants: bool = False,
+    entry_delay_bars: int = 0,
     stop_multiple: float | None = None,
     target_multiple: float | None = None,
 ) -> Measurement:
@@ -345,13 +346,26 @@ def measure(
                 )
                 if not atr_here:
                     continue
-                price_here = bars[position].close
+                # Where the order actually filled. Zero delay is the close
+                # of the bar the decision was taken on; a delay of one is the
+                # close of the next, which is a different price and therefore
+                # a different trade - not a cost. A rule whose edge lives
+                # entirely in the first bar is a rule about latency.
+                #
+                # The ATR above is still measured at the decision instant:
+                # the size was chosen from what the rule could see, and
+                # re-measuring it at the fill would be sizing on information
+                # the decision did not have.
+                fill_at = position + entry_delay_bars
+                if fill_at >= len(bars):
+                    continue
+                price_here = bars[fill_at].close
                 pick = _Pick(symbol=symbol, price=price_here, atr=atr_here)
                 distance = pick.atr * stop_mult
 
                 outcome = _resolve(
                     bars,
-                    position,
+                    fill_at,
                     side=side,
                     entry=pick.price,
                     stop=pick.price - distance * side,
@@ -370,7 +384,7 @@ def measure(
                     if entry is None
                     else _resolve(
                         bars,
-                        position,
+                        fill_at,
                         side=entry.side,
                         entry=entry.entry,
                         stop=entry.stop,

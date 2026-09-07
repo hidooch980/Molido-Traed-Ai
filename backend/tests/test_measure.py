@@ -593,3 +593,70 @@ class TestARuleThatNeedsMoreHistoryThanTheDefault:
         assert rules.history_needed(rules.get("short-horizon-reversal")) == 6
         assert rules.history_needed(rules.get("carry-differential")) == 1
         assert rules.history_needed(None) == 0
+
+
+class TestBeingLateToTheFill:
+    """Section 16 of the brief asks whether the edge survives execution delay.
+
+    A late fill is not a cost. It is a different trade: the order goes on at
+    a different price, so the stop and the target sit somewhere else and the
+    bars that decide it are not the same bars. Charging a few extra points of
+    spread would model none of that.
+
+    A rule whose edge lives entirely in the bar after the decision is a rule
+    about latency, and this deployment reaches its terminals through a file
+    dropped on a Wine filesystem - so the question is not hypothetical."""
+
+    def test_zero_delay_is_the_behaviour_that_was_there_before(self):
+        market = trending_market(bars=300)
+
+        plain = measure.measure(market, bar_interval=timedelta(hours=1))
+        explicit = measure.measure(
+            market, bar_interval=timedelta(hours=1), entry_delay_bars=0
+        )
+
+        assert plain.as_dict() == explicit.as_dict()
+
+    def test_a_delayed_fill_is_a_different_measurement(self):
+        """Not necessarily worse - the point is that it is not the same trade
+        and the harness must not pretend otherwise."""
+        market = trending_market(bars=300)
+
+        prompt = measure.measure(market, bar_interval=timedelta(hours=1))
+        late = measure.measure(
+            market, bar_interval=timedelta(hours=1), entry_delay_bars=2
+        )
+
+        assert late.instants > 0
+        # The whole reading moves, not one field: different fills mean
+        # different stops, different targets and different resolving bars.
+        assert late.as_dict() != prompt.as_dict()
+
+    def test_both_arms_are_delayed_together(self):
+        """Delaying the rule and filling its control instantly would measure
+        the delay rather than the rule. The control is a coin flip on the same
+        instrument at the same instant, and it has to reach the market the
+        same way."""
+        market = flat_market(bars=300)
+
+        late = measure.measure(
+            market, bar_interval=timedelta(hours=1), entry_delay_bars=1
+        )
+
+        # A market that goes nowhere: both arms resolve on the same flat bars,
+        # so any asymmetry here would be the delay landing on one side only.
+        assert late.rule_r == late.control_r
+
+    def test_an_instant_with_no_bar_left_to_fill_on_is_skipped(self):
+        """At the very end of the series there is nothing to be late into.
+        Skipped, not filled at the last available price - that would be a
+        fill at a moment the delay says had not arrived."""
+        market = trending_market(bars=300)
+
+        far = measure.measure(
+            market, bar_interval=timedelta(hours=1), entry_delay_bars=50
+        )
+
+        assert far.instants < measure.measure(
+            market, bar_interval=timedelta(hours=1)
+        ).instants
