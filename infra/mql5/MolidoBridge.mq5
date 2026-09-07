@@ -681,6 +681,131 @@ void CloseOne(const string id, const ulong ticket)
 
 
 //+------------------------------------------------------------------+
+//| Move the stop, and the target, on a position already open.        |
+//|                                                                   |
+//| The bridge could open a position and set its levels once, and     |
+//| after that the only thing that could move a stop was the market   |
+//| reaching it. So a stop could never be tightened as a trade went   |
+//| the right way: every position carried its opening risk until it   |
+//| closed, however much of the move was already banked.              |
+//|                                                                   |
+//| Levels only. This never sizes, never opens and never closes - the |
+//| worst a bad amend can do is put a stop somewhere unhelpful, and   |
+//| the checks below refuse the two placements that are worse than    |
+//| unhelpful.                                                        |
+//|                                                                   |
+//| **A stop may only move toward the price, never away from it.**    |
+//| That is the whole safety property. Widening a stop is how a       |
+//| losing position turns into a larger losing position, and a caller |
+//| that has miscalculated should be refused rather than obeyed - so  |
+//| the refusal lives here, at the venue, where no backend bug can    |
+//| reach past it.                                                    |
+//+------------------------------------------------------------------+
+void AmendOne(const string id, const ulong ticket, double sl, double tp)
+  {
+   if(!PositionSelectByTicket(ticket))
+     {
+      //--- Already gone is not a failure, exactly as for a close: a stop may
+      //--- have taken it between the request being written and read.
+      WriteResult(id, true, ticket, 0.0, "no such position - nothing to amend");
+      return;
+     }
+
+   string symbol   = PositionGetString(POSITION_SYMBOL);
+   long   kind     = PositionGetInteger(POSITION_TYPE);
+   double open     = PositionGetDouble(POSITION_PRICE_OPEN);
+   double have_sl  = PositionGetDouble(POSITION_SL);
+   double have_tp  = PositionGetDouble(POSITION_TP);
+   int    digits   = (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS);
+   double point    = SymbolInfoDouble(symbol, SYMBOL_POINT);
+   double nearest  = SymbolInfoInteger(symbol, SYMBOL_TRADE_STOPS_LEVEL) * point;
+   double bid      = SymbolInfoDouble(symbol, SYMBOL_BID);
+   double ask      = SymbolInfoDouble(symbol, SYMBOL_ASK);
+
+   //--- Absent means "leave this one alone", so a caller can move the stop
+   //--- without restating a target it does not want to change.
+   if(sl <= 0.0)
+      sl = have_sl;
+   if(tp <= 0.0)
+      tp = have_tp;
+
+   if(sl == have_sl && tp == have_tp)
+     {
+      WriteResult(id, true, ticket, 0.0, "levels already there");
+      return;
+     }
+
+   //--- Never away from the price. A stop that only ever tightens cannot
+   //--- turn a bounded loss into an unbounded one, whatever sent it.
+   if(have_sl > 0.0)
+     {
+      if(kind == POSITION_TYPE_BUY && sl < have_sl)
+        {
+         WriteResult(id, false, ticket, 0.0,
+                     "refused - a buy stop may only rise, " +
+                     DoubleToString(sl, digits) + " is below " +
+                     DoubleToString(have_sl, digits));
+         return;
+        }
+      if(kind == POSITION_TYPE_SELL && sl > have_sl)
+        {
+         WriteResult(id, false, ticket, 0.0,
+                     "refused - a sell stop may only fall, " +
+                     DoubleToString(sl, digits) + " is above " +
+                     DoubleToString(have_sl, digits));
+         return;
+        }
+     }
+
+   //--- On the wrong side of the market is not a stop, it is an instruction
+   //--- to close at once at whatever the book holds.
+   if((kind == POSITION_TYPE_BUY && sl >= bid) ||
+      (kind == POSITION_TYPE_SELL && sl <= ask))
+     {
+      WriteResult(id, false, ticket, 0.0,
+                  "refused - stop " + DoubleToString(sl, digits) +
+                  " is on the wrong side of the market");
+      return;
+     }
+
+   //--- A distance the venue will not hold is not a stop. Reported rather
+   //--- than clamped, for the same reason the opening path reports it.
+   double gap = (kind == POSITION_TYPE_BUY) ? (bid - sl) : (sl - ask);
+   if(nearest > 0.0 && gap < nearest)
+     {
+      WriteResult(id, false, ticket, 0.0,
+                  "refused - stop " + DoubleToString(gap, digits) +
+                  " from price is inside the broker minimum " +
+                  DoubleToString(nearest, digits));
+      return;
+     }
+
+   MqlTradeRequest request;
+   MqlTradeResult  result;
+   ZeroMemory(request);
+   ZeroMemory(result);
+   request.action   = TRADE_ACTION_SLTP;
+   request.symbol   = symbol;
+   request.position = ticket;
+   request.sl       = NormalizeDouble(sl, digits);
+   request.tp       = NormalizeDouble(tp, digits);
+
+   if(!OrderSend(request, result) || result.retcode != TRADE_RETCODE_DONE)
+     {
+      WriteResult(id, false, ticket, 0.0,
+                  "amend retcode " + IntegerToString(result.retcode) + " " + result.comment);
+      return;
+     }
+   WriteResult(id, true, ticket, sl,
+               "stop " + DoubleToString(have_sl, digits) + " -> " +
+               DoubleToString(sl, digits) + " on " + symbol);
+   Print("MolidoBridge: amended ", symbol, " ticket ", ticket,
+         " stop ", DoubleToString(have_sl, digits), " -> ", DoubleToString(sl, digits),
+         " open ", DoubleToString(open, digits));
+  }
+
+
+//+------------------------------------------------------------------+
 ENUM_ORDER_TYPE_FILLING MolidoFilling(const string symbol)
   {
    long allowed = 0;
@@ -733,6 +858,24 @@ void ExecuteOne(string filename)
          return;
         }
       CloseOne(id, (ulong)StringToInteger(closing));
+      return;
+     }
+
+   //--- An amend names a ticket and the levels to put on it. Routed here for
+   //--- the same reason a close is: it has no size and no side to validate,
+   //--- and reading the opening fields for it would reject a valid request
+   //--- for missing a symbol it never needed.
+   string amending = JsonField(body, "amend_ticket");
+   if(amending != "")
+     {
+      if(!AllowTrading)
+        {
+         WriteResult(id, false, 0, 0.0, "AllowTrading is off on the expert");
+         return;
+        }
+      AmendOne(id, (ulong)StringToInteger(amending),
+               StringToDouble(JsonField(body, "stop")),
+               StringToDouble(JsonField(body, "target")));
       return;
      }
 

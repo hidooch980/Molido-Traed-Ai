@@ -169,6 +169,60 @@ class MetaTraderBroker:
             )
         return found
 
+    def amend(
+        self,
+        ticket: int | str,
+        *,
+        stop: float | None = None,
+        target: float | None = None,
+    ) -> ExecutionReport:
+        """Move the levels on a position that is already open.
+
+        The same request channel an order uses, because it is the same seam:
+        a file the expert claims, acts on, and answers. A second channel
+        would be a second thing that can silently stop being read.
+
+        Not part of `BrokerAdapter`. Every adapter can submit and cancel; only
+        a venue that holds positions can amend one, and the paper broker has
+        no ticket to name. A caller checks for the method rather than assuming
+        it - which is what the trailing worker does.
+
+        `None` leaves a level where it is, so a caller can tighten a stop
+        without restating a target it does not want to touch. The expert
+        refuses a stop that moves away from the price or sits on the wrong
+        side of the market; those refusals live there rather than here
+        because that is where no backend mistake can reach past them.
+        """
+        request_id = str(uuid.uuid4())
+        payload: dict[str, Any] = {"id": request_id, "amend_ticket": str(ticket)}
+        # Omitted rather than sent as zero: zero is how the expert is told
+        # "leave this one alone", and sending it for a level the caller meant
+        # to set would quietly do nothing.
+        if stop is not None and stop > 0:
+            payload["stop"] = float(stop)
+        if target is not None and target > 0:
+            payload["target"] = float(target)
+
+        if "stop" not in payload and "target" not in payload:
+            return self._report(
+                request_id,
+                OrderState.REJECTED,
+                reason="an amend that moves neither level is not an amend",
+            )
+
+        try:
+            self.directory.mkdir(parents=True, exist_ok=True)
+            path = self.directory / f"{REQUEST_PREFIX}{request_id}.json"
+            path.write_text(json.dumps(payload), encoding="utf-8")
+        except OSError as problem:
+            return self._report(
+                request_id,
+                OrderState.REJECTED,
+                reason=f"the amend could not be written: {problem}",
+            )
+
+        return self._await_result(request_id)
+
     def cancel(self, client_order_id: str) -> ExecutionReport:
         """Only an unclaimed request can be cancelled.
 

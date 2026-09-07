@@ -538,6 +538,46 @@ def resolve_forward() -> dict[str, Any]:
         return resolve_open(session)
 
 
+def tighten_stops() -> dict[str, Any]:
+    """Move the stop up under positions that have gone the right way.
+
+    Off unless an account asks for it. The forward record is measuring a
+    fixed geometry, and a trailing stop produces a different distribution of
+    outcomes - so this runs on the accounts named in
+    `MOLIDO_TRAILING_LOGINS` and on no others, which is what lets the two be
+    compared instead of one quietly replacing the other.
+    """
+    import os
+
+    from app.execution.metatrader_broker import MetaTraderBroker
+    from app.providers.metatrader import MetaTraderBridge, bridge_dirs
+    from app.workers import trailing
+
+    raw = os.environ.get("MOLIDO_TRAILING_LOGINS", "").strip()
+    logins = {part.strip() for part in raw.split(",") if part.strip()}
+    if not logins:
+        return {"moved": 0, "reason": "no account has trailing switched on"}
+
+    moved = 0
+    per_terminal: dict[str, Any] = {}
+    for key, path in sorted(bridge_dirs().items()):
+        try:
+            report = trailing.run(
+                MetaTraderBridge(directory=path),
+                MetaTraderBroker(directory=path),
+                logins=logins,
+                dry_run=False,
+            )
+        except Exception as problem:  # noqa: BLE001 - one terminal is not the sweep
+            per_terminal[key] = f"{type(problem).__name__}: {problem}"
+            continue
+        if report.moves:
+            per_terminal[key] = report.as_dict()
+            moved += sum(1 for m in report.moves if m.sent)
+
+    return {"moved": moved, "logins": sorted(logins), "by_terminal": per_terminal}
+
+
 def send_orders() -> dict[str, Any]:
     """Turn this cycle's fresh decisions into orders, behind every gate.
 
@@ -749,6 +789,18 @@ async def collect(ctx: dict) -> dict[str, Any]:
         payload["resolved"] = {
             "resolved": 0,
             "reason": f"{type(problem).__name__} while resolving open entries",
+        }
+
+    # After the book has been read and acted on, tighten what has earned it.
+    # Last because it is the only step that changes a position rather than
+    # opening or closing one, and a failure here must not stop the two that
+    # matter more.
+    try:
+        payload["trailing"] = await asyncio.to_thread(tighten_stops)
+    except Exception as problem:  # noqa: BLE001 - reported, never fatal
+        payload["trailing"] = {
+            "moved": 0,
+            "reason": f"{type(problem).__name__} while tightening stops",
         }
 
     # Logged rather than only returned. This result used to travel purely as
