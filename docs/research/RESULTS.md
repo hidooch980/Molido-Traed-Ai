@@ -1,0 +1,130 @@
+# RESULTS — baseline measurements
+
+Every row here came out of `app.learning.edge_report`. The command is given
+above each block. Nothing is copied from elsewhere and nothing is estimated.
+
+Bonferroni-corrected for 8 hypotheses throughout, so the bar is **t = 3.44**,
+not 1.96.
+
+---
+
+## 1. All eight registered rules, H1, two years, broker series
+
+```
+docker exec molidotrade-collector-1 python -m app.learning.edge_report \
+  --rule <name> --timeframe H1 --years 2 --draws 800 --hypotheses 8
+```
+
+| rule | t (clustered) | needs | placebo p | bootstrap 95% | verdict | label |
+|---|---|---|---|---|---|---|
+| carry-differential | **3.63** | 3.44 | 0.00125 | contains zero | NOT_ROBUST | 🟡 |
+| stochastic-reversion | 1.60 | 3.44 | 0.09488 | contains zero | NOT_ROBUST | 🔴 |
+| short-horizon-reversal | 1.24 | 3.44 | 0.21348 | contains zero | NOT_ROBUST | 🔴 |
+| rsi-mean-reversion | 0.76 | 3.44 | 0.43695 | contains zero | NOT_ROBUST | 🔴 |
+| cross-sectional-stretch | 0.20 | 3.44 | 0.83645 | contains zero | NOT_ROBUST | 🔴 |
+| donchian-breakout | −0.87 | 3.44 | 0.41948 | contains zero | NOT_ROBUST | 🔴 |
+| trend-following | 2.29 | 3.44 | 0.02743 | [−0.1930, +0.4057] | NOT_ROBUST | 🟡 |
+| time-series-momentum | **−7.14** | 3.44 | 0.00249 | [−0.6972, −0.1584] | NOT_ROBUST | 🔴 **negative** |
+
+The last two rows did not exist until the harness was fixed — see §3.
+
+**Nothing on H1 is robust.** `carry-differential` is the only rule to clear
+the corrected t, and its bootstrap interval still spans zero.
+
+`donchian-breakout` is worth naming separately: it is the rule that has never
+produced a live order candidate. It is not only silent, it has nothing to be
+loud about — t = −0.87, net −0.1008 R at base cost and −0.1308 R at extreme,
+and a sign-flipped null reproduces it as often as not.
+
+---
+
+## 2. time-series-momentum on its own horizon
+
+```
+docker exec molidotrade-collector-1 python -m app.learning.edge_report \
+  --rule time-series-momentum --provider yfinance --timeframe D1 \
+  --years 20 --draws 400 --hypotheses 8
+```
+
+```
+instants 2715   trades 7356   (2.71 per instant)
+t 5.34 clustered, 9.84 unclustered (inflation 1.8x)
+required t 3.44 for 8 hypothesis(es)
+
+cost stress:
+  base      cost 0.010 R   net +0.0965 R   survives
+  stressed  cost 0.020 R   net +0.0865 R   survives
+  extreme   cost 0.040 R   net +0.0665 R   survives
+
+placebo: 0 of 400 sign-flipped draws reached 0.1065 R, p = 0.00249
+bootstrap: median +0.1133 R, 95% [-0.0475, +0.3026]  <- contains zero
+
+FINDINGS
+  - negative in 7 of 24 slices: year:2016, 2017, 2018, 2020, 2024, 2025
+  - the block bootstrap interval contains zero
+
+VERDICT  robustness: NOT_ROBUST
+LABEL    🟡 RESEARCH FURTHER
+```
+
+This is the strongest thing measured in this project so far. It clears the
+corrected t, it survives execution costing **four times** the measured
+figure, and a sign-flipped null never once reproduced it in 400 draws. It
+still fails, on two counts that matter: the bootstrap interval spans zero,
+and it is negative in seven of twenty-four slices including two of the last
+three years.
+
+Under the brief's §33 that is 🟡, not 🟢. It is worth forward testing, and it
+is not a deploy candidate.
+
+### 2.1 The operational finding
+
+The same rule on H1 is **significantly negative**: t = −7.14, bootstrap
+95% [−0.6972, −0.1584], entirely below zero.
+
+That is not a contradiction. `lookback = 252` is twelve months of daily bars
+and ten days of hourly ones. Twelve-month momentum and ten-day momentum are
+different hypotheses, and at ten days the published effect is reversal, not
+continuation — which is what the number says.
+
+**It has been trading H1**, the horizon on which it measures significantly
+negative, and nobody could have known because until 2026-09-07 the harness
+could not run it at all.
+
+---
+
+## 3. Why two rules had no measurement before today
+
+`measure.measure` cut every snapshot to a fixed `min_history = 80` bars.
+`trend-following` needs 101 and `time-series-momentum` needs 253, so every
+instrument was skipped at every instant, and the report said "no measurement:
+no instant in the window could be ranked" — on both providers and on every
+timeframe tried.
+
+Each rule now declares what it needs and the harness takes the larger of that
+and its floor (`rules.history_needed`, commit `e715923`).
+
+| rule | bars needed |
+|---|---|
+| time-series-momentum | 253 |
+| trend-following | 101 |
+| donchian-breakout | 57 |
+| rsi-mean-reversion | 16 |
+| stochastic-reversion | 14 |
+| short-horizon-reversal | 6 |
+| carry-differential, cross-sectional-stretch | 1 |
+
+---
+
+## 4. Data not available
+
+| brief asks | state |
+|---|---|
+| H4 (§3) | **no H4 bars are collected at all** — `no H4 bars from yfinance` |
+| M5, M15, M30 rule measurements (§3) | not yet run |
+| XAGUSD (§2) | not yet checked against the collected universe |
+| Monte Carlo beyond bootstrap and placebo (§16) | trade reshuffling, execution delay, random omission not implemented |
+| news-event dependence (§18) | not implemented |
+| Sharpe, Sortino, Calmar, recovery factor (§21) | not computed by `edge_report` |
+
+These are gaps, not failures, and none of them is filled by guessing.
