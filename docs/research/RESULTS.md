@@ -164,3 +164,64 @@ one instant are one move seen several ways, it is −0.16.
 Nothing about the rule made that visible in advance. It is what the
 correction added on 2026-09-07 exists to catch, and it caught it on the first
 rule measured after it landed.
+
+---
+
+## 6. Monte Carlo — sections 16 and 21
+
+Added 2026-09-08 (`app/learning/montecarlo.py`). The report already had a
+block bootstrap and a sign-flipped placebo; those answer *is the mean
+distinguishable from zero*. These answer the two questions an account holder
+has to live with, and they are seeded so two runs agree (§28).
+
+### 6.1 time-series-momentum, D1, 20 years
+
+```
+monte carlo (seed 20260908):
+  drawdown observed 222.0833 R, median 21.2024, 95th 31.9911, worst 67.6131
+  the order that happened sits at the 100.0th percentile of orders
+  dropping 20% at random leaves a positive edge in 100.0% of draws
+  sharpe 0.1025  sortino 0.1588  calmar 0.0005  profit factor 1.3837
+```
+
+Two findings, pulling in opposite directions.
+
+**The edge is real and broad.** Dropping a fifth of the sample at random
+leaves it positive in **100% of 2,000 draws**. It is not carried by a handful
+of instants; combined with t = 5.34, survival of 4x costs and a placebo that
+never reproduced it, this is the most solid measurement in the project.
+
+**And it is uninvestable as it stands.** The observed worst peak-to-trough
+fall is **222 R**. Reshuffling the *same trades* into a random order gives a
+median of 21 R and a worst of 68 R across 2,000 orders — the sequence that
+actually happened is worse than every single one of them.
+
+That is not bad luck. It means the losses arrive **together**, in long
+consecutive runs, which is exactly what the slice table already hinted at
+(negative in 2016, 2017, 2018, 2020, 2024, 2025). Calmar of 0.0005 says the
+same thing in one number: the per-instant edge is nothing beside the hole it
+has to climb out of.
+
+On a $200,000 challenge account with a 10% total-drawdown rule, a 222 R
+excursion at 0.75% risk per trade is not survivable. **The edge exists and
+the account would be gone before it paid.**
+
+This is the finding the previous tooling could not produce. A bootstrap over
+instants deliberately destroys their order, so it can never see this; that is
+what reshuffling is for, and it took one run to show it.
+
+### 6.2 What the ratios are, and are not
+
+They are computed on the **edge** — the rule minus its control at the same
+instant — never on the raw return, for the same reason as everything else
+here: a raw return carries whatever the market did to everything.
+
+They are **not annualised**. The instants are not evenly spaced: the rule
+fires when it fires and markets shut at weekends, so a sparse series and a
+dense one would be multiplied by different constants for reasons having
+nothing to do with either edge. A per-instant Sharpe compares two rules on
+this sample honestly; an annualised one compares them to a convention.
+
+Calmar and recovery factor are `None` when there was no drawdown at all,
+rather than a large number. A strategy that never fell has no ratio to a
+fall.

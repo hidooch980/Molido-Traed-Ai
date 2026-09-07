@@ -30,6 +30,7 @@ from typing import Any
 
 from app.brain import crosssection
 from app.core.enums import Timeframe
+from app.learning import montecarlo as mc
 from app.learning import robustness as rb
 from app.learning.measure import load_series, measure
 
@@ -267,6 +268,12 @@ def run(
         "flat_bars_dropped": dropped_flat,
         "measurement": full.as_dict(),
         "robustness": report.as_dict(),
+        # Section 16 of the brief, beside the bootstrap and the placebo that
+        # were already here. Those answer whether the mean differs from zero;
+        # these answer whether the drawdown was lucky and whether the edge
+        # rests on a handful of instants, which are the two questions an
+        # account holder has to live with.
+        "montecarlo": mc.report(full.instant_rows or (), draws=draws),
         "regime": regime.as_dict() if regime else None,
         "registry": {
             "listed_as": (
@@ -342,6 +349,8 @@ def render(payload: dict[str, Any]) -> str:
             f"{b['block_instants']} instants"
             + ("" if b["excludes_zero"] else "  <- contains zero"),
         ]
+    if payload.get("montecarlo"):
+        lines += ["", *mc.render(payload["montecarlo"])]
     lines += ["", "  slices with enough data:"]
     thick = [s for s in r["slices"] if not s["thin"]]
     for s in thick:
