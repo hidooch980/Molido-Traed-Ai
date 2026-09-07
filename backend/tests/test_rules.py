@@ -253,3 +253,156 @@ class TestTheThreeSingleInstrumentBrains:
         assert TrendFollowing().lookback >= TrendFollowing().slow
         assert RSIMeanReversion().lookback > RSIMeanReversion().period
         assert DonchianBreakout().lookback > DonchianBreakout().channel
+
+
+class TestTheThreeFamiliesThatHadNoRepresentative:
+    """Market Structure, Volatility and Statistical are the three families
+    the brief names that this project had nothing in at all. These are their
+    first members, and they live in PROPOSED - CANDIDATES is deployment,
+    because the forward loop writes a decision for everything in it on every
+    cycle.
+
+    What is tested here is that each rule says what its docstring claims it
+    says. Whether it earns anything is the harness's question, not this
+    file's."""
+
+    def bars(self, highs, lows, closes):
+        return {
+            "bars": list(zip(highs, lows, closes, strict=True)),
+            "closes": list(closes),
+        }
+
+    def stepped(self, *, n=60, drift=0.0, base=100.0, span=1.0):
+        closes = [base + drift * i for i in range(n)]
+        return self.bars(
+            [c + span for c in closes], [c - span for c in closes], closes
+        )
+
+    # ---------------------------------------------------------- structure
+
+    def test_swing_structure_needs_both_halves_to_agree(self):
+        """A higher high alone is a spike and a higher low alone is a
+        pullback that held. The rule is about the two together."""
+        from app.learning.rules import SwingStructure
+
+        rising = self.stepped(drift=0.5)
+        falling = self.stepped(drift=-0.5, base=200.0)
+        # High rises, low does not: the second half spikes up but keeps
+        # visiting the first half's floor.
+        spike = self.bars(
+            [100.0 + (5.0 if i >= 30 and i % 5 == 0 else 0.0) for i in range(60)],
+            [98.0] * 60,
+            [99.0] * 60,
+        )
+
+        picks = SwingStructure(per_side=1)(
+            {"UP": rising, "DOWN": falling, "SPIKE": spike}, universe=None
+        )
+
+        assert picks.longs == ("UP",)
+        assert picks.shorts == ("DOWN",)
+        assert "SPIKE" not in picks.longs + picks.shorts
+
+    def test_swing_structure_declines_on_a_flat_list(self):
+        from app.learning.rules import SwingStructure
+
+        picks = SwingStructure()(
+            {"A": self.stepped(), "B": self.stepped(base=50.0)}, universe=None
+        )
+
+        assert picks.longs == () and picks.shorts == ()
+        assert picks.declined
+
+    # --------------------------------------------------------- volatility
+
+    def test_volatility_expansion_reads_the_close_not_the_direction(self):
+        """A wide bar closing in its middle is not a signal, however far it
+        travelled."""
+        from app.learning.rules import VolatilityExpansion
+
+        def with_last(high, low, close):
+            row = self.stepped(n=40)
+            row["bars"][-1] = (high, low, close)
+            row["closes"][-1] = close
+            return row
+
+        picks = VolatilityExpansion(per_side=1)(
+            {
+                "TOP": with_last(110.0, 90.0, 109.5),
+                "BOTTOM": with_last(110.0, 90.0, 90.5),
+                "MIDDLE": with_last(110.0, 90.0, 100.0),
+            },
+            universe=None,
+        )
+
+        assert picks.longs == ("TOP",)
+        assert picks.shorts == ("BOTTOM",)
+        assert "MIDDLE" not in picks.longs + picks.shorts
+
+    def test_an_ordinary_bar_is_not_an_expansion(self):
+        from app.learning.rules import VolatilityExpansion
+
+        picks = VolatilityExpansion()({"A": self.stepped(n=40)}, universe=None)
+
+        assert picks.declined
+
+    # -------------------------------------------------------- statistical
+
+    def test_residual_reversion_ignores_a_move_the_whole_list_made(self):
+        """The case that separates it from the incumbent. Every instrument
+        drifting together is a large stretch on each and a residual of zero
+        on all - and a common move is the one thing a reversion rule must not
+        fade."""
+        from app.brain import crosssection
+        from app.learning.rules import ResidualReversion
+
+        universe = sorted(crosssection.RANKED_UNIVERSE)[
+            : crosssection.MIN_CROSS_SECTION
+        ]
+        together = {sym: self.stepped(n=40, drift=0.5) for sym in universe}
+
+        picks = ResidualReversion()(together, universe=None)
+
+        assert picks.declined == "every residual is identical"
+
+    def test_it_fades_the_one_that_left_its_peers(self):
+        from app.brain import crosssection
+        from app.learning.rules import ResidualReversion
+
+        universe = sorted(crosssection.RANKED_UNIVERSE)[
+            : crosssection.MIN_CROSS_SECTION + 2
+        ]
+        book = {sym: self.stepped(n=40, drift=0.5) for sym in universe}
+        book[universe[0]] = self.stepped(n=40, drift=2.0)
+        book[universe[1]] = self.stepped(n=40, drift=-2.0)
+
+        picks = ResidualReversion(per_side=1)(book, universe=None)
+
+        assert picks.shorts == (universe[0],)
+        assert picks.longs == (universe[1],)
+
+    def test_it_refuses_a_cross_section_too_thin_to_have_a_common_move(self):
+        from app.learning.rules import ResidualReversion
+
+        picks = ResidualReversion()(
+            {"A": self.stepped(n=40), "B": self.stepped(n=40, base=50.0)},
+            universe=None,
+        )
+
+        assert "instruments could be returned" in (picks.declined or "")
+
+    # ------------------------------------------------------------ wiring
+
+    def test_they_are_proposed_and_not_deployed(self):
+        """CANDIDATES is deployment: `forward.record_forward` iterates it and
+        writes a decision for every rule in it on every cycle."""
+        from app.learning import rules
+
+        assert rules.proposed_names() == [
+            "residual-reversion",
+            "swing-structure",
+            "volatility-expansion",
+        ]
+        for name in rules.proposed_names():
+            assert name not in rules.names()
+            assert rules.get(name) is not None

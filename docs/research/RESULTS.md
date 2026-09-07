@@ -128,3 +128,39 @@ and its floor (`rules.history_needed`, commit `e715923`).
 | Sharpe, Sortino, Calmar, recovery factor (§21) | not computed by `edge_report` |
 
 These are gaps, not failures, and none of them is filled by guessing.
+
+---
+
+## 5. The three families that had no representative
+
+Written 2026-09-08 into `rules.PROPOSED` — Market Structure, Volatility and
+Statistical. Each carries a hypothesis, a deterministic entry, and published
+rather than tuned parameters.
+
+```
+docker exec molidotrade-collector-1 python -m app.learning.edge_report \
+  --rule <name> --timeframe H1 --years 2 --draws 400 --hypotheses 11
+```
+
+| rule | family | instants | t | needs | placebo p | bootstrap 95% | label |
+|---|---|---|---|---|---|---|---|
+| swing-structure | Market Structure | 461 | −1.31 | 3.61 | 0.209 | [−0.3742, +0.2178] | 🔴 |
+| volatility-expansion | Volatility | 147 | −0.92 | 3.61 | 0.347 | [−0.2707, +0.1488] | 🔴 |
+| residual-reversion | Statistical | 399 | −0.16 | 3.61 | 0.840 | [−0.2324, +0.2699] | 🔴 |
+
+**NO ROBUST EDGE FOUND** in any of the three. None is close; every bootstrap
+interval spans zero and no placebo p approaches significance.
+
+They stay in `PROPOSED`. A rule that has not earned a forward record does not
+get one, because being in `CANDIDATES` means the forward loop writes its
+decisions on every cycle — that is deployment, not proposal.
+
+### 5.1 What `residual-reversion` demonstrated on the way
+
+Its clustering inflation is **8.1x** — the largest measured anywhere in this
+project. The uncorrected t is −1.26; corrected for the fact that its picks at
+one instant are one move seen several ways, it is −0.16.
+
+Nothing about the rule made that visible in advance. It is what the
+correction added on 2026-09-07 exists to catch, and it caught it on the first
+rule measured after it landed.

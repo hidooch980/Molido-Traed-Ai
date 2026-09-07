@@ -25,6 +25,8 @@ that cannot reproduce a known negative is not measuring anything.
 from __future__ import annotations
 
 import bisect
+import math
+import statistics
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
@@ -804,6 +806,229 @@ class StochasticReversion:
 
 
 #: Every candidate, by name. Adding one here is the whole cost of testing it.
+@dataclass(frozen=True)
+class SwingStructure:
+    """Buy what has made a higher high and a higher low; sell the mirror.
+
+    HYPOTHESIS: an instrument whose recent swing sits entirely above its
+    previous one continues in that direction more often than chance, because
+    the two conditions together say something a single extreme does not - a
+    higher high alone is a spike, and a higher low alone is a pullback that
+    held. Both at once is the definition traders have used for an uptrend for
+    a century, and the point of this rule is to find out whether that
+    definition survives a control.
+
+    Market Structure is one of the three families in the brief with no
+    representative here, and this is its plainest member: no indicator, no
+    smoothing, no threshold. Two halves of a window, four numbers, one
+    comparison.
+
+    ENTRY   the recent half's highest high above the older half's, and the
+            recent half's lowest low above the older half's -> long. Both
+            below -> short. Anything else is not a structure and is skipped.
+    EXIT    the harness geometry, as for every rule here: the stop and target
+            live outside the rule, so the comparison is about the signal.
+    RANK    the smaller of the two displacements, in ATR - a structure is only
+            as decisive as its weaker half, and taking the larger would let a
+            spike in the high carry a low that barely moved.
+
+    EXPECTED FAILURE MODE: a range. Inside one the two halves swap leadership
+    constantly, the rule flips side every few bars and pays the spread each
+    time. If it fails it should fail hardest in the low-volatility slices,
+    and `robustness.regime_segments` is where that will show.
+    """
+
+    name: str = "swing-structure"
+    #: Bars in the window, split into two halves. Forty rather than a tuned
+    #: number: it is two twenty-bar swings, and twenty is the span the
+    #: ordinary description of swing structure uses.
+    lookback: int = 40
+    per_side: int = 2
+
+    def __call__(
+        self, snapshot: dict[str, dict[str, Any]], *, universe: frozenset[str] | None
+    ) -> Picks:
+        longs: list[tuple[float, str]] = []
+        shorts: list[tuple[float, str]] = []
+        half = self.lookback // 2
+        for symbol in _eligible(snapshot, universe):
+            bars = list(snapshot.get(symbol, {}).get("bars") or [])
+            if len(bars) < self.lookback:
+                continue
+            window = bars[-self.lookback :]
+            older, recent = window[:half], window[half:]
+            atr = crosssection.average_true_range(window)
+            if not atr:
+                continue
+            high_shift = max(h for h, _l, _c in recent) - max(h for h, _l, _c in older)
+            low_shift = min(low for _h, low, _c in recent) - min(
+                low for _h, low, _c in older
+            )
+            if high_shift > 0 and low_shift > 0:
+                longs.append((min(high_shift, low_shift) / atr, symbol))
+            elif high_shift < 0 and low_shift < 0:
+                shorts.append((min(-high_shift, -low_shift) / atr, symbol))
+
+        if not longs and not shorts:
+            return Picks(declined="no instrument had a shifted swing")
+        longs.sort(reverse=True)
+        shorts.sort(reverse=True)
+        kept = [*longs[: self.per_side], *shorts[: self.per_side]]
+        return Picks(
+            longs=tuple(sym for _, sym in longs[: self.per_side]),
+            shorts=tuple(sym for _, sym in shorts[: self.per_side]),
+            # Measured against its own history, not against the other
+            # instruments, so there is no shared ranking to take a position
+            # in. Half an ATR of shift in both the high and the low is
+            # already a decisive structure; past that the instrument is only
+            # more volatile.
+            scores=scaled_strength({sym: size for size, sym in kept}, full_at=0.5),
+        )
+
+
+@dataclass(frozen=True)
+class VolatilityExpansion:
+    """Follow the close of a bar that traded far wider than its neighbours.
+
+    HYPOTHESIS: when one bar's range is a large multiple of the recent
+    average, something arrived - and where that bar closed inside its own
+    range says which side won the argument. A wide bar closing on its high is
+    a different event from a wide bar closing in its middle, and the second
+    is not a signal at all.
+
+    Volatility is the second family the brief names with no representative
+    here. This is its expansion half; contraction is a different hypothesis
+    and gets its own rule rather than a parameter on this one.
+
+    ENTRY   the bar's range at least `expansion` times the preceding ATR, and
+            its close within the top or bottom `tail` of that range.
+    RANK    how far past the threshold the expansion went, in ATR.
+
+    Why the close's position and not the direction of the move: a bar can
+    open with a gap, travel the other way for hours and still close above its
+    open. Where it closed inside the range it actually traded is a fact about
+    that bar; the open is a fact about the one before it.
+
+    EXPECTED FAILURE MODE: scheduled news. If this works at all it should
+    work at the release hours and not otherwise, which is what
+    `robustness.by_hour` and `by_session` will say - and §18 of the brief
+    becomes answerable rather than assumed.
+    """
+
+    name: str = "volatility-expansion"
+    lookback: int = 20
+    #: How many times the average range the bar must trade. Two, the ordinary
+    #: textbook definition of a wide-range bar, not a value picked here.
+    expansion: float = 2.0
+    #: How near its own extreme the close must sit, as a share of the range.
+    #: A third is the standard "closed in the top third" reading.
+    tail: float = 1.0 / 3.0
+    per_side: int = 2
+
+    def __call__(
+        self, snapshot: dict[str, dict[str, Any]], *, universe: frozenset[str] | None
+    ) -> Picks:
+        longs: list[tuple[float, str]] = []
+        shorts: list[tuple[float, str]] = []
+        for symbol in _eligible(snapshot, universe):
+            bars = list(snapshot.get(symbol, {}).get("bars") or [])
+            if len(bars) < self.lookback + 1:
+                continue
+            atr = crosssection.average_true_range(bars[-(self.lookback + 1) : -1])
+            if not atr:
+                continue
+            high, low, close = bars[-1]
+            span = high - low
+            if span <= 0 or span < atr * self.expansion:
+                continue
+            position = (close - low) / span
+            past = (span - atr * self.expansion) / atr
+            if position >= 1.0 - self.tail:
+                longs.append((past, symbol))
+            elif position <= self.tail:
+                shorts.append((past, symbol))
+
+        if not longs and not shorts:
+            return Picks(declined="no bar expanded and closed at its extreme")
+        longs.sort(reverse=True)
+        shorts.sort(reverse=True)
+        kept = [*longs[: self.per_side], *shorts[: self.per_side]]
+        return Picks(
+            longs=tuple(sym for _, sym in longs[: self.per_side]),
+            shorts=tuple(sym for _, sym in shorts[: self.per_side]),
+            scores=scaled_strength({sym: size for size, sym in kept}, full_at=1.0),
+        )
+
+
+@dataclass(frozen=True)
+class ResidualReversion:
+    """Fade what moved away from what its peers did, not from its own past.
+
+    HYPOTHESIS: most of any one pair's move over a few bars is the move the
+    whole list made - the dollar, or risk appetite. What is left after
+    subtracting that common move is the instrument's own, and that part
+    reverts even where the raw price does not.
+
+    **Not the same measurement as the incumbent, which is the reason it is
+    here.** `cross-sectional-stretch` ranks each instrument by its distance
+    from *its own* rolling mean; this ranks it by its distance from *what its
+    peers did over the same bars*. A list drifting together is a large
+    stretch on every member and a residual of zero on all of them, and the
+    two readings disagree in exactly the case that matters - a common move,
+    which is the one thing a mean-reversion rule must not fade.
+
+    ENTRY   residual = the instrument's log return over `lookback` bars minus
+            the cross-sectional mean of those returns. Buy the largest
+            negative residuals, sell the largest positive ones.
+    RANK    the residual in units of the cross-section's own dispersion, so a
+            quiet list and a violent one are read on the same scale.
+
+    EXPECTED FAILURE MODE: a genuine idiosyncratic repricing - a rate
+    decision on one currency - is identical to a residual on the bar it
+    happens, and fading it is the wrong side of a move that does not come
+    back. If this fails it should fail on the days carrying those events.
+    """
+
+    name: str = "residual-reversion"
+    lookback: int = 24
+    per_side: int = 2
+
+    def __call__(
+        self, snapshot: dict[str, dict[str, Any]], *, universe: frozenset[str] | None
+    ) -> Picks:
+        returns: dict[str, float] = {}
+        for symbol in _eligible(snapshot, universe):
+            closes = _closes(snapshot, symbol)
+            if len(closes) < self.lookback + 1:
+                continue
+            past, now = closes[-self.lookback - 1], closes[-1]
+            if past <= 0 or now <= 0:
+                continue
+            returns[symbol] = math.log(now / past)
+
+        # Fewer than this and the "common move" is the average of a handful
+        # of instruments, which is not a factor - it is noise with a mean.
+        if len(returns) < crosssection.MIN_CROSS_SECTION:
+            return Picks(declined=f"only {len(returns)} instruments could be returned")
+
+        common = sum(returns.values()) / len(returns)
+        residuals = {sym: value - common for sym, value in returns.items()}
+        spread = statistics.pstdev(residuals.values())
+        if not spread:
+            return Picks(declined="every residual is identical")
+
+        scored = sorted((value / spread, sym) for sym, value in residuals.items())
+        longs = tuple(sym for _, sym in scored[: self.per_side])
+        shorts = tuple(sym for _, sym in scored[-self.per_side :])
+        return Picks(
+            longs=longs,
+            shorts=shorts,
+            # Buy the low end: this is a reversion rule, so the ranking runs
+            # the opposite way to a momentum one and `buy_high` says so.
+            scores=_strength(scored, longs=longs, shorts=shorts, buy_high=False),
+        )
+
+
 CANDIDATES: dict[str, Rule] = {
     rule.name: rule  # type: ignore[misc]
     for rule in (
@@ -839,7 +1064,20 @@ CANDIDATES: dict[str, Rule] = {
 #: decisions immediately join the council's votes. A rule belongs here until
 #: its measurement says it should move, and `get` finds it either way so the
 #: lab can run it without the live loop being changed to allow that.
-PROPOSED: dict[str, Rule] = {}
+PROPOSED: dict[str, Rule] = {
+    rule.name: rule  # type: ignore[misc]
+    for rule in (
+        # Written 2026-09-08 for the three families the brief names that
+        # had no representative at all: Market Structure, Volatility and
+        # Statistical. Here rather than in CANDIDATES because CANDIDATES
+        # is deployment - the forward loop writes a decision for
+        # everything in it on every cycle - and nothing has measured
+        # these yet.
+        SwingStructure(),
+        VolatilityExpansion(),
+        ResidualReversion(),
+    )
+}
 
 
 def get(name: str) -> Rule | None:
