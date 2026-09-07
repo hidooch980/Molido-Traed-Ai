@@ -29,10 +29,25 @@ cat > "$ROOT/bin/systemctl" <<'STUB'
 case "$1" in
   list-unit-files) exit 0 ;;
   stop|start|restart) echo "$1 $2" >> "$SYSTEMCTL_CALLS" ; exit 0 ;;
+  # ActiveEnterTimestampMonotonic, read from a file the test writes per unit.
+  # Silence for a unit with no file, which is what systemd answers for one
+  # that has never been started - and the guard must not treat that as
+  # "started just now".
+  show) unit="${@: -1}"; cat "$STARTED_DIR/$unit" 2>/dev/null || echo 0; exit 0 ;;
   *) exit 0 ;;
 esac
 STUB
 chmod +x "$ROOT/bin/systemctl"
+
+STARTED_DIR="$ROOT/started"
+export STARTED_DIR
+mkdir -p "$STARTED_DIR"
+
+# Say that a unit entered its active state this many seconds ago, in the
+# monotonic microseconds systemd reports.
+started_ago() { # unit, seconds
+  awk -v s="$2" '{printf "%d", ($1 - s) * 1000000}' /proc/uptime > "$STARTED_DIR/$1"
+}
 
 terminal() { # name, heartbeat_age, has_payload_exe, log_has_liveupdate
   local p="$ROOT/.mt5$1"
@@ -51,6 +66,15 @@ terminal healthy   10         no       no
 terminal armed     10         yes      no    # publishing fine, payload waiting
 terminal looping   900        yes      yes   # already down
 terminal quiet     900        no       no    # stale for some other reason
+# Down for the same reason as `looping`, but restarted a minute ago and still
+# working through a cold start. On 2026-09-07 term-b spent an hour like this:
+# the guard restarted it every five minutes, a cold start on that host takes
+# nearly seven, and it never got far enough to write a heartbeat. The log read
+# "restarted 1" each time and looked like recovery in progress.
+terminal starting  900        yes      yes
+started_ago molido-mt5starting 60
+# The looping one has been up long enough to have failed on its own merits.
+started_ago molido-mt5looping 1800
 # A terminal nobody logged into: silent on purpose.
 mkdir -p "$ROOT/.mt5empty/$SUFFIX"; echo '{}' > "$ROOT/.mt5empty/$SUFFIX/molido_account.json"
 
@@ -80,6 +104,8 @@ check "the looping terminal is restarted"      "$(count 'start molido-mt5looping
 check "the healthy one is never restarted"     "$(count 'molido-mt5healthy')" "0"
 check "the one carrying a payload but publishing is never restarted" "$(count 'molido-mt5armed')" "0"
 check "stale for another reason is left for a human, not restarted" "$(count 'molido-mt5quiet')" "0"
+check "one that started a minute ago is left to finish coming up" "$(count 'molido-mt5starting')" "0"
+check "and that is written down as what it is"  "$(grep -c 'still coming up' "$LOG")" "1"
 check "and that decision is written down"      "$(grep -c 'left alone for a human' "$LOG")" "1"
 
 echo "A terminal nobody logged into is not a fault:"
@@ -89,7 +115,7 @@ check "nor is a fresh one carrying a payload" "$(count 'molido-mt5fresh')" "0"
 echo "But it is still defused - the one terminal that cannot recover alone:"
 check "a fresh prefix's payload is moved aside" "$(has_exe fresh)" "no"
 check "and kept, like every other"             "$(defused_dirs fresh)" "1"
-check "six terminals were checked"             "$(grep -oE 'checked [0-9]+' "$LOG" | tail -1 | cut -d' ' -f2)" "6"
+check "seven terminals were checked"           "$(grep -oE 'checked [0-9]+' "$LOG" | tail -1 | cut -d' ' -f2)" "7"
 
 rm -rf "$ROOT"
 echo

@@ -35,6 +35,21 @@
 set -uo pipefail
 
 STALE_SECONDS=${STALE_SECONDS:-420}
+#: How long a terminal is left alone after it starts, before its silence
+#: counts against it.
+#:
+#: A cold start on this host is not quick: the terminal authorises, syncs
+#: symbols and loads the expert, and under load that took nearly seven
+#: minutes on 2026-09-07 - longer than the five-minute timer that calls this
+#: script. So a terminal restarted once was restarted again while it was
+#: still legitimately starting, and again, and it never reached the point of
+#: writing a heartbeat. Term-b spent an hour in that loop, and the loop was
+#: the guard: the log read "restarted 1" every five minutes and looked like
+#: recovery in progress.
+#:
+#: Fifteen minutes is a cold start with room, and it costs nothing: a
+#: terminal that is genuinely stuck is still restarted, one timer later.
+START_GRACE_SECONDS=${START_GRACE_SECONDS:-900}
 LOG=${LOG:-/var/log/molido-updater-guard.log}
 COMMON_SUFFIX="drive_c/users/root/AppData/Roaming/MetaQuotes/Terminal/Common/Files"
 
@@ -94,6 +109,18 @@ for prefix in /root/.mt5*; do
   beat=$(stat -c %Y "$heartbeat" 2>/dev/null || echo 0)
   age=$((now - beat))
   [ "$age" -lt "$STALE_SECONDS" ] && continue
+
+  # Still coming up. A restart here would be the third one this terminal has
+  # been given while doing exactly what it was asked to do.
+  started=$(systemctl show -p ActiveEnterTimestampMonotonic --value "$unit" 2>/dev/null)
+  if [ -n "${started:-}" ] && [ "$started" -gt 0 ] 2>/dev/null; then
+    uptime_us=$(awk '{printf "%d", $1 * 1000000}' /proc/uptime 2>/dev/null || echo 0)
+    running=$(( (uptime_us - started) / 1000000 ))
+    if [ "$running" -ge 0 ] && [ "$running" -lt "$START_GRACE_SECONDS" ]; then
+      say "$unit: heartbeat ${age}s old but it started ${running}s ago - still coming up"
+      continue
+    fi
+  fi
 
   # Only when the updater is what stopped it. Every other cause of silence
   # deserves to stay visible rather than being restarted into invisibility.
