@@ -243,3 +243,58 @@ this sample honestly; an annualised one compares them to a convention.
 Calmar and recovery factor are `None` when there was no drawdown at all,
 rather than a large number. A strategy that never fell has no ratio to a
 fall.
+
+---
+
+## 7. Execution delay — the third leg of §16
+
+A fill a bar late is not a cost. The order goes on at a different price, so
+the stop and the target sit somewhere else and different bars decide it.
+Both arms are delayed together — delaying the rule while its control fills
+instantly would measure the delay rather than the rule.
+
+The question is not hypothetical: this deployment reaches its terminals
+through a file dropped on a Wine filesystem, claimed and answered by an
+expert on a chart.
+
+### 7.1 time-series-momentum, D1
+
+| fill | edge | t |
+|---|---|---|
+| prompt | +0.1065 R | 5.34 |
+| one bar late | +0.1013 R | 5.09 |
+| two bars late | +0.0996 R | 5.00 |
+
+Intact. It is not a latency artifact.
+
+### 7.2 Every H1 rule
+
+| rule | 1 bar late | 2 bars late |
+|---|---|---|
+| carry-differential | +0.2007 R, t 3.60 | +0.1934 R, t 3.52 |
+| trend-following | +0.1148 R, t 2.08 | +0.0972 R, t 1.69 |
+| stochastic-reversion | +0.1161 R, t 1.87 | +0.1070 R, t 1.72 |
+| short-horizon-reversal | +0.0645 R, t 1.34 | +0.0771 R, t 1.58 |
+| rsi-mean-reversion | +0.0731 R, t 1.00 | +0.0779 R, t 1.06 |
+
+**None of them collapses.** Not one rule here owes its reading to being
+filled promptly, and two of them read slightly *better* two bars late than
+one. Latency is not what is wrong with this book.
+
+That is a clean negative result and worth having: it removes an entire class
+of explanation, and it means the file-drop bridge — which nobody could
+otherwise vouch for on this evidence — is not costing the measurement
+anything.
+
+### 7.3 What survives what
+
+For the one candidate worth the row:
+
+| stress | time-series-momentum, D1 |
+|---|---|
+| costs at 4x measured | survives, +0.0665 R |
+| losing a fifth of the sample | positive in 100% of draws |
+| two-bar execution delay | +0.0996 R, t 5.00 |
+| a sign-flipped null | never reproduced in 400 draws |
+| **its own drawdown** | **fails — 141 R on a typical ordering** |
+| **year slices** | **fails — negative in 7 of 24** |
