@@ -731,6 +731,21 @@ class TestCountingHowOftenTheRuleChangesItsMind:
         assert result.distinct_books == 2
         assert result.as_dict()["instants_per_book"] > 1
 
+    def test_it_never_counts_more_books_than_instants(self):
+        """Counted where the picks were made it could exceed them - an instant
+        whose trades were all dropped still had a book - and the first version
+        printed "0.7 instants per change of mind" for four different rules,
+        which is not a reading of anything."""
+        for rule in (self.Frozen(), self.Alternating(), None):
+            result = measure.measure(
+                trending_market(bars=300),
+                bar_interval=timedelta(hours=1),
+                rule=rule,
+            )
+
+            assert result.distinct_books <= result.instants
+            assert result.as_dict()["instants_per_book"] >= 1.0
+
     def test_the_reading_is_published_not_only_held(self):
         """A t computed over instants is not interpretable without it."""
         result = measure.measure(

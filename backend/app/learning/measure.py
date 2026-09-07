@@ -348,8 +348,6 @@ def measure(
                 continue
             wanted = (picked.longs, picked.shorts)
 
-        books.add((tuple(sorted(wanted[0])), tuple(sorted(wanted[1]))))
-
         rule_here: list[float] = []
         control_here: list[float] = []
 
@@ -439,6 +437,11 @@ def measure(
         # t = -0.12 on the same trades.
         rule_by_instant.append(sum(rule_here) / len(rule_here))
         control_by_instant.append(sum(control_here) / len(control_here))
+        # Counted here rather than where the picks were made, so it is over
+        # the same instants the t is. Counted at the picks it could exceed
+        # them - an instant whose trades were all dropped still had a book -
+        # and "0.7 instants per change of mind" is not a reading of anything.
+        books.add((tuple(sorted(wanted[0])), tuple(sorted(wanted[1]))))
         if keep_instants:
             kept_instants.append(moment)
 
