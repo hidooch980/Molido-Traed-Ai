@@ -614,3 +614,96 @@ class TestAnInstrumentTheMarketHasAnsweredIsNotDecidedOn:
 
         assert result["already_answered"] == 0
         assert result["considered"] > 0
+
+
+class TestAFeedThatHasFallenBehindTheOtherIsRefused:
+    """The terminal that supplies the whole broker series was restarted and
+    took ten minutes to refetch its history. For that window the broker series
+    sat hours behind the public one, every decision taken on it was born
+    outside the freshness window, and the accounts waited on candidates that
+    could never arrive. The cycle reported success throughout, because
+    collecting had succeeded.
+
+    Measured feed against feed, never against the clock: a shut market leaves
+    both equally old, and ranking Friday's close on a Saturday has to keep
+    working. Two earlier attempts to write this guard against wall-clock age
+    broke exactly that."""
+
+    def broker_ending_at(self, session, upto):
+        """The same instruments at the broker's prices, ending where told."""
+        row = Provider(
+            code=SOURCE_BROKER, name="MetaTrader bridge", capabilities={"ohlcv": True}
+        )
+        session.add(row)
+        session.flush()
+
+        from app.brain.crosssection import RANKED_UNIVERSE
+
+        for symbol in sorted(RANKED_UNIVERSE)[:30]:
+            instrument = session.query(Instrument).filter_by(symbol=symbol).one()
+            for i in range(forward.LOOKBACK):
+                session.add(
+                    Bar(
+                        instrument_id=instrument.id,
+                        timeframe=Timeframe.H1.value,
+                        provider_id=row.id,
+                        event_time=upto - timedelta(hours=forward.LOOKBACK - 1 - i),
+                        revision=1,
+                        ingested_at=upto,
+                        open=100.0,
+                        high=101.0,
+                        low=99.0,
+                        close=100.0 + i,
+                        volume=100,
+                        quality_score=1.0,
+                    )
+                )
+        session.flush()
+        return row
+
+    def test_a_broker_series_hours_behind_the_public_one_is_refused(
+        self, session, market
+    ):
+        self.broker_ending_at(session, NOW - timedelta(hours=4))
+
+        result = forward.record_cycle(session, as_of=NOW, price_source=SOURCE_BROKER)
+
+        assert result["recorded"] == 0
+        assert "behind" in result["reason"]
+        assert result["feed_lag_bars"] >= forward.MAX_FEED_LAG_BARS
+
+    def test_one_bar_behind_is_structural_and_still_ranks(self, session, market):
+        """MetaTrader publishes only closed bars while the public feed carries
+        the forming one, so a single bar of difference is permanent. A guard
+        that refused it would refuse every cycle forever."""
+        self.broker_ending_at(session, NOW - timedelta(hours=1))
+
+        result = forward.record_cycle(session, as_of=NOW, price_source=SOURCE_BROKER)
+
+        assert result["recorded"] > 0
+
+    def test_a_current_broker_series_ranks(self, session, market):
+        self.broker_ending_at(session, NOW)
+
+        result = forward.record_cycle(session, as_of=NOW, price_source=SOURCE_BROKER)
+
+        assert result["recorded"] > 0
+
+    def test_both_feeds_equally_old_still_rank(self, session, market):
+        """A weekend. Nothing has moved on either side since Friday, and the
+        book still has to be ranked - this is the case the two wrong versions
+        of this guard broke."""
+        self.broker_ending_at(session, NOW)
+
+        result = forward.record_cycle(
+            session, as_of=NOW + timedelta(days=2), price_source=SOURCE_BROKER
+        )
+
+        assert result["recorded"] > 0
+
+    def test_the_public_series_is_never_judged_against_itself(self, session, market):
+        """It is the reference. Compared with itself it could only ever refuse
+        every cycle the moment the comparison rounded the wrong way."""
+        result = forward.record_cycle(session, as_of=NOW, price_source=SOURCE_PUBLIC)
+
+        assert result["recorded"] > 0

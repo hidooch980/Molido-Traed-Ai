@@ -358,6 +358,15 @@ def _record_candidates(
     return written
 
 
+#: How far the broker series may sit behind the public one before its
+#: decisions are refused.
+#:
+#: Two bars, not three: MetaTrader publishes only closed bars while the
+#: public feed carries the forming one, so one bar of difference is
+#: structural and permanent. Two is the first amount that means something.
+MAX_FEED_LAG_BARS = 2
+
+
 def record_cycle(
     session: Session,
     *,
@@ -425,6 +434,48 @@ def record_cycle(
             built = narrowed
         else:
             dropped = []
+
+    # A series that has fallen behind the other one must not be decided on.
+    #
+    # Measured against the *public* feed rather than the clock, and that is
+    # the whole trick. Two earlier attempts used wall-clock age and then "any
+    # newer bar exists", and both broke ranking Friday's close on a Saturday -
+    # which is deliberate and has a test. A shut market leaves both feeds
+    # equally old, so this stays quiet through a weekend and speaks only when
+    # one feed is behind the other.
+    #
+    # On 7 September the terminal that supplies the whole broker series was
+    # restarted and took ten minutes to refetch its history. For that window
+    # the broker series sat two hours behind the public one, every decision
+    # taken on it was born outside the 150-minute freshness window, and seven
+    # accounts waited on candidates that could never arrive. Nothing said so:
+    # the cycle reported success, because collecting had succeeded.
+    if price_source != SOURCE_PUBLIC:
+        public_newest = session.scalar(
+            select(func.max(Bar.event_time))
+            .join(Provider, Provider.id == Bar.provider_id)
+            .where(
+                Bar.timeframe == timeframe.value,
+                Provider.code == SOURCE_PUBLIC,
+            )
+        )
+        if public_newest is not None:
+            if public_newest.tzinfo is None:
+                public_newest = public_newest.replace(tzinfo=UTC)
+            behind = public_newest - latest
+            if behind > timeframe.delta * MAX_FEED_LAG_BARS:
+                return {
+                    "recorded": 0,
+                    "reason": (
+                        f"the {price_source} series is {behind} behind the "
+                        f"{SOURCE_PUBLIC} one - more than {MAX_FEED_LAG_BARS} "
+                        f"bars. Its newest is {latest.isoformat()} against "
+                        f"{public_newest.isoformat()}, so a decision taken on "
+                        "it would be stale before it was written"
+                    ),
+                    "considered": len(built),
+                    "feed_lag_bars": round(behind / timeframe.delta, 2),
+                }
 
     # An instrument the market has already answered must not be decided on.
     #
