@@ -58,6 +58,16 @@ TRAIL_FRACTION = 0.6
 #: change nothing.
 MIN_STEP_FRACTION = 0.1
 
+#: The one login that means every login.
+#:
+#: Named accounts go stale the moment the fleet changes: an account opened
+#: today is not in yesterday's list, and it would run unprotected while the
+#: setting still looked switched on. A wildcard cannot fall behind the fleet.
+#:
+#: It is deliberately still a setting rather than the default. Everything
+#: this worker does is enabled by somebody writing it down.
+EVERY_LOGIN = "*"
+
 
 @dataclass
 class Move:
@@ -184,9 +194,10 @@ def run(
 ) -> Report:
     """Walk this terminal's open positions and tighten what has earned it.
 
-    `logins` names the accounts trailing is switched on for. None means none:
-    the default is off, because the measurement in flight is of a fixed
-    geometry and this changes it.
+    `logins` names the accounts trailing is switched on for, or holds
+    `EVERY_LOGIN` for the whole fleet. None means none: the default is off,
+    because the measurement in flight is of a fixed geometry and this
+    changes it.
     """
     report = Report()
     if not logins:
@@ -200,7 +211,8 @@ def run(
         return report
 
     login = str(account.get("login") or "")
-    if not account.get("available") or login not in logins:
+    everywhere = EVERY_LOGIN in logins
+    if not account.get("available") or not (everywhere or login in logins):
         report.skip("not an account trailing is enabled for")
         return report
 
@@ -272,6 +284,7 @@ def run(
 
 
 __all__ = [
+    "EVERY_LOGIN",
     "MIN_STEP_FRACTION",
     "original_risk",
     "START_AT_R",

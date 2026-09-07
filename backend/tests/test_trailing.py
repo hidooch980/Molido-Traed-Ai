@@ -294,3 +294,48 @@ class TestTheExpertRefusesToo:
 
     def test_the_expert_honours_the_broker_minimum(self):
         assert "inside the broker minimum" in self.source()
+
+
+class TestTheWildcard:
+    """The owner switched trailing on for the whole fleet on 2026-09-07.
+
+    Written as a wildcard rather than a list of logins because a list goes
+    stale the moment an account is added - and it goes stale silently, with
+    the setting still reading as switched on while the new account runs
+    unprotected. A FundedNext account was being added the same hour."""
+
+    def test_the_wildcard_covers_an_account_nobody_listed(self):
+        broker = Broker()
+
+        report = trailing.run(
+            Bridge(login="34838666", positions=[winner()]),
+            broker,
+            logins={trailing.EVERY_LOGIN},
+            dry_run=False,
+        )
+
+        assert len(broker.calls) == 1
+        assert report.moves[0].sent
+
+    def test_an_unavailable_account_is_still_left_alone(self):
+        """The wildcard says every account, not every terminal. A terminal
+        with no account attached publishes stale positions or none, and
+        amending against that is guessing."""
+        broker = Broker()
+
+        report = trailing.run(
+            Bridge(available=False, positions=[winner()]),
+            broker,
+            logins={trailing.EVERY_LOGIN},
+            dry_run=False,
+        )
+
+        assert broker.calls == []
+        assert report.moves == []
+
+    def test_an_empty_setting_still_means_off(self):
+        """The wildcard has to be written down. Nothing here is on by
+        default."""
+        report = trailing.run(Bridge(positions=[winner()]), Broker(), logins=set())
+
+        assert report.moves == []
