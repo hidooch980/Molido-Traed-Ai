@@ -62,6 +62,11 @@ class Trial:
     regime: str = "unknown"
     session: str = "unknown"
     conviction: float | None = None
+    #: When the setup fired. Trials sharing an instant are one market move
+    #: seen from several angles, not several pieces of evidence - see
+    #: `effective_trials`. None means the caller did not say, and then every
+    #: trial counts for itself, which is this module's old behaviour.
+    instant: Any = None
 
     @property
     def resolved(self) -> bool:
@@ -129,6 +134,17 @@ class Scorecard:
     #: The longest run of consecutive losers. The number an account
     #: holder actually has to sit through.
     longest_losing_run: int = 0
+    #: Distinct instants among the resolved trials - the sample this verdict
+    #: is really built on.
+    #:
+    #: On 2026-09-07 the live journal held 29 resolved rule-arm decisions and
+    #: 26 of them were JPY crosses opened in the same few hours, all on the
+    #: same side of one yen move. They are one trade written down 26 times.
+    #: `measure` learned this on the backtest side, where counting instants
+    #: as trades had inflated a t from -0.12 to 3.95 - "in the direction that
+    #: manufactures a discovery". This is the same correction on the forward
+    #: side, which had never had it.
+    effective_trials: int = 0
     comparisons: int = 1
     verdict: str = "insufficient"
     reason: str = ""
@@ -156,6 +172,14 @@ class Scorecard:
             "profit_factor": _round(self.profit_factor),
             "max_drawdown_r": _round(self.max_drawdown_r),
             "longest_losing_run": self.longest_losing_run,
+            "effective_trials": self.effective_trials,
+            # Published rather than merely corrected for, so the concentration
+            # is visible to somebody reading the card.
+            "trials_per_instant": (
+                round(self.trials / self.effective_trials, 2)
+                if self.effective_trials
+                else None
+            ),
             "comparisons": self.comparisons,
             "notes": self.notes,
             # An edge measured in a backtest is a hypothesis about the future.
@@ -220,13 +244,27 @@ def score(
     """Judge one strategy against the hit rate its own payoff demands."""
     resolved = [t for t in trials if t.resolved]
     unresolved = len(trials) - len(resolved)
+    # Trials that share an instant are one market move seen from several
+    # angles. A caller that supplies no instant gets the old arithmetic, where
+    # each trial stands alone.
+    instants = {t.instant for t in resolved if t.instant is not None}
+    effective = len(instants) + sum(1 for t in resolved if t.instant is None)
+
     card = Scorecard(
         strategy=strategy,
         trials=len(resolved),
         unresolved=unresolved,
         wins=sum(1 for t in resolved if t.won),
+        effective_trials=effective,
         comparisons=comparisons,
     )
+
+    if effective < len(resolved):
+        card.notes.append(
+            f"{len(resolved)} decisions but {effective} distinct instants — "
+            f"{len(resolved) / effective:.1f} at a time, and trades opened "
+            "together on one move are one piece of evidence, not several"
+        )
 
     if unresolved:
         # Named rather than dropped: stops resolve faster than targets, so a
@@ -237,10 +275,14 @@ def score(
             "faster than targets, so their absence is not neutral"
         )
 
-    if len(resolved) < min_trials:
+    # Against the effective count, not the raw one. Fifty decisions taken at
+    # six instants is six pieces of evidence, and reading it as fifty is how a
+    # week of one correlated move becomes a verdict.
+    if effective < min_trials:
         card.reason = (
-            f"{len(resolved)} resolved trials, below the {min_trials} at which the "
-            "question becomes answerable"
+            f"{effective} independent instants among {len(resolved)} resolved "
+            f"trials, below the {min_trials} at which the question becomes "
+            "answerable"
         )
         return card
 

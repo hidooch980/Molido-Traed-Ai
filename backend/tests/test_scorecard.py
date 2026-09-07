@@ -247,3 +247,63 @@ class TestProfitFactorAndTheShapeOfTheCurve:
         assert "profit_factor" in payload
         assert "max_drawdown_r" in payload
         assert "longest_losing_run" in payload
+
+
+class TestTradesTakenTogetherAreOneObservation:
+    """On 2026-09-07 the live journal held 29 resolved rule-arm decisions.
+    Twenty-six were JPY crosses - CHFJPY, CADJPY, GBPJPY, NZDJPY, EURJPY,
+    USDJPY - opened within a few hours, all leaning the same way on one yen
+    move, and all 26 stopped out together. Counted as 26 trials that is a
+    devastating result about the rule; counted honestly it is one trade that
+    lost.
+
+    `measure` already knew this on the backtest side, where treating instants
+    as trades had inflated a t statistic from -0.12 to 3.95. The forward path
+    had never had the correction, and the forward path is the one that issues
+    verdicts."""
+
+    def concentrated(self, *, instants: int, per_instant: int, r: float):
+        return [
+            sc.Trial(strategy="s", r_multiple=r, instant=f"t{i}")
+            for i in range(instants)
+            for _ in range(per_instant)
+        ]
+
+    def test_sixty_decisions_at_six_instants_is_not_a_sample(self):
+        card = sc.score(
+            self.concentrated(instants=6, per_instant=10, r=-1.0), strategy="s"
+        )
+
+        assert card.verdict == "insufficient"
+        assert card.trials == 60
+        assert card.effective_trials == 6
+        assert "6 independent instants among 60" in card.reason
+
+    def test_the_concentration_is_said_out_loud(self):
+        """Corrected for is not the same as visible. Somebody reading the card
+        has to be able to see that sixty rows were six moments."""
+        card = sc.score(
+            self.concentrated(instants=6, per_instant=10, r=-1.0), strategy="s"
+        )
+
+        assert any("one piece of evidence" in n for n in card.notes)
+        assert card.as_dict()["trials_per_instant"] == 10.0
+
+    def test_the_same_decisions_spread_out_do_count(self):
+        """The correction is about simultaneity, not about the number of
+        rows. Sixty trades at sixty instants is sixty observations."""
+        card = sc.score(
+            self.concentrated(instants=60, per_instant=1, r=-1.0), strategy="s"
+        )
+
+        assert card.effective_trials == 60
+        assert "below the 50" not in card.reason
+
+    def test_a_caller_that_names_no_instant_is_unchanged(self):
+        """Every existing caller passes no instant, and this must not quietly
+        turn their sample into one observation."""
+        card = sc.score(trials(wins=30, losses=30), strategy="s")
+
+        assert card.effective_trials == card.trials == 60
+        assert card.as_dict()["trials_per_instant"] == 1.0
+        assert card.notes == [] or all("instants" not in n for n in card.notes)

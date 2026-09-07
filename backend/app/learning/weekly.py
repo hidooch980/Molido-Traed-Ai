@@ -29,6 +29,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.learning import scorecard
 from app.models.journal import ARM_CONTROL, ARM_RULE, JournalEntry
 
 #: Below this many resolved decisions, a mean R is an anecdote. The scorecard
@@ -203,3 +204,61 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+
+def verdicts(session: Session, *, days: int | None = None) -> dict[str, Any]:
+    """What the live journal will and will not support, per brain.
+
+    `build_report` above is a progress page: it says what each brain did this
+    week and labels a thin sample loudly, but it never refuses. This is the
+    other question - whether the forward record yet supports saying a brain
+    has an edge - and it is allowed to answer no.
+
+    Nothing asked it before. `scorecard.score` is the module that issues that
+    verdict and its only caller was an API route taking hand-typed win and
+    loss counts, so the journal that the whole point-in-time apparatus exists
+    to fill had no path to a verdict at all.
+
+    Two things it does that a count cannot:
+
+      * **Instants, not rows.** Every trial carries the moment it was opened,
+        so decisions taken together on one move are one observation. On
+        2026-09-07 that mattered enormously: 26 of 29 resolved rule-arm
+        decisions were JPY crosses opened within a few hours, all on the same
+        side, all stopped out together.
+      * **Retracted decisions are excluded.** A decision withdrawn from the
+        record is withdrawn from the verdict too; leaving it in would let a
+        batch that was disowned for being taken on stale prices still count
+        against the brain that did not really take it.
+
+    Only the rule arm. The control is a coin flip on the same instrument at
+    the same instant, and it belongs in the comparison `measure` makes, not
+    in a hit rate about the rule.
+    """
+    query = select(JournalEntry).where(JournalEntry.arm == ARM_RULE)
+    if days is not None:
+        query = query.where(
+            JournalEntry.opened_at >= datetime.now(UTC) - timedelta(days=days)
+        )
+
+    by_strategy: dict[str, list[scorecard.Trial]] = {}
+    retracted = 0
+    for row in session.scalars(query).all():
+        if isinstance(row.after, dict) and "retracted" in row.after:
+            retracted += 1
+            continue
+        by_strategy.setdefault(row.strategy, []).append(
+            scorecard.Trial(
+                strategy=row.strategy,
+                r_multiple=(
+                    float(row.r_multiple) if row.r_multiple is not None else None
+                ),
+                instant=row.opened_at,
+            )
+        )
+
+    cards = scorecard.score_all(by_strategy)
+    payload = scorecard.summarise(cards)
+    payload["retracted_excluded"] = retracted
+    payload["window_days"] = days
+    return payload
