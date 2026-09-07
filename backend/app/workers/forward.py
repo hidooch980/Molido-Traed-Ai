@@ -426,6 +426,50 @@ def record_cycle(
         else:
             dropped = []
 
+    # An instrument the market has already answered must not be decided on.
+    #
+    # The instant is where most instruments printed, not where the one that
+    # never sleeps did - which is why ranking Friday's close on a Saturday
+    # works and is meant to. The cost is that some instrument can sit past
+    # that instant with its next bar already stored, and a decision written
+    # on it is answered by a bar that existed first. It is not lookahead in
+    # the resolver - that refuses bars at or before the entry - it is a
+    # forward journal quietly acquiring an entry that was never forward.
+    #
+    # On 2026-09-07, while the fleet moved between brokers, the metatrader
+    # cross-section settled on Friday 19:00 with a 20:00 bar already stored.
+    # Eight WTI and BRENT decisions were journalled and every one closed at
+    # exactly minus one R on that stored bar.
+    #
+    # Per instrument, not per cycle: the whole book being old together is a
+    # shut market and still ranks. Only the ones that have moved on drop out,
+    # and they are named for the same reason the narrowing above names its
+    # own - an instrument missing from a ranking looks identical whether it
+    # was excluded on purpose or lost by accident.
+    answered: list[str] = []
+    already = session.execute(
+        select(Instrument.symbol, func.max(Bar.event_time))
+        .join(Bar, Bar.instrument_id == Instrument.id)
+        .join(Provider, Provider.id == Bar.provider_id)
+        .where(Bar.timeframe == timeframe.value, Provider.code == price_source)
+        .group_by(Instrument.symbol)
+    ).all()
+    moved_on = set()
+    for symbol, newest in already:
+        if newest is None:
+            continue
+        if newest.tzinfo is None:
+            newest = newest.replace(tzinfo=UTC)
+        if newest > latest:
+            moved_on.add(symbol)
+    if moved_on:
+        kept = {name: rows for name, rows in built.items() if name not in moved_on}
+        # Same rule as the narrowing above: a filter that leaves too few to
+        # rank produces a worse measurement than no filter, and must not do
+        # it silently.
+        if len(kept) >= MIN_FOR_INSTANT:
+            answered = sorted(name for name in built if name in moved_on)
+            built = kept
     ranked = crosssection.rank(built, at=latest, bar_interval=timeframe.delta)
     if not ranked.available:
         return {"recorded": 0, "reason": ranked.reason, "considered": ranked.considered}
@@ -520,6 +564,11 @@ def record_cycle(
         "price_source": price_source,
         "not_offered_by_the_broker": len(dropped),
         "not_offered_names": dropped[:20],
+        # Instruments whose next bar was already stored when this instant was
+        # ranked. Counted rather than hidden: the day this number stops being
+        # zero on an open market, a series has fallen behind the book.
+        "already_answered": len(answered),
+        "already_answered_names": answered[:20],
         "candidates_recorded": candidate_written,
         "recorded": written,
         # Published rather than swallowed. A cycle that writes nothing because

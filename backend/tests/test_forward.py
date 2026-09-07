@@ -545,3 +545,72 @@ class TestEveryBrainRecords:
 
         assert first.new and second.new
         assert first.entry_id != second.entry_id
+
+
+class TestAnInstrumentTheMarketHasAnsweredIsNotDecidedOn:
+    """Eight WTI and BRENT decisions were journalled on 7 September against a
+    cross-section that had settled on Friday 19:00 while a 20:00 bar was
+    already stored. Every one closed at exactly minus one R on that stored
+    bar: a forward journal had acquired entries whose answer existed first.
+
+    The resolver was not at fault - it refuses bars at or before the entry.
+    The recorder was."""
+
+    def late_bar(self, session, provider, symbol, at):
+        """One bar for `symbol` after the cross-section instant."""
+        from sqlalchemy import select as _select
+
+        from app.models.instruments import Instrument
+
+        row = session.scalar(_select(Instrument).where(Instrument.symbol == symbol))
+        session.add(
+            Bar(
+                instrument_id=row.id,
+                timeframe=Timeframe.H1.value,
+                provider_id=provider.id,
+                event_time=at,
+                revision=1,
+                ingested_at=at,
+                open=100,
+                high=101,
+                low=99,
+                close=100,
+                volume=1,
+                quality_score=1.0,
+            )
+        )
+        session.flush()
+        return row.symbol
+
+    def test_it_is_left_out_of_the_ranking(self, market, session, provider):
+        before = forward.record_cycle(session)
+        assert before["already_answered"] == 0
+
+        symbol = sorted(before["longs"] + before["shorts"])[0]
+        instant = datetime.fromisoformat(before["at"])
+        self.late_bar(session, provider, symbol, instant + timedelta(hours=1))
+
+        after = forward.record_cycle(session)
+
+        assert symbol in after["already_answered_names"]
+        assert symbol not in after["longs"] + after["shorts"]
+
+    def test_the_rest_of_the_book_still_ranks(self, market, session, provider):
+        """One instrument moving on is not a reason to stop deciding."""
+        before = forward.record_cycle(session)
+        symbol = sorted(before["longs"] + before["shorts"])[0]
+        instant = datetime.fromisoformat(before["at"])
+        self.late_bar(session, provider, symbol, instant + timedelta(hours=1))
+
+        after = forward.record_cycle(session)
+
+        assert after["considered"] > 0
+        assert after["longs"] or after["shorts"]
+
+    def test_a_shut_market_is_not_an_answered_one(self, market, session):
+        """The whole book being old together is a weekend. Nothing has moved
+        past the instant, so nothing drops out and the cycle still ranks."""
+        result = forward.record_cycle(session, as_of=NOW + timedelta(days=2))
+
+        assert result["already_answered"] == 0
+        assert result["considered"] > 0
