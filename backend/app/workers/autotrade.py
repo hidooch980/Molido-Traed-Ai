@@ -1918,6 +1918,30 @@ def run_cycle(
         }
         session.commit()
 
+        # A rejected order is not an order.
+        #
+        # `sent` was appended to whatever the broker answered, so a request
+        # that never reached the terminal still counted, still announced
+        # itself on the channel, and still consumed a slot against the
+        # position cap. On 7 September the FTMO bridge was mounted with its
+        # directory owned by root while this process runs as another user:
+        # the expert could publish into it and this could not write into it,
+        # every request failed with "the request could not be written", and
+        # the cycle reported two orders on an account that never held one.
+        # Telegram said the same. An account that is silently doing nothing
+        # while reporting that it traded is worse than one that is plainly
+        # broken.
+        #
+        # The attempt stays in `entry.during` either way - that is the audit
+        # trail, and a refusal is exactly what somebody will come looking
+        # for. What changes is that it is counted as a refusal, with the
+        # broker's own words, instead of as a trade.
+        if report.state is OrderState.REJECTED:
+            refuse(
+                entry,
+                f"the broker refused it: {report.reason or 'no reason given'}",
+            )
+            continue
         sent.append(
             {
                 "symbol": entry.symbol,

@@ -214,6 +214,61 @@ def decide(
     return row
 
 
+class TestARejectedOrderIsNotAnOrder:
+    """`sent` was appended to whatever the broker answered, so a request that
+    never reached the terminal still counted, still announced itself on the
+    channel, and still consumed a slot against the position cap.
+
+    On 7 September the FTMO bridge directory was owned by root while this
+    process runs as another user: the expert could publish into it and the
+    backend could not write into it. Every request failed with "the request
+    could not be written", the cycle reported two orders, and Telegram said
+    the same about an account that never held a position."""
+
+    def test_it_is_not_counted_as_an_order(self, session, live):
+        decide(session)
+        broker = FakeBroker(state=OrderState.REJECTED)
+
+        report = autotrade.run_cycle(
+            session, now=NOW, broker=broker, bridge=FakeBridge()
+        )
+
+        assert report["orders"] == 0
+
+    def test_the_brokers_own_words_are_reported(self, session, live):
+        """A refusal somebody can act on names what refused it."""
+        decide(session)
+        broker = FakeBroker(state=OrderState.REJECTED)
+
+        report = autotrade.run_cycle(
+            session, now=NOW, broker=broker, bridge=FakeBridge()
+        )
+
+        assert any("broker refused" in s for s in report.get("skipped", []))
+
+    def test_the_attempt_is_still_in_the_journal(self, session, live):
+        """The audit trail keeps it either way - a refusal is exactly what
+        somebody will come looking for."""
+        entry = decide(session)
+        broker = FakeBroker(state=OrderState.REJECTED)
+
+        autotrade.run_cycle(session, now=NOW, broker=broker, bridge=FakeBridge())
+        session.refresh(entry)
+
+        orders = (entry.during or {}).get("orders") or {}
+        assert orders, "the attempt must be recorded even when refused"
+        assert any("REJECTED" in str(v.get("state")) for v in orders.values())
+
+    def test_a_filled_order_still_counts(self, session, live):
+        decide(session)
+        broker = FakeBroker()
+
+        report = autotrade.run_cycle(
+            session, now=NOW, broker=broker, bridge=FakeBridge()
+        )
+
+        assert report["orders"] == 1
+
 class TestItSendsAnOrderForAFreshDecision:
     def test_a_rule_decision_becomes_an_order(self, session, live):
         decide(session)
