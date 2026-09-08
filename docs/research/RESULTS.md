@@ -361,3 +361,81 @@ this number of observations?* — and each answer was no. The first two are
 corrected in code. The third cannot be corrected automatically, because a
 rule that holds a good position for months is not thereby wrong; it is made
 impossible to miss instead.
+
+---
+
+## 9. Walk-forward: the one candidate does not survive it
+
+Section 15 of the brief, run on the only rule that had reached 🟡.
+
+```
+docker exec molidotrade-collector-1 python /tmp/wf.py
+  # time-series-momentum, yfinance D1, 20 years, 4 folds
+```
+
+```
+folds 4, scored 4, positive 2
+in-sample net      +0.2224 R
+out-of-sample net  +0.0186 R
+walk-forward efficiency  0.084
+```
+
+| training window | it chose | out of sample |
+|---|---|---|
+| 2011-08 → 2013-07 | stop 15.0, target 1.5 | **+0.3546** |
+| 2015-06 → 2017-04 | stop 2.5, target 0.5 | −0.1197 |
+| 2019-03 → 2021-01 | stop 10.0, target 1.0 | **+0.7722** |
+| 2022-12 → 2024-10 | stop 10.0, target 1.0 | **−0.9329** |
+
+**Efficiency of 0.084** — less than a tenth of what training promises is
+delivered outside it. And the average hides the worse fact: each fold chooses
+a *different* geometry, the results swing from +0.77 to −0.93, and the most
+recent fold is the worst of the four.
+
+That agrees with the year slices, which were already negative in 2024 and
+2025.
+
+**`time-series-momentum` moves from 🟡 to 🔴.** There is now no candidate at
+any label above red.
+
+---
+
+## 10. The scalping question, answered by measurement
+
+The request was more trades on a lower timeframe. M5, one year, every rule
+that ranks there, Bonferroni-corrected for 18 hypotheses (bar t = 3.61):
+
+| rule | instants | trades | t | verdict |
+|---|---|---|---|---|
+| cross-sectional-stretch | 1,284 | 4,301 | 3.32 | NOT_ROBUST |
+| rsi-mean-reversion | 1,059 | 2,352 | 1.84 | NOT_ROBUST |
+| short-horizon-reversal | 1,323 | 6,049 | 1.76 | NOT_ROBUST |
+| stochastic-reversion | 1,186 | 2,837 | 1.59 | NOT_ROBUST |
+| donchian-breakout | 537 | 905 | 0.43 | NOT_ROBUST |
+| trend-following | 1,243 | 3,131 | **−4.98** | NOT_ROBUST |
+
+The request was met exactly and it did not work. The M5 sample is **twenty
+times larger** than H1's — 1,284 independent instants against 492, thousands
+of trades instead of dozens — so the statistical bar is easier to clear
+there, not harder. Nothing cleared it.
+
+Two readings worth keeping:
+
+**`cross-sectional-stretch` is the best of them at t = 3.32.** That is the
+brain this project's own code calls "the baseline that is known to fail", and
+it still does not clear 3.61.
+
+**`trend-following` is significantly *negative* on M5** (t = −4.98, net
+−0.1692 R at base cost) while holding the best positive t on H1 (2.38). The
+same shape as `time-series-momentum`: a rule works on its own horizon and
+inverts on a shorter one.
+
+This is not a shortage of data — 3,131 trades is plenty. It is the spread.
+`measure.cost_in_r` says why in one line: R is defined by the stop distance,
+and *the spread does not shrink when the bars do*. The average bar range on
+this deployment is 9.02 pips at H1 and 4.18 at M15 against a 1.4 pip EURUSD
+spread, so the same signal pays roughly twice as much per decision at M15 and
+several times as much at M5.
+
+**More trades is not more knowledge.** It is the same knowledge behind a
+taller fence.
