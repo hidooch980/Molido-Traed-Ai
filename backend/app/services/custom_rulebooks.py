@@ -78,6 +78,11 @@ _FLAG_RULES = (
     "news_trading_allowed",
     "weekend_holding_allowed",
     "automated_trading_allowed",
+    # Whether the total floor trails the peak or stays anchored to the
+    # starting balance. Left out it is the last thing a verdict reports as
+    # unchecked, and the difference between the two readings is the whole
+    # account once it is in profit.
+    "total_drawdown_trailing",
 )
 
 #: Every rule a holder may set. Anything else sent is refused by name rather

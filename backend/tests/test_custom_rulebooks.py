@@ -572,3 +572,131 @@ def _a_different_tenant(session):
     session.add(other)
     session.flush()
     return other.id
+
+
+class TestTheRulebookAskedForHere:
+    """The four limits this was actually asked for, and the ones around them.
+
+    Profit target 8%, daily loss 5%, total loss 10%, five trading days - on a
+    $40,000 RoboForex demo. Written out because a rulebook is only as good as
+    the arithmetic somebody checked once, and these are the numbers that will
+    end the rehearsal if they are wrong.
+    """
+
+    ASKED = {
+        "profit_target_pct": 0.08,
+        "max_daily_drawdown_pct": 0.05,
+        "max_total_drawdown_pct": 0.10,
+        "min_trading_days": 5,
+    }
+    #: The same, plus a stated answer for every rule that would otherwise be
+    #: reported as never entered.
+    COMPLETE = {
+        **ASKED,
+        "max_trading_days": "not imposed",
+        "max_leverage": "not imposed",
+        "max_concurrent_positions": "not imposed",
+        "max_single_day_profit_share": "not imposed",
+        "news_trading_allowed": True,
+        "weekend_holding_allowed": True,
+        "automated_trading_allowed": True,
+        "total_drawdown_trailing": False,
+    }
+
+    def rules(self, which):
+        return custom_rulebooks.to_rules(custom_rulebooks.normalise(which))
+
+    def test_the_four_alone_already_permit_a_trade(self):
+        assert ch.check(self.rules(self.ASKED), quiet_account(), 1.0).allowed is True
+
+    def test_but_they_leave_six_rules_unjudged(self):
+        # Not a block - the engine reports what it could not check rather than
+        # refusing, which is why the complete document below is worth writing.
+        verdict = ch.check(self.rules(self.ASKED), quiet_account(), 1.0)
+
+        assert len(verdict.unverified) > 0
+
+    def test_the_complete_document_leaves_nothing_unjudged(self):
+        assert ch.check(self.rules(self.COMPLETE), quiet_account(), 1.0).unverified == []
+
+    def test_the_daily_floor_is_thirty_eight_thousand(self):
+        # 5% of $40,000 is $2,000, so $37,900 is through it.
+        verdict = ch.check(
+            self.rules(self.COMPLETE), quiet_account(current_equity=37_900.0), 1.0
+        )
+
+        assert verdict.allowed is False
+
+    def test_a_hundred_dollars_above_the_daily_floor_still_trades(self):
+        verdict = ch.check(
+            self.rules(self.COMPLETE), quiet_account(current_equity=38_100.0), 1.0
+        )
+
+        assert verdict.allowed is True
+
+    def test_the_total_floor_is_thirty_six_thousand(self):
+        verdict = ch.check(
+            self.rules(self.COMPLETE),
+            quiet_account(
+                current_equity=35_900.0,
+                current_balance=35_900.0,
+                daily_starting_equity=35_900.0,
+            ),
+            1.0,
+        )
+
+        assert verdict.allowed is False
+
+    def test_the_target_is_forty_three_thousand_two_hundred(self):
+        # 8% of $40,000 is $3,200.
+        verdict = ch.check(
+            self.rules(self.COMPLETE),
+            quiet_account(current_equity=43_200.0, current_balance=43_200.0),
+            1.0,
+        )
+
+        assert verdict.status == "passed"
+
+    def test_one_dollar_short_of_the_target_has_not_passed(self):
+        verdict = ch.check(
+            self.rules(self.COMPLETE),
+            quiet_account(current_equity=43_199.0, current_balance=43_199.0),
+            1.0,
+        )
+
+        assert verdict.status != "passed"
+
+    def test_five_trading_days_is_a_minimum_not_a_maximum(self):
+        # "روزهای معاملاتی ۵" read as the floor every prop firm means by it:
+        # trade on at least five days, with no ceiling on how many.
+        rules = self.rules(self.COMPLETE)
+
+        assert rules.min_trading_days == 5
+        assert rules.max_trading_days is ch.NOT_IMPOSED
+
+    def test_four_days_in_is_still_in_progress(self):
+        verdict = ch.check(
+            self.rules(self.COMPLETE), quiet_account(days_traded=4), 1.0
+        )
+
+        assert verdict.status == "in_progress"
+
+    def test_the_floor_does_not_trail_the_peak(self):
+        # Anchored to the starting balance, so profit does not raise the floor
+        # underneath it - the reading that gives a rehearsal the most room.
+        assert self.rules(self.COMPLETE).total_drawdown_trailing is False
+
+    def test_it_carries_no_automation_ceiling(self):
+        # The rule that refuses a $200,000 FundedNext account is a FundedNext
+        # rule. A rulebook the holder wrote has it only if they write it.
+        assert self.rules(self.COMPLETE).automation_max_account_size is None
+
+    def test_the_document_round_trips_through_storage(self, session, tenant):
+        row = write(session, tenant, name="RoboForex demo 40k", rules=self.COMPLETE)
+
+        stored = custom_rulebooks.to_rules(row.rules)
+
+        assert stored.profit_target_pct == 0.08
+        assert stored.max_daily_drawdown_pct == 0.05
+        assert stored.max_total_drawdown_pct == 0.10
+        assert stored.min_trading_days == 5
