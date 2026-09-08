@@ -439,3 +439,62 @@ several times as much at M5.
 
 **More trades is not more knowledge.** It is the same knowledge behind a
 taller fence.
+
+---
+
+## 11. Does agreement earn anything?
+
+The brief's Hybrid family (§4), asked as one question rather than eight
+pairings: **do two weak rules clear a bar together?**
+
+It is not an idle question here. `MOLIDO_CONSENSUS_REQUIRED` makes the live
+order gate wait for N brains to agree, and until now nothing had measured
+whether agreement is worth the wait — `measure` takes one rule, and the gate
+is not one. `rules.Agreement` is that one rule.
+
+H1, two years, broker series.
+
+| pair | instants | trades | edge R | t |
+|---|---|---|---|---|
+| carry + trend | 73 | 82 | **+0.2740** | 1.77 |
+| rsi + stochastic | 242 | 339 | +0.1248 | 1.43 |
+| donchian + trend | 34 | 37 | −0.1103 | −0.42 |
+| trend + rsi | 43 | 48 | **−0.3198** | −1.28 |
+
+| each half alone | instants | edge R | t |
+|---|---|---|---|
+| carry-differential | 441 | +0.2203 | **3.99** |
+| trend-following | 441 | +0.1597 | 2.73 |
+| stochastic-reversion | 408 | +0.1047 | 1.75 |
+| rsi-mean-reversion | 381 | +0.0662 | 0.99 |
+| donchian-breakout | 184 | −0.0362 | −0.36 |
+
+**Agreement improves the edge per trade and destroys the sample.** The best
+pair is `carry + trend`:
+
+```
+edge per trade   +0.2740   against  +0.2203 alone    better
+instants              73   against       441 alone    six times fewer
+t                   1.77   against      3.99 alone    half
+```
+
+Six times fewer chances for twenty-five percent more edge. That is the
+failure mode written into `Agreement`'s docstring before any of this ran, and
+it is the one a table of edges alone would hide: **a hybrid can be better per
+trade and worse to own.**
+
+Two more readings:
+
+`trend + rsi` — the brief's own "Trend + Mean Reversion regime filter" — is
+the **worst** of the four at −0.3198. Two rules that think in opposite
+directions are not saying much when they agree.
+
+`rsi + stochastic` keeps the most instants (242 of ~400) precisely because
+the two agree so often, which is the other half of the hypothesis: rules that
+overlap heavily preserve the sample and add nothing, because they know one
+thing between them.
+
+**For the live gate:** `MOLIDO_CONSENSUS_REQUIRED` is 1, which is off. This
+table is the first evidence anyone has had about what raising it would cost —
+roughly six-sevenths of the sample, for an edge improvement too small to pay
+for it.
