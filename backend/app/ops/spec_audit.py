@@ -164,11 +164,16 @@ def audit(
         quote = prices.get(symbol) or {}
         side = str(position.get("side") or "").lower()
         current = quote.get("ask") if side == "sell" else quote.get("bid")
+        # The `except` below is the guard: a missing price or quote
+        # raises TypeError here and the symbol is skipped with a
+        # reason. Told to the checker rather than pre-checked,
+        # because five separate None tests would say the same thing
+        # at five times the length.
         try:
-            entry = float(position.get("price_open"))
+            entry = float(position.get("price_open"))  # type: ignore[arg-type]
             volume = float(position.get("volume") or 0.0)
             profit = float(position.get("profit") or 0.0)
-            current = float(current)
+            current = float(current)  # type: ignore[arg-type]
             tick_size = float(spec.get("tick_size") or 0.0)
         except (TypeError, ValueError):
             report.skipped.append(f"{symbol}: no current quote to measure a move against")

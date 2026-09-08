@@ -488,7 +488,11 @@ def read_terminal_detail(
         )
         for entry in entries:
             during = entry.during if isinstance(entry.during, dict) else {}
-            orders = during.get("orders") if isinstance(during.get("orders"), dict) else {}
+            # Read once. Asking twice let the checker see a value
+            # that the isinstance had narrowed and the lookup had
+            # not, and it is two dictionary lookups for one answer.
+            published = during.get("orders")
+            orders = published if isinstance(published, dict) else {}
             order = orders.get(login) or orders.get(str(login))
             if not order:
                 continue

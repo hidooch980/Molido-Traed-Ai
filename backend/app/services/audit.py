@@ -216,11 +216,15 @@ def verify(session: Session, *, tail: int | None = None) -> ChainVerification:
         # Anchor on what the first event of the tail says came before it.
         # The rows before are not checked here, and the note says so.
         previous = str(events[0].previous_hash or "")
-        expected_sequence = int(events[0].sequence)
+        # Every row here came through `sequence.is_not(None)` twenty lines
+        # above, so none of these can be None. Told to the checker rather
+        # than guarded at runtime: a branch for an impossible case reads
+        # as a real possibility to the next person.
+        expected_sequence = int(events[0].sequence)  # type: ignore[arg-type]
     last_at: datetime | None = None
     broken_at: int | None = None
     for event in events:
-        sequence = int(event.sequence)
+        sequence = int(event.sequence)  # type: ignore[arg-type]
         if sequence != expected_sequence:
             problems.append(f"gap: expected sequence {expected_sequence}, found {sequence}")
             broken_at = broken_at if broken_at is not None else sequence
@@ -246,11 +250,11 @@ def verify(session: Session, *, tail: int | None = None) -> ChainVerification:
 
     if not problems and events and head is not None:
         if (
-            int(head.sequence) != int(events[-1].sequence)
+            int(head.sequence) != int(events[-1].sequence)  # type: ignore[arg-type]
             or head.entry_hash != events[-1].entry_hash
         ):
             problems.append("the chain head does not agree with the last chained event")
-            broken_at = int(events[-1].sequence)
+            broken_at = int(events[-1].sequence)  # type: ignore[arg-type]
 
     return ChainVerification(
         intact=bool(events) and not problems,

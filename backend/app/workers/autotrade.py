@@ -1765,7 +1765,7 @@ def run_cycle(
         permitted_before_conviction = risk_for_this
         risk_for_this = min(risk_for_this, risk_for_this * judgement.risk_multiplier)
 
-        lots, problem = _lots(
+        lots, too_small = _lots(
             equity=equity,
             stop_distance=stop_distance,
             specification=specification,
@@ -1790,7 +1790,7 @@ def run_cycle(
             #
             # So the trade proceeds at the risk every gate already approved -
             # never more than that - and the log says conviction had no say.
-            lots, problem = _lots(
+            lots, too_small = _lots(
                 equity=equity,
                 stop_distance=stop_distance,
                 specification=specification,
@@ -1811,8 +1811,12 @@ def run_cycle(
                         "approved size"
                     ),
                 )
+        # Named apart from the `problem` below, which is an exception
+        # variable: Python deletes that name at the end of its except block,
+        # so one function holding both meanings on one name is a type
+        # checker's complaint today and a reader's confusion tomorrow.
         if lots is None:
-            refuse(entry, f"{problem}")
+            refuse(entry, f"{too_small}")
             continue
 
         try:

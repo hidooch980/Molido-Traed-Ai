@@ -77,9 +77,12 @@ async def trace_middleware(request: Request, call_next):
             request.url.path, response.status_code, (_time.perf_counter() - started) * 1000.0
         )
         if due:
-            from app.db.session import SessionLocal
+            # `session_scope`: `SessionLocal` is not a name this module
+            # exports, so the import raised into the silent except below and
+            # no request observation was ever flushed.
+            from app.db.session import session_scope
 
-            with SessionLocal() as db:
+            with session_scope() as db:
                 slo_module.flush_requests(db)
     except Exception:  # noqa: BLE001, S110 - an observation must never fail a request
         pass

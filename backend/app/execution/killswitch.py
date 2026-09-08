@@ -28,10 +28,15 @@ def _audit(action: str, by: str, reason: str) -> str:
     """Record the act. Reported rather than fatal when the database is down:
     the switch must still move when nothing else works."""
     try:
-        from app.db.session import SessionLocal
+        # `session_scope`, because `SessionLocal` does not exist in that
+        # module and never has. The import raised, the except below caught
+        # it, and every movement of the kill switch reported "not audited
+        # (the database was not reachable)" - naming a cause that was not
+        # the cause, about a record that was never written.
+        from app.db.session import session_scope
         from app.services import audit
 
-        with SessionLocal() as session:
+        with session_scope() as session:
             audit.record(
                 session,
                 f"killswitch.{action}",
