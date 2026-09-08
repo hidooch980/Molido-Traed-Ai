@@ -105,6 +105,17 @@ for prefix in /root/.mt5*; do
   # a fault report.
   [ "$logged_in" -eq 1 ] || continue
 
+  # And only one that is actually running. A unit that is stopped is not
+  # in a loop, it is stopped - and on 2026-09-08 the guard started one
+  # that had been stopped that minute for holding a second session on an
+  # account another terminal was already logged into. Stopping is how an
+  # operator says no; a watchdog that starts things nobody asked for is
+  # not watching, it is deciding.
+  #
+  # `is-enabled` was tried first and was wrong: these units are started
+  # by hand and were never enabled, so it hid six terminals of nine.
+  systemctl is-active --quiet "${unit}.service" || continue
+
   now=$(date +%s)
   beat=$(stat -c %Y "$heartbeat" 2>/dev/null || echo 0)
   age=$((now - beat))
@@ -124,8 +135,28 @@ for prefix in /root/.mt5*; do
 
   # Only when the updater is what stopped it. Every other cause of silence
   # deserves to stay visible rather than being restarted into invisibility.
-  log=$(ls -t "$prefix"/drive_c/Program\ Files/MetaTrader\ 5/logs/*.log 2>/dev/null | head -1)
-  if [ -z "$log" ] || ! tail -c 200000 "$log" 2>/dev/null | tr -d '\000' | grep -q "LiveUpdate"; then
+  # Any build's log, not just a generic MetaTrader one: a white-label
+  # terminal installs under its own name - "FTMO Global Markets MT5
+  # Terminal", "FundedNext MT5 Terminal" - and the fixed path found
+  # nothing for those, so neither prop terminal could ever be recovered.
+  log=$(ls -t "$prefix"/drive_c/Program\ Files/*/logs/*.log 2>/dev/null | head -1)
+
+  # Only what this launch wrote, and that is the whole of it.
+  #
+  # The check used to read the last 200 KB, which on an hourly log is
+  # most of a day. A terminal that looped last night and is starting
+  # normally now still carries "LiveUpdate" in that window, so it read as
+  # looping and was restarted - at 916 seconds on 2026-09-08, while it
+  # was authorising, and again five minutes later. Terminals B and G
+  # spent an hour that way while the log said "restarted 1" each time,
+  # which reads as recovery in progress.
+  #
+  # After the last "started for" line there is only this launch, so the
+  # question becomes the right one: did the updater take *this* start
+  # down, or is this a terminal still working through a slow one.
+  recent=$(tr -cd '[:print:]
+' < "$log" 2>/dev/null | awk '/started for/ {out=""} {out = out $0 ORS} END {printf "%s", out}')
+  if [ -z "$log" ] || ! printf %s "$recent" | grep -q "LiveUpdate"; then
     say "$unit: heartbeat ${age}s old, but the log does not show the updater - left alone for a human"
     continue
   fi

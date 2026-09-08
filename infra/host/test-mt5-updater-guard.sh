@@ -88,6 +88,37 @@ mkdir -p "$ROOT/.mt5fresh/drive_c/users/root/AppData/Roaming/MetaQuotes/Terminal
 echo binary > "$ROOT/.mt5fresh/drive_c/users/root/AppData/Roaming/MetaQuotes/Terminal/ABC/liveupdate/terminal64.exe"
 echo "LiveUpdate start terminal64.exe /upd" > "$ROOT/.mt5fresh/drive_c/Program Files/MetaTrader 5/logs/today.log"
 
+
+# A terminal that looped last night and started cleanly this morning. Its log
+# still carries the updater line from then, and the check used to read the
+# last 200 KB - most of a day on an hourly log - so it saw that line and
+# restarted a terminal that was authorising. Terminals B and G spent an hour
+# that way on 2026-09-08 while the log said "restarted" each time.
+mkdir -p "$ROOT/.mt5recovered/$SUFFIX" "$ROOT/.mt5recovered/drive_c/Program Files/MetaTrader 5/logs"
+echo '{"login":123,"equity":1000}' > "$ROOT/.mt5recovered/$SUFFIX/molido_account.json"
+echo '{"connected":true}' > "$ROOT/.mt5recovered/$SUFFIX/molido_heartbeat.json"
+touch -d "@$(( $(date +%s) - 900 ))" "$ROOT/.mt5recovered/$SUFFIX/molido_heartbeat.json"
+{
+  echo "LiveUpdate start terminal64.exe /upd"
+  echo "Terminal stopped with 0"
+  echo "Terminal MetaTrader 5 x64 build 6140 started for MetaQuotes Ltd"
+  echo "Network synchronized with RoboForex Ltd"
+} > "$ROOT/.mt5recovered/drive_c/Program Files/MetaTrader 5/logs/today.log"
+started_ago molido-mt5recovered 4000
+
+# A white-label build: the terminal installs under the firm's own name, and
+# the old fixed path looked only under "MetaTrader 5", so neither prop
+# terminal could ever be recovered.
+mkdir -p "$ROOT/.mt5branded/$SUFFIX" "$ROOT/.mt5branded/drive_c/Program Files/FTMO Global Markets MT5 Terminal/logs"
+echo '{"login":123,"equity":1000}' > "$ROOT/.mt5branded/$SUFFIX/molido_account.json"
+echo '{"connected":true}' > "$ROOT/.mt5branded/$SUFFIX/molido_heartbeat.json"
+touch -d "@$(( $(date +%s) - 900 ))" "$ROOT/.mt5branded/$SUFFIX/molido_heartbeat.json"
+{
+  echo "Terminal FTMO MT5 x64 build 6140 started for FTMO Global Markets Ltd"
+  echo "LiveUpdate start terminal64.exe /upd"
+} > "$ROOT/.mt5branded/drive_c/Program Files/FTMO Global Markets MT5 Terminal/logs/today.log"
+started_ago molido-mt5branded 4000
+
 SYSTEMCTL_CALLS="$ACTIONS" PATH="$ROOT/bin:$PATH" \
   bash -c "sed 's#/root/.mt5\*#$ROOT/.mt5*#; s#/root/.mt5#$ROOT/.mt5#g' '$GUARD' > '$ROOT/guard.sh'; STALE_SECONDS=420 LOG='$LOG' bash '$ROOT/guard.sh'"
 
@@ -106,7 +137,7 @@ check "the one carrying a payload but publishing is never restarted" "$(count 'm
 check "stale for another reason is left for a human, not restarted" "$(count 'molido-mt5quiet')" "0"
 check "one that started a minute ago is left to finish coming up" "$(count 'molido-mt5starting')" "0"
 check "and that is written down as what it is"  "$(grep -c 'still coming up' "$LOG")" "1"
-check "and that decision is written down"      "$(grep -c 'left alone for a human' "$LOG")" "1"
+check "and that decision is written down"      "$(grep -c 'mt5quiet.*left alone for a human' "$LOG")" "1"
 
 echo "A terminal nobody logged into is not a fault:"
 check "it is not restarted"                 "$(count 'molido-mt5empty')" "0"
@@ -115,7 +146,15 @@ check "nor is a fresh one carrying a payload" "$(count 'molido-mt5fresh')" "0"
 echo "But it is still defused - the one terminal that cannot recover alone:"
 check "a fresh prefix's payload is moved aside" "$(has_exe fresh)" "no"
 check "and kept, like every other"             "$(defused_dirs fresh)" "1"
-check "seven terminals were checked"           "$(grep -oE 'checked [0-9]+' "$LOG" | tail -1 | cut -d' ' -f2)" "7"
+check "nine terminals were checked"           "$(grep -oE 'checked [0-9]+' "$LOG" | tail -1 | cut -d' ' -f2)" "9"
+
+
+echo "The updater line has to belong to this launch:"
+check "one that looped last night and started clean is left alone" "$(count 'molido-mt5recovered')" "0"
+check "and it is named for a human rather than restarted"          "$(grep -c 'mt5recovered.*left alone for a human' "$LOG")" "1"
+
+echo "A white-label build has a log too:"
+check "a branded terminal in the loop is recovered"  "$(count 'start molido-mt5branded')" "1"
 
 rm -rf "$ROOT"
 echo
