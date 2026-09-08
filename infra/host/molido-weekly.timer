@@ -1,0 +1,21 @@
+[Unit]
+Description=The weekly scorecard, on the morning the week opens
+
+[Timer]
+# Monday 05:30 Tehran, which is 02:00 UTC - an hour before the daily digest,
+# so the two do not arrive as one wall of text, and before the market opens
+# at 01:00 Tehran has had a chance to write anything into the week.
+#
+# Weekly rather than daily because the number it carries is independent
+# instants, and that moves by about two a day. A daily reading of it would be
+# the same message seven times, which is how a channel gets muted.
+#
+# Persistent, so a machine that was off on Monday still sends it when it comes
+# back. A scorecard that silently skips a week is missing from exactly the
+# record it exists to build.
+OnCalendar=Mon *-*-* 02:00:00 UTC
+Persistent=true
+AccuracySec=5min
+
+[Install]
+WantedBy=timers.target

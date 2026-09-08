@@ -1,0 +1,14 @@
+[Unit]
+Description=Say what the evidence did this week, once, without being asked
+After=docker.service
+
+[Service]
+Type=oneshot
+# Exits zero when the chat channel is unconfigured, for the same reason the
+# daily digest does: that is a state the operator already knows about, and a
+# timer that reports failure every week trains them to ignore it.
+#
+# `api` rather than `collector`: the collector is busy on the hour and this
+# reads the journal, which either container can do.
+ExecStart=/usr/bin/docker exec molidotrade-api-1 python -m app.ops.weekly_digest
+TimeoutStartSec=300
