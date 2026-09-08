@@ -45,8 +45,18 @@ mkdir -p "$STARTED_DIR"
 
 # Say that a unit entered its active state this many seconds ago, in the
 # monotonic microseconds systemd reports.
+# A fixed uptime, given to the guard instead of the host's own. The runner
+# this test lands on may have booted seconds ago, and "started 4000 seconds
+# ago" cannot be written down against an uptime of 30 - the arithmetic goes
+# negative, the guard reads that as "never started", and the grace period it
+# is meant to be exercising is skipped. Green on any developer machine that
+# had been on for an hour, red on a fresh CI runner.
+FAKE_UPTIME="$ROOT/uptime"
+echo "100000.00 400000.00" > "$FAKE_UPTIME"
+export UPTIME_FILE="$FAKE_UPTIME"
+
 started_ago() { # unit, seconds
-  awk -v s="$2" '{printf "%d", ($1 - s) * 1000000}' /proc/uptime > "$STARTED_DIR/$1"
+  awk -v s="$2" '{printf "%d", ($1 - s) * 1000000}' "$FAKE_UPTIME" > "$STARTED_DIR/$1"
 }
 
 terminal() { # name, heartbeat_age, has_payload_exe, log_has_liveupdate

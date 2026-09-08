@@ -333,7 +333,12 @@ class TestStoppingIsNotForgetting:
         assert mt5_link.validate_power("term-g", "STOP").action == "stop"
 
     def test_a_power_request_can_be_submitted_like_any_other(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("MOLIDO_MT5_QUEUE", str(tmp_path))
+        # Patched at the function, like every other test here. The env var
+        # this used to set was `MOLIDO_MT5_QUEUE`, which is not the name of
+        # the setting (`MOLIDO_MT5_QUEUE_DIR`) - and `get_settings` is cached
+        # for the process, so even the right name would have been read too
+        # late. The request went to the real default queue directory.
+        monkeypatch.setattr(mt5_link, "queue_dir", lambda: tmp_path)
         result = mt5_link.submit(mt5_link.validate_power("term-g", "stop"))
 
         assert result.queued is True
