@@ -700,3 +700,167 @@ class TestTheRulebookAskedForHere:
         assert stored.max_daily_drawdown_pct == 0.05
         assert stored.max_total_drawdown_pct == 0.10
         assert stored.min_trading_days == 5
+
+
+def big_account(**over) -> ch.ChallengeState:
+    """A RoboForex demo as the fleet actually sizes them: $200,000.
+
+    Every money figure follows the balance rather than being restated, which
+    is the point the rulebook is written in percentages for: the same document
+    on a $40,000 account produces $38,000 and $36,000 without being touched.
+    """
+    at = 200_000.0
+    base = dict(
+        starting_balance=at,
+        current_equity=at,
+        current_balance=at,
+        peak_equity=at,
+        daily_starting_equity=at,
+        currency_per_r=at * 0.0075,
+    )
+    base.update(over)
+    return quiet_account(**base)
+
+
+class TestTheTwoHundredThousandPair:
+    """The rulebook pair as it will actually be registered, on $200,000.
+
+    The six RoboForex demos run at $200,000, not the $40,000 the sizing
+    exercise arrived at - and they can, because the $50,000 ceiling that
+    forced that number is FundedNext's rule and a written rulebook has no such
+    thing. So the percentages stay and the money moves: 5% of $200,000 is
+    $10,000 a day, and 10% is $20,000 in all.
+
+    Two targets were given, 8% and then 5%, so they are two rulebooks rather
+    than one edited twice - which is how a two-phase programme is sat, and it
+    keeps the first phase's numbers readable after the second is written.
+    """
+
+    SHARED = {
+        "max_daily_drawdown_pct": 0.05,
+        "max_total_drawdown_pct": 0.10,
+        "min_trading_days": 5,
+        "max_trading_days": "not imposed",
+        "max_leverage": "not imposed",
+        "max_concurrent_positions": "not imposed",
+        "max_single_day_profit_share": "not imposed",
+        "news_trading_allowed": True,
+        "weekend_holding_allowed": True,
+        "automated_trading_allowed": True,
+        "total_drawdown_trailing": False,
+        # The percentages are of the starting balance, which is what "10% of a
+        # 200k account" means to everybody who says it. Left unstated the
+        # engine takes the smaller of starting and current, which shrinks the
+        # allowance exactly as the account draws down - correct when a firm
+        # does it, and not what a holder writing their own rules intends.
+        "allowance_basis": "starting_balance",
+    }
+    PHASE_ONE = {**SHARED, "profit_target_pct": 0.08}
+    PHASE_TWO = {**SHARED, "profit_target_pct": 0.05}
+
+    def rules(self, which):
+        return custom_rulebooks.to_rules(custom_rulebooks.normalise(which))
+
+    def test_a_quiet_two_hundred_thousand_account_may_trade(self):
+        assert ch.check(self.rules(self.PHASE_ONE), big_account(), 1.0).allowed is True
+
+    def test_neither_phase_leaves_a_rule_unjudged(self):
+        for which in (self.PHASE_ONE, self.PHASE_TWO):
+            assert ch.check(self.rules(which), big_account(), 1.0).unverified == []
+
+    def test_the_daily_floor_is_a_hundred_and_ninety_thousand(self):
+        verdict = ch.check(
+            self.rules(self.PHASE_ONE), big_account(current_equity=189_900.0), 1.0
+        )
+
+        assert verdict.allowed is False
+
+    def test_just_above_the_daily_floor_still_trades(self):
+        verdict = ch.check(
+            self.rules(self.PHASE_ONE), big_account(current_equity=190_500.0), 1.0
+        )
+
+        assert verdict.allowed is True
+
+    def test_the_total_floor_is_a_hundred_and_eighty_thousand(self):
+        verdict = ch.check(
+            self.rules(self.PHASE_ONE),
+            big_account(
+                current_equity=179_900.0,
+                current_balance=179_900.0,
+                daily_starting_equity=179_900.0,
+                peak_equity=179_900.0,
+            ),
+            1.0,
+        )
+
+        assert verdict.allowed is False
+
+    def test_phase_one_passes_at_two_hundred_and_sixteen_thousand(self):
+        verdict = ch.check(
+            self.rules(self.PHASE_ONE),
+            big_account(current_equity=216_000.0, current_balance=216_000.0),
+            1.0,
+        )
+
+        assert verdict.status == "passed"
+
+    def test_phase_two_passes_at_two_hundred_and_ten_thousand(self):
+        verdict = ch.check(
+            self.rules(self.PHASE_TWO),
+            big_account(current_equity=210_000.0, current_balance=210_000.0),
+            1.0,
+        )
+
+        assert verdict.status == "passed"
+
+    def test_phase_two_is_the_easier_target(self):
+        at_211k = big_account(current_equity=211_000.0, current_balance=211_000.0)
+
+        assert ch.check(self.rules(self.PHASE_TWO), at_211k, 1.0).status == "passed"
+        assert ch.check(self.rules(self.PHASE_ONE), at_211k, 1.0).status != "passed"
+
+    def test_the_two_phases_share_every_other_number(self):
+        one = self.rules(self.PHASE_ONE)
+        two = self.rules(self.PHASE_TWO)
+
+        assert one.max_daily_drawdown_pct == two.max_daily_drawdown_pct
+        assert one.max_total_drawdown_pct == two.max_total_drawdown_pct
+        assert one.min_trading_days == two.min_trading_days
+
+    def test_the_floor_does_not_rise_with_profit(self):
+        # Anchored rather than trailing: $180,000 stays the floor even after
+        # the account has been to $216,000, which is the reading that gives a
+        # rehearsal room to give profit back.
+        verdict = ch.check(
+            self.rules(self.PHASE_ONE),
+            big_account(
+                current_equity=181_000.0,
+                current_balance=181_000.0,
+                daily_starting_equity=181_000.0,
+                peak_equity=216_000.0,
+            ),
+            1.0,
+        )
+
+        assert verdict.allowed is True
+
+    def test_no_automation_ceiling_refuses_two_hundred_thousand(self):
+        # The whole reason $200,000 is allowed here and not on FundedNext.
+        verdict = ch.check(self.rules(self.PHASE_ONE), big_account(), 1.0)
+
+        assert not any("only below" in b for b in verdict.breaches)
+
+    def test_both_phases_store_and_read_back(self, session, tenant):
+        one = write(session, tenant, name="RoboForex 200k phase 1", rules=self.PHASE_ONE)
+        two = write(session, tenant, name="RoboForex 200k phase 2", rules=self.PHASE_TWO)
+
+        assert custom_rulebooks.to_rules(one.rules).profit_target_pct == 0.08
+        assert custom_rulebooks.to_rules(two.rules).profit_target_pct == 0.05
+
+    def test_they_get_distinct_keys(self, session, tenant):
+        one = write(session, tenant, name="RoboForex 200k phase 1", rules=self.PHASE_ONE)
+        two = write(session, tenant, name="RoboForex 200k phase 2", rules=self.PHASE_TWO)
+
+        assert one.key == "custom:roboforex-200k-phase-1"
+        assert two.key == "custom:roboforex-200k-phase-2"
