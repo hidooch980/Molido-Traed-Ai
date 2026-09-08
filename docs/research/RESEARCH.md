@@ -184,18 +184,34 @@ honest answer rather than a placeholder for one.
 | label | rules |
 |---|---|
 | 🟢 DEPLOY CANDIDATE | none |
-| 🟡 RESEARCH FURTHER | `time-series-momentum` (D1 only) |
-| 🔴 REJECT | the other ten, on the timeframes measured |
+| 🟡 RESEARCH FURTHER | none |
+| 🔴 REJECT | all eleven, on every timeframe measured |
 
-`time-series-momentum` on daily bars survives everything except itself: t =
-5.34 over 7,356 trades, intact at four times the measured cost, intact two
-bars late, positive in 100% of omission draws, never reproduced by a
-sign-flipped null in 400 draws — and a 141 R drawdown on a *typical*
-ordering, negative in 7 of 24 year slices. On a $200,000 account with a 10%
-drawdown rule the account is gone before the edge pays.
+`time-series-momentum` held 🟡 for a day. On daily bars it survived everything
+thrown at it — t = 5.34 over 7,356 trades, intact at four times the measured
+cost, intact two bars late, positive in 100% of omission draws, never
+reproduced by a sign-flipped null. Walked forward over four folds of twenty
+years it returns a **walk-forward efficiency of 0.084**: less than a tenth of
+what training promises survives outside it, each fold picks a different
+geometry, and the out-of-sample results swing from +0.77 R to −0.93 R with
+the most recent fold the worst.
 
-Under §33, 🟡 means "worth forward testing", not "deploy". Nothing here is
-🟢.
+That is what the brief means by robustness over backtest profit, and it is
+why the label moved to 🔴.
+
+**Nothing is above red.**
+
+### 5.1 More trades was measured too
+
+The request was for a lower timeframe and many more trades. On M5 the sample
+is twenty times the H1 one — 1,284 independent instants against 492, six
+thousand trades where H1 had dozens — so the statistical bar is *easier* to
+clear. Nothing cleared it, and `trend-following`, which holds the best
+positive t on H1, is significantly negative on M5.
+
+`measure.cost_in_r` explains it without needing a new experiment: R is
+defined by the stop distance, and the spread does not shrink when the bars
+do. More trades is the same knowledge behind a taller fence.
 
 ## 6. What the pass changed about the measurement itself
 
