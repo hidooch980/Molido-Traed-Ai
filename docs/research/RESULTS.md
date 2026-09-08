@@ -498,3 +498,72 @@ thing between them.
 table is the first evidence anyone has had about what raising it would cost —
 roughly six-sevenths of the sample, for an edge improvement too small to pay
 for it.
+
+---
+
+## 12. A session filter that looked justified and is not
+
+The slice tables in §1 showed Tokyo as the weakest session for every rule
+that printed one, and a mechanism was ready to explain it: `cost_in_r` is the
+spread over the stop distance, the stop comes from ATR, so smaller bars mean
+a larger cost in R for the same spread.
+
+**The mechanism is real.** Measured over two years of H1 bars without looking
+at any edge:
+
+| session | mean range | cost, against New York |
+|---|---|---|
+| tokyo | 17.23 | **1.49x** |
+| london | 19.22 | 1.34x |
+| **overlap** (12–17 UTC) | **57.88** | **0.44x** |
+| new-york | 25.71 | 1.00x |
+
+That is a 3.4x spread in cost between the cheapest and dearest hours, and it
+makes a specific prediction about a slice nobody had read: the overlap fell
+below the printing threshold in every report so far, and the cost table says
+it should be the **best** session for every rule.
+
+### 12.1 The prediction fails
+
+| rule | tokyo | london | overlap | new-york |
+|---|---|---|---|---|
+| carry-differential | +0.1450 | +0.2691 | **+0.2774** | +0.2277 |
+| trend-following | **+0.2126** | +0.0314 | +0.1481 | +0.2031 |
+| short-horizon-reversal | +0.0039 | −0.0955 | −0.0369 | **+0.2875** |
+| rsi-mean-reversion | +0.0893 | −0.0097 | **−0.0982** | +0.2103 |
+| stochastic-reversion | +0.0286 | +0.1160 | **−0.0942** | **+0.3479** |
+| cross-sectional-stretch | −0.1346 | +0.2492 | −0.1619 | +0.1093 |
+
+The overlap is best for one rule and **worst for three**. Tokyo, the dearest
+session, is the best one for `trend-following`. There is no session ordering
+that survives adding the fourth column.
+
+**No session filter.** It would have looked entirely justified from the first
+table.
+
+### 12.2 Why the first table lied
+
+It printed only slices above `MIN_SLICE`, which is a selected subset — and
+the one session the cost mechanism cared about was the one selection removed.
+Six rules across four sessions is twenty-four cells; taking the best cell per
+rule out of noise produces a table that looks exactly like this one.
+
+That is the second time in two days that reading a partial table told a story
+the full table denies, and it is the same family as counting rows instead of
+observations: **a subset chosen by a threshold is not a sample.**
+
+### 12.3 What the cost table is still good for
+
+The allocation is upside down and that part does not depend on the edges at
+all. Decisions per session, per rule:
+
+| session | cost | decisions |
+|---|---|---|
+| tokyo | 1.49x | 119–163, the most |
+| new-york | 1.00x | 103–139 |
+| london | 1.34x | 86–116 |
+| overlap | **0.44x** | **70–100, the fewest** |
+
+The system spends most of its decisions where each one costs 1.49x and
+fewest where it costs 0.44x. That is a fact about the clock and the ranking,
+not about any edge, and it survives §12.1 being negative.
