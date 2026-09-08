@@ -554,3 +554,204 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":  # pragma: no cover - a command, not a code path
     raise SystemExit(main())
+
+
+@dataclass(frozen=True)
+class Fold:
+    """One training window, what it chose, and what happened next."""
+
+    train: tuple[datetime, datetime]
+    test: tuple[datetime, datetime]
+    chosen: Trial
+    confirmed: Trial | None
+    refusal: str = ""
+
+    def as_payload(self) -> dict[str, Any]:
+        return {
+            "train": [self.train[0].isoformat(), self.train[1].isoformat()],
+            "test": [self.test[0].isoformat(), self.test[1].isoformat()],
+            "chosen": self.chosen.as_payload(),
+            "confirmed": self.confirmed.as_payload() if self.confirmed else None,
+            "refusal": self.refusal,
+        }
+
+
+@dataclass(frozen=True)
+class WalkForward:
+    """Section 15 of the research brief: choose, step forward, choose again.
+
+    `sweep` splits the series once. That answers "does the geometry chosen on
+    the first sixty percent survive the last forty", which is a fair question
+    asked a single time. It cannot answer the one that matters more - whether
+    the *procedure* keeps working, or whether one lucky training window
+    carried the whole result.
+    """
+
+    folds: tuple[Fold, ...]
+    refusal: str = ""
+
+    @property
+    def scored(self) -> tuple[Fold, ...]:
+        return tuple(f for f in self.folds if f.confirmed is not None)
+
+    @property
+    def in_sample_r(self) -> float | None:
+        scored = self.scored
+        if not scored:
+            return None
+        return sum(f.chosen.net_r for f in scored) / len(scored)
+
+    @property
+    def out_of_sample_r(self) -> float | None:
+        # Narrowed here rather than through `scored`, whose filter a type
+        # checker cannot see across a property boundary. Written out, it also
+        # says plainly which folds this average is over.
+        confirmed = [f.confirmed.net_r for f in self.folds if f.confirmed is not None]
+        if not confirmed:
+            return None
+        return sum(confirmed) / len(confirmed)
+
+    @property
+    def efficiency(self) -> float | None:
+        """Out-of-sample return divided by in-sample, over the scored folds.
+
+        **None when in-sample is not positive, and that is not a gap.** The
+        ratio only means anything when training found something: divide a
+        positive out-of-sample figure by a negative in-sample one and the
+        result is negative, which reads as failure; divide two negatives and
+        it is positive, which reads as success. Both are arithmetic about a
+        procedure that found nothing, dressed as a verdict.
+
+        Above 1.0 says the held-out windows did better than the chosen ones,
+        which usually means the choice was not doing much. Around 0.5 is the
+        ordinary honest result. Near zero says the training window was the
+        only place the edge existed.
+        """
+        inside = self.in_sample_r
+        outside = self.out_of_sample_r
+        if inside is None or outside is None or inside <= 0:
+            return None
+        return outside / inside
+
+    @property
+    def positive_folds(self) -> int:
+        return sum(1 for f in self.scored if f.confirmed and f.confirmed.net_r > 0)
+
+    def as_payload(self) -> dict[str, Any]:
+        return {
+            "folds": len(self.folds),
+            "scored_folds": len(self.scored),
+            "positive_folds": self.positive_folds,
+            "in_sample_net_r": (
+                round(self.in_sample_r, 4) if self.in_sample_r is not None else None
+            ),
+            "out_of_sample_net_r": (
+                round(self.out_of_sample_r, 4)
+                if self.out_of_sample_r is not None
+                else None
+            ),
+            "efficiency": (
+                round(self.efficiency, 3) if self.efficiency is not None else None
+            ),
+            "efficiency_note": (
+                "out-of-sample over in-sample across the scored folds; None when "
+                "training found nothing, because a ratio of two losses is not a "
+                "measure of anything"
+            ),
+            "refusal": self.refusal,
+            "detail": [f.as_payload() for f in self.folds],
+        }
+
+
+def walk_forward(
+    series: dict[str, list[Any]],
+    *,
+    bar_interval: timedelta,
+    cost_at_incumbent: float,
+    rule: Any = None,
+    folds: int = 4,
+    train_share: float = 0.5,
+    stop_multiples: tuple[float, ...] = STOP_MULTIPLES,
+    target_multiples: tuple[float, ...] = TARGET_MULTIPLES,
+) -> WalkForward:
+    """Roll a training window forward and score what it chose on what follows.
+
+    The windows are cut on *instants* rather than on the calendar, because a
+    calendar fold over a sparse series holds a different amount of evidence
+    from one over a dense stretch, and the folds would then not be comparable
+    to each other.
+
+    Each fold trains on `train_share` of its own span and is scored on the
+    rest, and the whole window slides so that every test period is used once.
+    Nothing is chosen on a window that a later fold is scored on: the training
+    window of fold N ends where its own test window begins, and fold N+1
+    starts after that.
+    """
+    stamps = sorted({bar.at for bars in series.values() for bar in bars})
+    if len(stamps) < folds * 4:
+        return WalkForward((), refusal="the series is too short to fold")
+
+    span = len(stamps) // folds
+    train_len = max(1, int(span * train_share))
+    if train_len >= span:
+        return WalkForward((), refusal="the training share leaves nothing to test")
+
+    built: list[Fold] = []
+    for n in range(folds):
+        head = n * span
+        cut = head + train_len
+        tail = head + span if n < folds - 1 else len(stamps) - 1
+        if cut >= tail:
+            continue
+
+        train = _window(series, stamps[head], stamps[cut])
+        test = _window(series, stamps[cut], stamps[tail])
+
+        scored: list[Trial] = []
+        for stop in stop_multiples:
+            for target in target_multiples:
+                attempt = trial(
+                    train,
+                    bar_interval=bar_interval,
+                    stop_multiple=stop,
+                    target_multiple=target,
+                    cost_at_incumbent=cost_at_incumbent,
+                    rule=rule,
+                )
+                # A geometry nobody could measure is not a geometry that
+                # failed, and carrying it forward would let a fold of four
+                # instants win the choice on noise.
+                if attempt.instants >= MIN_INSTANTS:
+                    scored.append(attempt)
+        if not scored:
+            continue
+
+        chosen = max(scored, key=lambda t: t.net_r)
+        confirmed = trial(
+            test,
+            bar_interval=bar_interval,
+            stop_multiple=chosen.stop_multiple,
+            target_multiple=chosen.target_multiple,
+            cost_at_incumbent=cost_at_incumbent,
+            rule=rule,
+        )
+        built.append(
+            Fold(
+                train=(stamps[head], stamps[cut]),
+                test=(stamps[cut], stamps[tail]),
+                chosen=chosen,
+                # A fold whose test window scored too little is kept and named
+                # rather than dropped: dropping it would quietly raise the
+                # efficiency by removing the folds where nothing happened.
+                confirmed=confirmed if confirmed.instants >= MIN_INSTANTS else None,
+                refusal=(
+                    ""
+                    if confirmed.instants >= MIN_INSTANTS
+                    else f"the test window scored {confirmed.instants} instants"
+                ),
+            )
+        )
+
+    if not built:
+        return WalkForward((), refusal="no fold had enough instants to choose on")
+    return WalkForward(tuple(built))

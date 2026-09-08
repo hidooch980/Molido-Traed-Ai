@@ -283,3 +283,137 @@ class TestOneSplitCanBeLuck:
         )
 
         assert rolled.survivors == 0
+
+
+class TestWalkingForward:
+    """Section 15 of the research brief. `sweep` splits the series once, which
+    answers whether the geometry chosen on the first sixty percent survives
+    the last forty - a fair question asked a single time. It cannot say
+    whether the *procedure* keeps working or whether one lucky training
+    window carried the whole result."""
+
+    def test_it_refuses_a_series_too_short_to_fold(self):
+        result = geometry.walk_forward(
+            series(bars=6),
+            bar_interval=timedelta(hours=1),
+            cost_at_incumbent=0.01,
+        )
+
+        assert result.folds == ()
+        assert "too short" in result.refusal
+
+    def test_efficiency_is_none_when_training_found_nothing(self):
+        """The subtle one. Divide a positive out-of-sample figure by a
+        negative in-sample one and the ratio is negative, which reads as
+        failure; divide two negatives and it is positive, which reads as
+        success. Both are arithmetic about a procedure that found nothing,
+        wearing a verdict's clothes."""
+        losing = geometry.Trial(
+            stop_multiple=7.5,
+            target_multiple=1.5,
+            instants=100,
+            trades=200,
+            gross_r=-0.5,
+            cost_r=0.01,
+            t_statistic=-1.0,
+        )
+        winning = geometry.Trial(
+            stop_multiple=7.5,
+            target_multiple=1.5,
+            instants=100,
+            trades=200,
+            gross_r=0.5,
+            cost_r=0.01,
+            t_statistic=1.0,
+        )
+        window = (START, START + timedelta(days=1))
+        result = geometry.WalkForward(
+            (geometry.Fold(train=window, test=window, chosen=losing, confirmed=winning),)
+        )
+
+        assert result.in_sample_r < 0
+        assert result.out_of_sample_r > 0
+        assert result.efficiency is None
+        assert "not a measure of anything" in result.as_payload()["efficiency_note"]
+
+    def test_efficiency_is_the_ratio_when_training_did_find_something(self):
+        strong = geometry.Trial(
+            stop_multiple=7.5, target_multiple=1.5, instants=100, trades=200,
+            gross_r=1.0, cost_r=0.0, t_statistic=3.0,
+        )
+        weaker = geometry.Trial(
+            stop_multiple=7.5, target_multiple=1.5, instants=100, trades=200,
+            gross_r=0.5, cost_r=0.0, t_statistic=2.0,
+        )
+        window = (START, START + timedelta(days=1))
+        result = geometry.WalkForward(
+            (geometry.Fold(train=window, test=window, chosen=strong, confirmed=weaker),)
+        )
+
+        assert result.efficiency == 0.5
+
+    def test_a_fold_whose_test_scored_nothing_is_kept_and_named(self):
+        """Dropping it would raise the efficiency by removing the folds where
+        nothing happened, which is the most flattering possible edit."""
+        chosen = geometry.Trial(
+            stop_multiple=7.5, target_multiple=1.5, instants=100, trades=200,
+            gross_r=1.0, cost_r=0.0, t_statistic=3.0,
+        )
+        window = (START, START + timedelta(days=1))
+        result = geometry.WalkForward(
+            (
+                geometry.Fold(
+                    train=window,
+                    test=window,
+                    chosen=chosen,
+                    confirmed=None,
+                    refusal="the test window scored 4 instants",
+                ),
+            )
+        )
+        payload = result.as_payload()
+
+        assert payload["folds"] == 1
+        assert payload["scored_folds"] == 0
+        assert payload["efficiency"] is None
+        assert "4 instants" in payload["detail"][0]["refusal"]
+
+    def wide(self, bars=1200):
+        """Enough instruments to rank, and enough movement to resolve.
+
+        Two things this file's own fixture cannot give: the cross-section
+        needs twenty instruments before a ranking means anything and that one
+        has five, and its prices never move, so no trade it opens ever reaches
+        a stop or a target and no instant is ever scored."""
+        from app.brain import crosssection
+
+        names = sorted(crosssection.RANKED_UNIVERSE)[:30]
+        out = {}
+        for index, symbol in enumerate(names):
+            drift = (index - len(names) / 2) * 0.02
+            out[symbol] = [
+                Bar(
+                    at=START + timedelta(minutes=15) * i,
+                    open=100.0 + drift * i + (i % 7) * 0.3,
+                    high=100.0 + drift * i + (i % 7) * 0.3 + 0.5,
+                    low=100.0 + drift * i + (i % 7) * 0.3 - 0.5,
+                    close=100.0 + drift * i + (i % 7) * 0.3,
+                )
+                for i in range(bars)
+            ]
+        return out
+
+    def test_every_fold_trains_before_the_window_it_is_scored_on(self):
+        """The property the whole thing rests on. A fold that chose on bars it
+        is then scored against is not walking forward, it is reading ahead."""
+        result = geometry.walk_forward(
+            self.wide(),
+            bar_interval=timedelta(hours=1),
+            cost_at_incumbent=0.01,
+            folds=3,
+        )
+
+        assert result.folds, result.refusal
+        for fold in result.folds:
+            assert fold.train[1] <= fold.test[0]
+            assert fold.train[0] < fold.train[1]
