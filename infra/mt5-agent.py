@@ -29,6 +29,7 @@ import pathlib
 import subprocess
 import sys
 import time
+
 # timezone.utc rather than datetime.UTC: the host this runs on carries
 # Python 3.10, and UTC-the-name arrived in 3.11. The agent crashed on
 # import and systemd restarted it forever - 108 times before anybody
@@ -156,6 +157,10 @@ def systemctl(verb: str, unit: str = UNIT) -> tuple[bool, str]:
         capture_output=True,
         text=True,
         timeout=120,
+        # The return code is read on the next line and turned into
+        # the first half of this function's answer. Raising instead
+        # would throw away the stderr the caller is told to show.
+        check=False,
     )
     ok = result.returncode == 0
     return ok, (result.stderr or result.stdout).strip()
@@ -320,7 +325,7 @@ class Target:
         return self.config.exists()
 
 
-def targets() -> "list[Target]":
+def targets() -> list[Target]:
     """The terminals this agent serves, in preference order.
 
     `MOLIDO_MT5_TARGETS` is `key=prefix=unit,key=prefix=unit,...`. Unset means
@@ -337,7 +342,7 @@ def targets() -> "list[Target]":
     return out or [Target("main", PREFIX, UNIT)]
 
 
-def resolve_target(requested: "str | None") -> "Target | None":
+def resolve_target(requested: str | None) -> Target | None:
     """The terminal a request goes to.
 
     Named explicitly, the name has to exist - a login applied to a fallback

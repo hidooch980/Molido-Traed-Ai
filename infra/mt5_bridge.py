@@ -232,7 +232,9 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def do_GET(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler's spelling
+    # do_GET and do_POST are BaseHTTPRequestHandler's spelling, not a
+    # choice: the base class dispatches on exactly these names.
+    def do_GET(self) -> None:
         parsed = urlparse(self.path)
         handler = ROUTES.get(parsed.path)
         if handler is None:
@@ -250,7 +252,7 @@ class Handler(BaseHTTPRequestHandler):
                 },
             )
 
-    def do_POST(self) -> None:  # noqa: N802
+    def do_POST(self) -> None:
         # Every mutating path lands here, and there is currently no mutating
         # path. Refusing at the method rather than per-route means adding one
         # later cannot accidentally arrive unguarded.
