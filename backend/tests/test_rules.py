@@ -406,3 +406,102 @@ class TestTheThreeFamiliesThatHadNoRepresentative:
         for name in rules.proposed_names():
             assert name not in rules.names()
             assert rules.get(name) is not None
+
+
+class TestTwoRulesThatAgree:
+    """The deployment already acts on an answer it has never had.
+    `MOLIDO_CONSENSUS_REQUIRED` makes the order gate wait for N brains to
+    agree, and nothing has measured whether agreement is worth anything -
+    because `measure` takes one rule and the gate is not one."""
+
+    class Fixed:
+        """A rule that always names what it was constructed with."""
+
+        def __init__(self, name, longs=(), shorts=(), scores=None, declined=None):
+            self.name = name
+            self._picks = (longs, shorts, scores, declined)
+
+        def __call__(self, snapshot, *, universe):
+            from app.learning.rules import Picks
+
+            longs, shorts, scores, declined = self._picks
+            if declined:
+                return Picks(declined=declined)
+            return Picks(longs=longs, shorts=shorts, scores=scores)
+
+    def test_it_keeps_only_what_both_named_on_the_same_side(self):
+        from app.learning.rules import Agreement
+
+        pair = Agreement(
+            self.Fixed("a", longs=("EURUSD", "GBPUSD"), shorts=("USDJPY",)),
+            self.Fixed("b", longs=("GBPUSD", "AUDUSD"), shorts=("USDJPY",)),
+        )
+
+        picks = pair({}, universe=None)
+
+        assert picks.longs == ("GBPUSD",)
+        assert picks.shorts == ("USDJPY",)
+
+    def test_a_symbol_the_two_disagree_about_is_dropped(self):
+        """One wants it long and the other short. Taking either side is
+        picking a winner the evidence has not picked."""
+        from app.learning.rules import Agreement
+
+        pair = Agreement(
+            self.Fixed("a", longs=("EURUSD",)),
+            self.Fixed("b", shorts=("EURUSD",)),
+        )
+
+        picks = pair({}, universe=None)
+
+        assert picks.longs == () and picks.shorts == ()
+        assert picks.declined
+
+    def test_conviction_is_the_weaker_of_the_two(self):
+        """A pair is only as sure as its less sure half. Taking the stronger
+        would let one rule carry a symbol the other barely wanted."""
+        from app.learning.rules import Agreement
+
+        pair = Agreement(
+            self.Fixed("a", longs=("EURUSD",), scores={"EURUSD": 0.9}),
+            self.Fixed("b", longs=("EURUSD",), scores={"EURUSD": 0.2}),
+        )
+
+        picks = pair({}, universe=None)
+
+        assert picks.scores == {"EURUSD": 0.2}
+
+    def test_a_refusal_names_which_half_refused(self):
+        from app.learning.rules import Agreement
+
+        pair = Agreement(
+            self.Fixed("a", declined="the cross-section was thin"),
+            self.Fixed("b", longs=("EURUSD",)),
+        )
+
+        picks = pair({}, universe=None)
+
+        assert "a declined" in picks.declined
+        assert "cross-section was thin" in picks.declined
+
+    def test_it_needs_the_history_of_its_hungrier_half(self):
+        """Without this a composite reports the history of neither part and is
+        starved exactly the way `trend-following` was."""
+        from app.learning import rules
+
+        pair = rules.Agreement(
+            rules.get("trend-following"), rules.get("rsi-mean-reversion")
+        )
+
+        assert rules.history_needed(rules.get("trend-following")) == 101
+        assert rules.history_needed(rules.get("rsi-mean-reversion")) == 16
+        assert rules.history_needed(pair) == 101
+
+    def test_it_names_itself_after_both(self):
+        from app.learning import rules
+
+        pair = rules.Agreement(
+            rules.get("carry-differential"), rules.get("trend-following")
+        )
+
+        assert pair.name == "agree:carry-differential+trend-following"

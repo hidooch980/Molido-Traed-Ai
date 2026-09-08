@@ -107,6 +107,13 @@ def history_needed(rule: Rule | None) -> int:
     """
     if rule is None:
         return 0
+    first = getattr(rule, "first", None)
+    second = getattr(rule, "second", None)
+    if first is not None and second is not None:
+        # A composite is as hungry as its hungrier half. Without this an
+        # `Agreement` would report the history of neither of its parts and be
+        # starved exactly the way `trend-following` was.
+        return max(history_needed(first), history_needed(second))
     return max(
         int(getattr(rule, "lookback", 0) or 0) + 1,
         int(getattr(rule, "slow", 0) or 0),
@@ -1027,6 +1034,78 @@ class ResidualReversion:
             # the opposite way to a momentum one and `buy_high` says so.
             scores=_strength(scored, longs=longs, shorts=shorts, buy_high=False),
         )
+
+
+@dataclass(frozen=True)
+class Agreement:
+    """Hold only what two rules want on the same side at the same instant.
+
+    HYPOTHESIS: two signals that are each too weak to clear their own bar may
+    clear it together, if and only if their mistakes are uncorrelated. That
+    condition is the whole question, and it is the reason this is measured
+    rather than assumed: two mean-reversion rules reading the same oversold
+    move agree constantly and know one thing between them, while a trend rule
+    and a carry rule agreeing is two different reasons pointing one way.
+
+    **This deployment already acts on the answer it has never had.**
+    `MOLIDO_CONSENSUS_REQUIRED` makes the order gate wait for N brains to
+    agree, and nothing has ever measured whether agreement is worth anything.
+    It cannot be measured through the harness by the gate, because `measure`
+    takes one rule; this is that one rule.
+
+    ENTRY   long what both name long, short what both name short. Nothing
+            else - a symbol one wants long and the other wants short is a
+            disagreement, and taking either side of it is picking a winner
+            the evidence has not picked.
+    RANK    the weaker of the two convictions. A pair is only as sure as its
+            less sure half, and taking the stronger would let one rule carry
+            a symbol the other barely wanted.
+
+    EXPECTED FAILURE MODE: agreement thins the book. Two rules that each name
+    four symbols may share none, and a rule that fires on a tenth of the
+    instants needs ten times as long to say anything - so a hybrid can be
+    better per trade and still be worse to own. `instants` in the report is
+    where that shows.
+    """
+
+    first: Rule
+    second: Rule
+    name: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.name:
+            object.__setattr__(
+                self, "name", f"agree:{self.first.name}+{self.second.name}"
+            )
+
+    def __call__(
+        self, snapshot: dict[str, dict[str, Any]], *, universe: frozenset[str] | None
+    ) -> Picks:
+        left = self.first(snapshot, universe=universe)
+        right = self.second(snapshot, universe=universe)
+        if left.declined:
+            return Picks(declined=f"{self.first.name} declined: {left.declined}")
+        if right.declined:
+            return Picks(declined=f"{self.second.name} declined: {right.declined}")
+
+        longs = tuple(s for s in left.longs if s in set(right.longs))
+        shorts = tuple(s for s in left.shorts if s in set(right.shorts))
+        if not longs and not shorts:
+            return Picks(declined="the two rules named nothing in common")
+
+        # The weaker conviction of the two, per symbol. A pair is only as sure
+        # as its less sure half.
+        scores: dict[str, float] = {}
+        for symbol in longs + shorts:
+            both = [
+                value
+                for value in ((left.scores or {}).get(symbol), (right.scores or {}).get(symbol))
+                if value is not None
+            ]
+            if both:
+                scores[symbol] = min(both)
+
+        return Picks(longs=longs, shorts=shorts, scores=scores)
 
 
 CANDIDATES: dict[str, Rule] = {
