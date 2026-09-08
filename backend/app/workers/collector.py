@@ -25,6 +25,7 @@ Design notes that matter operationally:
 from __future__ import annotations
 
 import asyncio
+import pathlib
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -649,14 +650,36 @@ def ingest_broker_bars() -> dict[str, Any]:
     #
     # A live account is the requirement, not a name: the bars only exist
     # because a logged-in terminal is streaming them.
+    #
+    # And the freshest bars, not merely the first signed-in terminal. Bar
+    # publishing is switched off per terminal with a `molido_bars_off` marker
+    # so that one terminal carries the price series and the rest do not
+    # duplicate the work - and picking alphabetically walked straight into a
+    # terminal with that marker on 2026-09-08. Its CSVs were a week old, the
+    # collector read them and reported success, and the metatrader series
+    # fell ten hours behind while every account waited for candidates that
+    # could never be fresh.
+    #
+    # An account is still required: the bars only exist because a logged-in
+    # terminal is streaming them. Among those, the one whose hourly files
+    # were written most recently is the one actually doing it.
     source = None
+    newest = None
     for _key, directory in sorted(bridge_dirs().items()):
         try:
-            if MetaTraderBridge(directory=directory).account().get("available"):
-                source = directory
-                break
+            if not MetaTraderBridge(directory=directory).account().get("available"):
+                continue
+            stamps = [
+                path.stat().st_mtime
+                for path in pathlib.Path(directory).glob("molido_bars_*_H1.csv")
+            ]
         except Exception:  # noqa: BLE001, S112 - an unreadable bridge is not this one
             continue
+        if not stamps:
+            continue
+        latest = max(stamps)
+        if newest is None or latest > newest:
+            source, newest = directory, latest
 
     reports: dict[str, Any] = {}
     # A preference, not a precondition: with nothing signed in the default
