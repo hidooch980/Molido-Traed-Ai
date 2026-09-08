@@ -343,3 +343,123 @@ class TestItReadsTheReasonRatherThanGuessingIt:
         )
 
         assert "501165913" in bridge.last_authorization()
+
+
+class TestChargesAreNotTrades:
+    """Swap on a position that is still open is booked nightly as its own
+    deal, not as part of a close. The expert published only closing deals, so
+    every swap charge was dropped - and on 2026-09-08 six accounts sat dollars
+    below their starting balance with `deals: []` on all of them and nothing
+    anywhere to say where the money had gone.
+
+    Both are published now, and the whole point is that they must never be
+    added together: a closed trade is a result, a swap is a cost paid while
+    the result was still undecided."""
+
+    def deals_file(self, directory, rows):
+        (directory / "molido_deals.json").write_text(
+            json.dumps({"published_at": STAMP, "window_days": 30, "deals": rows}),
+            encoding="utf-8",
+        )
+
+    def trade(self, **over):
+        row = {
+            "ticket": 1,
+            "entry": 1,
+            "type": 0,
+            "is_charge": False,
+            "symbol": "EURUSD",
+            "side": "buy",
+            "volume": 0.1,
+            "profit": 25.0,
+            "swap": -1.5,
+            "commission": -0.7,
+        }
+        row.update(over)
+        return row
+
+    def charge(self, **over):
+        row = {
+            "ticket": 2,
+            "entry": 0,
+            "type": 2,
+            "is_charge": True,
+            "symbol": "XAUUSD",
+            "side": "buy",
+            "volume": 0.01,
+            "profit": 0.0,
+            "swap": -0.62,
+            "commission": 0.0,
+        }
+        row.update(over)
+        return row
+
+    def test_deals_still_means_closed_trades(self, bridge, tmp_path, logs):
+        """Every caller that already reads `deals` goes on reading exactly
+        what it read before."""
+        write_log(logs, "'1': authorized on Broker")
+        write_heartbeat(tmp_path)
+        write_account(tmp_path)
+        self.deals_file(tmp_path, [self.trade(), self.charge()])
+
+        answer = bridge.deals(now=NOW)
+
+        assert len(answer["deals"]) == 1
+        assert answer["deals"][0]["ticket"] == 1
+
+    def test_the_charge_is_published_separately(self, bridge, tmp_path, logs):
+        write_log(logs, "'1': authorized on Broker")
+        write_heartbeat(tmp_path)
+        write_account(tmp_path)
+        self.deals_file(tmp_path, [self.trade(), self.charge()])
+
+        answer = bridge.deals(now=NOW)
+
+        assert len(answer["charges"]) == 1
+        assert answer["charges"][0]["ticket"] == 2
+
+    def test_swap_is_totalled_across_both(self, bridge, tmp_path, logs):
+        """The account paid both, whichever list they landed in."""
+        write_log(logs, "'1': authorized on Broker")
+        write_heartbeat(tmp_path)
+        write_account(tmp_path)
+        self.deals_file(tmp_path, [self.trade(), self.charge()])
+
+        answer = bridge.deals(now=NOW)
+
+        assert answer["swap_paid"] == -2.12
+        assert answer["commission_paid"] == -0.7
+
+    def test_an_account_with_only_charges_is_no_longer_silent(
+        self, bridge, tmp_path, logs
+    ):
+        """The state the fleet was actually in: nothing closed, money gone."""
+        write_log(logs, "'1': authorized on Broker")
+        write_heartbeat(tmp_path)
+        write_account(tmp_path)
+        self.deals_file(tmp_path, [self.charge(), self.charge(ticket=3, swap=-0.4)])
+
+        answer = bridge.deals(now=NOW)
+
+        assert answer["deals"] == []
+        assert len(answer["charges"]) == 2
+        assert answer["swap_paid"] == -1.02
+
+    def test_an_older_expert_that_marks_nothing_reads_as_all_trades(
+        self, bridge, tmp_path, logs
+    ):
+        """A terminal still running the previous build publishes no
+        `is_charge`. Its rows are closing deals, because that is all the old
+        one ever wrote - so they belong in `deals`, and reading the absent
+        flag as a charge would empty the list for every terminal not yet
+        updated."""
+        write_log(logs, "'1': authorized on Broker")
+        write_heartbeat(tmp_path)
+        write_account(tmp_path)
+        old = {k: v for k, v in self.trade().items() if k != "is_charge"}
+        self.deals_file(tmp_path, [old])
+
+        answer = bridge.deals(now=NOW)
+
+        assert len(answer["deals"]) == 1
+        assert answer["charges"] == []

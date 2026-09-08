@@ -1005,7 +1005,24 @@ void WriteDeals()
       //--- the closing side does. Publishing both would double every trade
       //--- and put a zero beside each real one.
       long entry = HistoryDealGetInteger(ticket, DEAL_ENTRY);
-      if(entry != DEAL_ENTRY_OUT && entry != DEAL_ENTRY_INOUT)
+      long kind  = HistoryDealGetInteger(ticket, DEAL_TYPE);
+
+      //--- But a charge is not a trade and was being dropped with them.
+      //--- Swap on a position that is still open is booked nightly as its
+      //--- own deal, not as part of a close, so the filter above hid every
+      //--- one: on 2026-09-08 six accounts had drifted a few dollars below
+      //--- their starting balance with `deals: []` on all of them and
+      //--- nothing anywhere to say where the money went.
+      //---
+      //--- Published beside the trades rather than instead of them, with
+      //--- `entry` and `type` on every row so a reader can tell a closed
+      //--- trade from an overnight charge and never add the two by
+      //--- accident.
+      double swap_here = HistoryDealGetDouble(ticket, DEAL_SWAP);
+      double fee_here  = HistoryDealGetDouble(ticket, DEAL_COMMISSION);
+      bool   closing   = (entry == DEAL_ENTRY_OUT || entry == DEAL_ENTRY_INOUT);
+      bool   charge    = (!closing && (swap_here != 0.0 || fee_here != 0.0));
+      if(!closing && !charge)
          continue;
 
       if(!first)
@@ -1017,6 +1034,9 @@ void WriteDeals()
       double fee    = HistoryDealGetDouble(ticket, DEAL_COMMISSION);
 
       FileWriteString(handle, "{\"ticket\":" + IntegerToString((long)ticket) + ",");
+      FileWriteString(handle, "\"entry\":" + IntegerToString(entry) + ",");
+      FileWriteString(handle, "\"type\":" + IntegerToString(kind) + ",");
+      FileWriteString(handle, "\"is_charge\":" + (charge ? "true" : "false") + ",");
       FileWriteString(handle, "\"symbol\":\"" +
                       Escape(HistoryDealGetString(ticket, DEAL_SYMBOL)) + "\",");
       FileWriteString(handle, "\"side\":\"" +

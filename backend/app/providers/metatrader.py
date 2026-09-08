@@ -502,7 +502,29 @@ class MetaTraderBridge:
             # not an error - but it is also not a deal, so it reads as empty
             # with the reason kept.
             return {"available": False, "reason": f"unreadable: {exc}", "deals": []}
-        return {"available": True, "deals": payload.get("deals", [])}
+
+        # Trades and charges arrive in one list and must never be added
+        # together. A closed trade is a result; an overnight swap is a cost
+        # the account paid while a position was still open, and the expert
+        # publishes both because dropping the second made it invisible - six
+        # accounts drifted dollars below their starting balance on
+        # 2026-09-08 with `deals: []` on every one of them.
+        rows = payload.get("deals", [])
+        charges = [row for row in rows if row.get("is_charge")]
+        trades = [row for row in rows if not row.get("is_charge")]
+        return {
+            "available": True,
+            # `deals` keeps its old meaning - closed trades - so every caller
+            # that already reads it goes on reading exactly what it did.
+            "deals": trades,
+            "charges": charges,
+            "swap_paid": round(
+                sum(float(row.get("swap") or 0.0) for row in rows), 2
+            ),
+            "commission_paid": round(
+                sum(float(row.get("commission") or 0.0) for row in rows), 2
+            ),
+        }
 
     # ----------------------------------------------------------------- bars
     def fetch_ohlcv(
