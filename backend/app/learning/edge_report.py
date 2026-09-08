@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -495,6 +496,63 @@ def render(payload: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+#: How loaded the host may be before a measurement refuses to start.
+#:
+#: A full edge report walks years of bars for thirty instruments and then
+#: bootstraps it a thousand times. That is an afternoon's work for a laptop
+#: and a denial of service for a box that is also running eight MetaTrader
+#: terminals under Wine.
+#:
+#: On 2026-09-08 three of these were started on the trading host within an
+#: hour of each other. Load reached 60, the kernel began killing terminals,
+#: and the machine stopped answering ssh for two hours - during which the
+#: fleet traded blind and nobody could see it. The measurements themselves
+#: were fine. Where they ran was the mistake.
+#:
+#: Two per core is the conventional line between busy and overloaded. It is
+#: a refusal rather than a delay because the person running this can choose
+#: a better moment, and a job that quietly waits is a job nobody knows is
+#: waiting.
+MAX_LOAD_PER_CORE = 2.0
+
+
+def host_is_too_busy() -> tuple[bool, str]:
+    """Whether this machine has room for a measurement right now.
+
+    Returns the reason either way, because "no" without a number is an
+    obstacle and "no, the load is 47 on 8 cores" is information.
+
+    Unavailable load - Windows, a container without /proc - reads as "go
+    ahead". This guard exists to stop one specific accident on one specific
+    host, not to become a thing that blocks work it does not understand.
+    """
+    # Named rather than caught: `os.getloadavg` does not exist on Windows at
+    # all, and asking for it and handling the AttributeError says the same
+    # thing less plainly.
+    reader = getattr(os, "getloadavg", None)
+    if reader is None:
+        return False, "this platform has no load average"
+    try:
+        _one, five, _fifteen = reader()
+    except OSError:
+        return False, "the load average is not readable here"
+    cores = os.cpu_count() or 1
+
+    ceiling = cores * MAX_LOAD_PER_CORE
+    # The five-minute figure, not the one-minute: a momentary spike is not a
+    # busy machine, and this refusal is about the hour ahead rather than the
+    # second behind.
+    if five > ceiling:
+        return True, (
+            f"load is {five:.1f} on {cores} core(s), above the {ceiling:.0f} "
+            f"this refuses at. A full report is hours of CPU, and on a host "
+            f"that is also trading it has taken the machine down before. "
+            f"Run it when the fleet is quiet, or on another machine, or pass "
+            f"--anyway if you have a reason."
+        )
+    return False, f"load is {five:.1f} on {cores} core(s)"
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--provider", default="metatrader")
@@ -520,7 +578,17 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--draws", type=int, default=5000)
     parser.add_argument("--json", action="store_true")
+    parser.add_argument(
+        "--anyway",
+        action="store_true",
+        help="run even when the host is already loaded",
+    )
     args = parser.parse_args(argv)
+
+    busy, why = host_is_too_busy()
+    if busy and not args.anyway:
+        print(f"refusing to start: {why}", file=sys.stderr)
+        return 2
 
     rule = None
     if args.rule:

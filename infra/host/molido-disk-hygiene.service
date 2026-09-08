@@ -1,0 +1,7 @@
+[Unit]
+Description=Keep the volume clear enough for the trading gate to stay open
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/molido-disk-hygiene
