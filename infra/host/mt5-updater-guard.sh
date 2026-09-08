@@ -51,6 +51,11 @@ STALE_SECONDS=${STALE_SECONDS:-420}
 #: terminal that is genuinely stuck is still restarted, one timer later.
 START_GRACE_SECONDS=${START_GRACE_SECONDS:-900}
 LOG=${LOG:-/var/log/molido-updater-guard.log}
+#: Where the monotonic clock is read from. Overridable only so the tests
+#: can pin it: the grace period below compares a unit's start against
+#: this host's uptime, and on a machine that booted a minute ago there is
+#: no way to express "started half an hour ago" at all.
+UPTIME_FILE=${UPTIME_FILE:-/proc/uptime}
 COMMON_SUFFIX="drive_c/users/root/AppData/Roaming/MetaQuotes/Terminal/Common/Files"
 
 say() { printf '%s %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$*" >> "$LOG"; }
@@ -125,7 +130,7 @@ for prefix in /root/.mt5*; do
   # been given while doing exactly what it was asked to do.
   started=$(systemctl show -p ActiveEnterTimestampMonotonic --value "$unit" 2>/dev/null)
   if [ -n "${started:-}" ] && [ "$started" -gt 0 ] 2>/dev/null; then
-    uptime_us=$(awk '{printf "%d", $1 * 1000000}' /proc/uptime 2>/dev/null || echo 0)
+    uptime_us=$(awk '{printf "%d", $1 * 1000000}' "$UPTIME_FILE" 2>/dev/null || echo 0)
     running=$(( (uptime_us - started) / 1000000 ))
     if [ "$running" -ge 0 ] && [ "$running" -lt "$START_GRACE_SECONDS" ]; then
       say "$unit: heartbeat ${age}s old but it started ${running}s ago - still coming up"

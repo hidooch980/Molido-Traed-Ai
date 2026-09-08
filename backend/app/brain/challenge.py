@@ -230,6 +230,29 @@ class ChallengeRules:
     #: unread. Four execution switches still stand behind it.
     automated_trading_allowed: FlagRule = None
 
+    #: The account size at which a permitted automation permission stops.
+    #:
+    #: `automated_trading_allowed` is a yes or a no, and at least one provider
+    #: answers "yes, up to a point". FundedNext permits EAs on MetaTrader
+    #: below $50,000 and requires accounts of $50,000 and above to "trade
+    #: fully manually... both in Challenge and FundedNext accounts". One flag
+    #: cannot hold that, and encoding it as a flat False would refuse the
+    #: small accounts the firm actually allows.
+    #:
+    #: It was found the expensive way. A $200,000 FundedNext account answered
+    #: every automated order with retcode 10026 while its terminal, bridge and
+    #: cycle all reported success, and the rulebook said automation was
+    #: permitted because on a $15,000 account of the same firm it is.
+    #:
+    #: Compared against the *starting* balance rather than current equity: the
+    #: firm sells an account size, and an account that has drawn down below
+    #: the threshold has not become eligible.
+    #:
+    #: `None` means nobody said, which for this field means "no ceiling was
+    #: read" rather than "there is none" - it is only consulted when the
+    #: permission above is already True.
+    automation_max_account_size: Rule = None
+
     # Not rules but rulers — how the two drawdown rules above are read.
     drawdown_basis: DrawdownBasis = DrawdownBasis.EQUITY
     # `None` means nobody said, and the smaller of the two bases is used. The
@@ -968,6 +991,31 @@ def check(
         breaches.append(
             "this provider forbids automated trading experts, and every order "
             "this platform sends is chosen by software"
+        )
+
+    # A ceiling on the permission, independent of whether the permission was
+    # read at all.
+    #
+    # Deliberately not another `elif` on the chain above. The chain branches
+    # on what the rulebook says about automation in general, and this is a
+    # fact about *this account* that holds whichever branch was taken - a
+    # holder who confirmed their contract still cannot buy an add-on the firm
+    # does not sell above the line. Put on the chain it fired for nobody,
+    # because the provider it was written for leaves the flag `None`.
+    if (
+        isinstance(rules.automation_max_account_size, float | int)
+        and rules.automated_trading_allowed is not False
+        and state.starting_balance >= float(rules.automation_max_account_size)
+    ):
+        # The same breach as the one above and for the same reason - software
+        # chooses the trades and no smaller size makes that untrue - reached
+        # by a different route, so the message names the account rather than
+        # the firm.
+        breaches.append(
+            "this provider permits automated trading only below "
+            f"{float(rules.automation_max_account_size):,.0f} and this account "
+            f"started at {state.starting_balance:,.0f}, so every order this "
+            "platform sends is one it is not allowed to place"
         )
 
     # ----------------------------------------------------------------- news
