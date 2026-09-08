@@ -174,7 +174,44 @@ class TestTheArithmetic:
         the cost."""
         result = measure.measure(trending_market(), bar_interval=timedelta(hours=1))
 
-        assert result.net_r == pytest.approx(result.edge_r - measure.COST_R)
+        assert result.net_r == pytest.approx(result.edge_r - result.cost_r)
+
+    def test_the_cost_comes_from_the_stops_these_trades_used(self):
+        """Not from a constant. R is defined by the stop, the stop is a
+        multiple of ATR, and ATR shrinks with the bars while the spread does
+        not - so the same flat figure was 2.3x too small on H1 and 8.2x too
+        small on M5, measured across 29 majors on 2026-09-08.
+
+        Every result this project had produced was charged between a third and
+        an eighth of what the account would really have paid, and the shorter
+        the timeframe the more flattering the error."""
+        result = measure.measure(trending_market(), bar_interval=timedelta(hours=1))
+
+        assert result.cost_r > 0
+        assert result.cost_r != measure.COST_R
+        assert result.as_dict()["geometry"]["cost_r"] == pytest.approx(
+            result.cost_r, abs=1e-5
+        )
+
+    def test_a_wider_stop_is_a_cheaper_decision(self):
+        """The whole mechanism in one comparison: the same spread over a
+        larger stop is a smaller share of R."""
+        market = trending_market()
+        near = measure.measure(
+            market, bar_interval=timedelta(hours=1), stop_multiple=2.5
+        )
+        far = measure.measure(
+            market, bar_interval=timedelta(hours=1), stop_multiple=15.0
+        )
+
+        assert far.cost_r < near.cost_r
+
+    def test_a_run_that_traded_nothing_falls_back_to_the_flat_figure(self):
+        """There is no stop to divide by, and inventing one would be worse
+        than the constant it replaced."""
+        result = measure.measure(flat_market(), bar_interval=timedelta(hours=1))
+
+        assert result.cost_r == measure.COST_R
 
     def test_significance_needs_1_96(self):
         from dataclasses import replace

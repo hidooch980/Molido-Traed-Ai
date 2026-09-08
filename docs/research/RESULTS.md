@@ -567,3 +567,57 @@ all. Decisions per session, per rule:
 The system spends most of its decisions where each one costs 1.49x and
 fewest where it costs 0.44x. That is a fact about the clock and the ranking,
 not about any edge, and it survives §12.1 being negative.
+
+---
+
+## 13. Every measurement in this project was charged a third to an eighth of its cost
+
+`measure` charged a flat `COST_R = 0.01` on every trade at every timeframe.
+R is defined by the stop distance, the stop is a multiple of ATR, and ATR
+shrinks with the bars while the spread does not — so the flat figure was
+wrong in the direction that flatters, and most wrong where the bars are
+smallest.
+
+Measured across 29 majors over 120 days, against a 1.4 pip spread and the
+deployed 7.5 ATR stop:
+
+| timeframe | median ATR | stop | true cost | vs the flat 0.01 |
+|---|---|---|---|---|
+| M5 | 0.000229 | 0.00171 | **0.0817 R** | **8.2x** |
+| M15 | 0.000409 | 0.00306 | 0.0457 R | 4.6x |
+| H1 | 0.000811 | 0.00609 | 0.0230 R | 2.3x |
+
+The cost now comes from the stops each run actually used
+(`measure.cost_in_r`, commit pending), not from a constant.
+
+### 13.1 What it does to the scalping answer
+
+**It strengthens it.** Every M5 rule in §10 was charged 0.01 R when the true
+figure is 0.082 — eight times cheaper than reality — and none of them cleared
+the bar anyway. Scalping on this deployment is worse than §10 showed.
+
+### 13.2 Every H1 rule again, re-costed
+
+| rule | instants | edge R | cost R | net R | t |
+|---|---|---|---|---|---|
+| carry-differential | 440 | +0.2237 | **0.0246** | +0.1990 | 4.05 |
+| trend-following | 439 | +0.1623 | 0.0178 | +0.1445 | 2.78 |
+| stochastic-reversion | 408 | +0.0904 | 0.0170 | +0.0734 | 1.50 |
+| rsi-mean-reversion | 382 | +0.0747 | 0.0148 | +0.0599 | 1.12 |
+| short-horizon-reversal | 518 | +0.0484 | 0.0150 | +0.0333 | 1.02 |
+| donchian-breakout | 184 | −0.0091 | 0.0156 | −0.0247 | −0.09 |
+| cross-sectional-stretch | 509 | −0.0094 | 0.0165 | −0.0259 | −0.19 |
+| time-series-momentum | 377 | −0.2786 | 0.0135 | −0.2920 | −5.31 |
+
+The t statistics barely move — cost is subtracted from both arms and t is
+computed on the difference — but **every net figure falls**, and the net is
+what an account experiences.
+
+**A detail only a per-run cost can show:** `carry-differential` is the
+*dearest* rule to trade at 0.0246 R, half again what `time-series-momentum`
+costs. It holds instruments with smaller ATRs, so the same spread takes a
+larger share of its R. Under a flat figure that difference did not exist.
+
+Nothing clears the corrected bar of t = 3.44 except `carry-differential` at
+4.05, and that is the rule §8 disqualified for having two distinct books
+behind its 865 instants.

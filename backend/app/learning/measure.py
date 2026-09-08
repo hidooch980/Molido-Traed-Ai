@@ -36,6 +36,7 @@ understates the edge - the direction to be wrong in, but wrong.
 from __future__ import annotations
 
 import math
+import statistics
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -54,6 +55,31 @@ from app.workers.resolve import HORIZON, _outcome
 #: A constant is the wrong shape for this number and is kept only as a floor
 #: for series with no spread on record. See `cost_in_r`.
 COST_R = 0.01
+
+#: A round-trip spread in price, used to turn a stop distance into a cost in
+#: R when no per-instrument figure is available.
+#:
+#: 1.4 pips is EURUSD on this deployment's broker, measured. It is the wrong
+#: number for gold and roughly right for the majors that make up most of the
+#: ranked universe, and it is stated here as an assumption rather than buried
+#: as a constant.
+DEFAULT_SPREAD = 0.00014
+
+#: The floor the old flat figure now serves as.
+#:
+#: Charging 0.01 R on every trade at every timeframe was wrong in a direction
+#: that mattered: R is defined by the stop, the stop is a multiple of ATR, and
+#: ATR shrinks with the bars while the spread does not. Measured on 29 majors
+#: over 120 days on 2026-09-08, the true cost of one decision is
+#:
+#:     M5   0.0817 R   8.2x the flat figure
+#:     M15  0.0457 R   4.6x
+#:     H1   0.0230 R   2.3x
+#:
+#: so every measurement this project has made was charged between a third and
+#: an eighth of what the account would really have paid - and the shorter the
+#: timeframe, the more flattering the error. Section 10 of the research brief
+#: asks for exactly this and it was not being done.
 
 
 def cost_in_r(spread: float, stop_distance: float) -> float:
@@ -131,6 +157,17 @@ class Measurement:
     #: about every earlier run.
     stop_multiple: float = STOP_MULTIPLE
     target_multiple: float = TARGET_MULTIPLE
+    #: What one decision cost, in R, over this window.
+    #:
+    #: Computed from the stop distances the rule actually used rather than
+    #: taken from a constant: the same spread is a different cost against a
+    #: 7.5 ATR stop on M5 than on H1, and that difference is most of what
+    #: separates a scalp from a swing.
+    #:
+    #: Defaulted to the flat figure for a Measurement built by hand, which
+    #: has no stops to derive one from. Every measurement the harness makes
+    #: passes the computed value.
+    cost_r: float = COST_R
 
     @property
     def edge_r(self) -> float:
@@ -138,7 +175,7 @@ class Measurement:
 
     @property
     def net_r(self) -> float:
-        return self.edge_r - COST_R
+        return self.edge_r - self.cost_r
 
     @property
     def significant(self) -> bool:
@@ -187,7 +224,7 @@ class Measurement:
                 "stop_multiple": self.stop_multiple,
                 "target_multiple": self.target_multiple,
                 "horizon_bars": HORIZON,
-                "cost_r": COST_R,
+                "cost_r": round(self.cost_r, 5),
             },
             "note": (
                 "one instant is one observation. The rule opens both tails at "
@@ -247,6 +284,7 @@ def measure(
     rule: Any = None,
     keep_instants: bool = False,
     entry_delay_bars: int = 0,
+    spread_price: float = DEFAULT_SPREAD,
     stop_multiple: float | None = None,
     target_multiple: float | None = None,
 ) -> Measurement:
@@ -307,6 +345,7 @@ def measure(
     books: set[tuple[tuple[str, ...], tuple[str, ...]]] = set()
     kept_instants: list[datetime] = []
     per_trade: list[float] = []
+    stops: list[float] = []
     trades = 0
     dropped = 0
 
@@ -385,6 +424,9 @@ def measure(
                 price_here = bars[fill_at].close
                 pick = _Pick(symbol=symbol, price=price_here, atr=atr_here)
                 distance = pick.atr * stop_mult
+                # Every stop this run actually used, so the cost below is
+                # the cost of these trades rather than of a constant.
+                stops.append(distance)
 
                 outcome = _resolve(
                     bars,
@@ -445,10 +487,17 @@ def measure(
         if keep_instants:
             kept_instants.append(moment)
 
+    # What one decision cost at this timeframe, from the stops these trades
+    # really used. The flat figure is the floor for a run that traded nothing,
+    # where there is no stop to divide by.
+    typical_stop = statistics.median(stops) if stops else 0.0
+    cost = cost_in_r(spread_price, typical_stop) if typical_stop > 0 else COST_R
+
     summary = _summarise(
         rule_by_instant,
         control_by_instant,
         per_trade,
+        cost_r=cost,
         trades=trades,
         dropped=dropped,
         books=len(books),
@@ -486,6 +535,7 @@ def _summarise(
     control: list[float],
     per_trade: list[float],
     *,
+    cost_r: float,
     trades: int,
     dropped: int,
     books: int,
@@ -500,6 +550,7 @@ def _summarise(
             rule_r=0.0,
             control_r=0.0,
             spread_r=0.0,
+            cost_r=COST_R,
             t_statistic=0.0,
             unclustered_t=0.0,
             dropped_undecided=dropped,
@@ -518,6 +569,7 @@ def _summarise(
         rule_r=sum(rule) / len(rule),
         control_r=sum(control) / len(control),
         spread_r=spread,
+        cost_r=cost_r,
         t_statistic=t_statistic,
         unclustered_t=unclustered,
         dropped_undecided=dropped,
