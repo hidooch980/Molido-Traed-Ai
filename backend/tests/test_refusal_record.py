@@ -27,7 +27,11 @@ class TestEveryRefusalIsRecorded:
         source = inspect.getsource(autotrade)
 
         assert source.count("skipped.append(") == 1
-        assert source.count("refuse(entry,") == 17
+        # 17 until 8 Sep 2026, when the broker-refusal branch was reformatted
+        # onto one line to make room for the incident it now raises. The count
+        # is a tripwire for a refusal that stops being recorded, so it moves
+        # when a call is added or rewritten and never when one disappears.
+        assert source.count("refuse(entry,") == 18
 
     def test_the_one_remaining_append_is_the_recorder_itself(self):
         source = inspect.getsource(autotrade.run_cycle)

@@ -231,6 +231,24 @@ _CLOSED_ONLY = "the profit target is calculated on closed trades only"
 FTMO_RETRIEVED = date(2026, 8, 14)
 FTMO_SOURCE = "https://ftmo.com/en/trading-objectives/"
 
+#: Where the five rules below the objectives were read, and when.
+#:
+#: The objectives page states the profit target, the two drawdowns and the
+#: minimum trading days, and it is silent on everything else - which is why
+#: `automated_trading_allowed`, weekend holding, news and the position cap
+#: were `None` here for three weeks. They are not unpublished; they are on
+#: other pages of the same site, and nobody had gone and read them.
+FTMO_FAQ_RETRIEVED = date(2026, 9, 8)
+FTMO_FAQ_STRATEGY = (
+    "https://ftmo.com/en/faq/"
+    "which-instruments-can-i-trade-and-what-strategies-am-i-allowed-to-use/"
+)
+FTMO_FAQ_NEWS = "https://ftmo.com/en/faq/can-i-trade-news/"
+FTMO_FAQ_HOLDING = (
+    "https://ftmo.com/en/faq/"
+    "do-i-have-to-close-my-positions-overnight-or-before-the-weekend/"
+)
+
 # FTMO differs from FundedNext in the one place it matters most, and the
 # difference is the whole account once it is in profit:
 #
@@ -262,20 +280,76 @@ FTMO_SOURCE = "https://ftmo.com/en/trading-objectives/"
 #   "No time limit" on the challenge, so there is no deadline to pass.
 
 _FTMO_COMMON: dict[str, Any] = {
-    # Not stated on this page, like the four fields below it. Inferring
-    # permission from silence is how a rulebook acquires a rule its provider
-    # never wrote - and this is the one rule where the wrong inference costs
-    # the account rather than a position size.
-    "automated_trading_allowed": None,
+    # Read 8 Sep 2026 from FTMO_FAQ_STRATEGY, and it is a permission stated
+    # rather than one inferred from silence: "we have no reasons for limiting
+    # or restricting your trading strategy, whether it\'s discretionary
+    # trading, algorithmic trading, EAs, etc."
+    #
+    # This field had been `None` since the file was written, and `None` here
+    # is the one value that is not a shrug - it means nobody read the
+    # document, and the account is the thing at stake rather than a position
+    # size. It was answerable the whole time on a page nobody had opened.
+    "automated_trading_allowed": True,
     "drawdown_basis": DrawdownBasis.EQUITY,
     "allowance_basis": AllowanceBasis.STARTING_BALANCE,
     "total_drawdown_trailing": True,
     "max_trading_days": NOT_IMPOSED,       # "No time limit"
-    "max_single_day_profit_share": None,   # not stated on this page
-    "news_trading_allowed": None,          # not stated on this page
-    "weekend_holding_allowed": None,       # not stated on this page
-    "max_leverage": None,                  # varies by account type, not here
-    "max_concurrent_positions": None,      # not stated
+    # The same page, and it is a platform limit rather than a strategy rule:
+    # "platform servers have 200 orders at a time and 2000 max positions per
+    # day limitation". The per-day figure has nowhere to live in this model,
+    # so it is written into the notes instead of rounded into this one.
+    "max_concurrent_positions": 200,
+    # Still unread, and still deliberately so.
+    #
+    # FTMO does not publish leverage on the objectives page, the symbols
+    # page, the how-it-works page, or the FAQ index - it is set per account
+    # type at purchase. Every other field in this dict moved today because a
+    # page was found that stated it. This one did not, and writing the
+    # widely-repeated 1:100 would be exactly the invention this file exists
+    # to refuse.
+    "max_leverage": None,
+}
+
+#: News and weekend holding during the Evaluation Process.
+#:
+#: Both restrictions are real and neither applies here, which is a
+#: distinction worth keeping: FTMO gates them on the *funded* account, not
+#: on the challenge. "While trading during the Evaluation Process, the
+#: restriction does not apply regardless of the account type" - said twice,
+#: once on each page, for news and for holding.
+_FTMO_EVALUATION: dict[str, Any] = {
+    **_FTMO_COMMON,
+    "news_trading_allowed": True,
+    "weekend_holding_allowed": True,
+    # The Best Day Rule is a 1-Step rule. See `_FTMO_1STEP` below; on the
+    # two-phase products FTMO states no equivalent, and a stated absence is
+    # not the same as an unread field.
+    "max_single_day_profit_share": NOT_IMPOSED,
+}
+
+#: The 1-Step products, which carry the one consistency rule FTMO imposes.
+#:
+#: "the Best Day Rule requires that your Best Day does not represent more
+#: than 50% of your Positive Days\' Profit", and it "applies to the FTMO
+#: Challenge: 1-Step as well as the FTMO Account (1-Step)" - so it is set
+#: here and nowhere else.
+_FTMO_1STEP: dict[str, Any] = {
+    **_FTMO_EVALUATION,
+    "max_single_day_profit_share": 0.50,
+}
+
+#: The funded account, where the two restrictions switch on.
+#:
+#: Encoded for the **Standard** account type. Swing is exempt from both and
+#: is a different product the holder chooses at purchase; the note beside
+#: this rulebook says so, because a Swing holder reading `False` here would
+#: be reading a rule that is not theirs. Standard is the restrictive
+#: reading, which is the safe direction to be wrong in.
+_FTMO_FUNDED: dict[str, Any] = {
+    **_FTMO_COMMON,
+    "news_trading_allowed": False,
+    "weekend_holding_allowed": False,
+    "max_single_day_profit_share": NOT_IMPOSED,
 }
 
 _FTMO_TRAIL = (
@@ -291,6 +365,28 @@ _FTMO_DAILY = (
 _FTMO_EQUITY = (
     "both limits are watched on equity - balance plus open P/L, swaps and "
     "commissions - so a floating loss counts against them before it is realised"
+)
+_FTMO_EA = (
+    "this firm permits algorithmic trading and EAs outright, and caps the "
+    "platform at 200 open orders at a time and 2,000 positions per day; an "
+    "EA that makes the server hyperactive may be asked to slow down"
+)
+_FTMO_EVAL_FREE = (
+    "the news and weekend-holding restrictions belong to the funded FTMO "
+    "Account, not to the evaluation: during the Challenge and Verification "
+    "both are explicitly lifted for every account type"
+)
+_FTMO_STANDARD = (
+    "these are the Standard account type's restrictions - no trade opened or "
+    "closed within two minutes either side of a listed news release on the "
+    "affected instrument, and positions closed before the weekend or a "
+    "rollover longer than two hours. A Swing account is exempt from both, so "
+    "confirm which type this account is before trusting the two flags"
+)
+_FTMO_BEST_DAY = (
+    "the Best Day Rule caps the most profitable day at 50% of the sum of all "
+    "profitable days, and exceeding it is not a breach - it withholds the "
+    "pass or the reward until further profit brings the share back down"
 )
 _FTMO_DAYS = (
     "a trading day is any day from 00:00:00 to 23:59:59 CE(S)T in which at "
@@ -309,11 +405,19 @@ RULEBOOKS: tuple[Rulebook, ...] = (
             max_daily_drawdown_pct=0.03,
             max_total_drawdown_pct=0.10,
             min_trading_days=4,
-            **_FTMO_COMMON,
+            **_FTMO_EVALUATION,
         ),
         source=FTMO_SOURCE,
         retrieved=FTMO_RETRIEVED,
-        notes=(_CLOSED_ONLY, _FTMO_TRAIL, _FTMO_DAILY, _FTMO_EQUITY, _FTMO_DAYS),
+        notes=(
+            _CLOSED_ONLY,
+            _FTMO_TRAIL,
+            _FTMO_DAILY,
+            _FTMO_EQUITY,
+            _FTMO_DAYS,
+            _FTMO_EA,
+            _FTMO_EVAL_FREE,
+        ),
     ),
     Rulebook(
         key="ftmo-challenge-2step-phase2",
@@ -325,11 +429,19 @@ RULEBOOKS: tuple[Rulebook, ...] = (
             max_daily_drawdown_pct=0.03,
             max_total_drawdown_pct=0.10,
             min_trading_days=4,
-            **_FTMO_COMMON,
+            **_FTMO_EVALUATION,
         ),
         source=FTMO_SOURCE,
         retrieved=FTMO_RETRIEVED,
-        notes=(_CLOSED_ONLY, _FTMO_TRAIL, _FTMO_DAILY, _FTMO_EQUITY, _FTMO_DAYS),
+        notes=(
+            _CLOSED_ONLY,
+            _FTMO_TRAIL,
+            _FTMO_DAILY,
+            _FTMO_EQUITY,
+            _FTMO_DAYS,
+            _FTMO_EA,
+            _FTMO_EVAL_FREE,
+        ),
     ),
     Rulebook(
         key="ftmo-challenge-1step",
@@ -341,11 +453,20 @@ RULEBOOKS: tuple[Rulebook, ...] = (
             max_daily_drawdown_pct=0.03,
             max_total_drawdown_pct=0.10,
             min_trading_days=4,
-            **_FTMO_COMMON,
+            **_FTMO_1STEP,
         ),
         source=FTMO_SOURCE,
         retrieved=FTMO_RETRIEVED,
-        notes=(_CLOSED_ONLY, _FTMO_TRAIL, _FTMO_DAILY, _FTMO_EQUITY, _FTMO_DAYS),
+        notes=(
+            _CLOSED_ONLY,
+            _FTMO_TRAIL,
+            _FTMO_DAILY,
+            _FTMO_EQUITY,
+            _FTMO_DAYS,
+            _FTMO_EA,
+            _FTMO_EVAL_FREE,
+            _FTMO_BEST_DAY,
+        ),
     ),
     Rulebook(
         key="ftmo-account-2step",
@@ -359,11 +480,17 @@ RULEBOOKS: tuple[Rulebook, ...] = (
             max_daily_drawdown_pct=0.03,
             max_total_drawdown_pct=0.10,
             min_trading_days=NOT_IMPOSED,
-            **_FTMO_COMMON,
+            **_FTMO_FUNDED,
         ),
         source=FTMO_SOURCE,
         retrieved=FTMO_RETRIEVED,
-        notes=(_FTMO_TRAIL, _FTMO_DAILY, _FTMO_EQUITY),
+        notes=(
+            _FTMO_TRAIL,
+            _FTMO_DAILY,
+            _FTMO_EQUITY,
+            _FTMO_EA,
+            _FTMO_STANDARD,
+        ),
     ),
     Rulebook(
         key="fundednext-stellar-1step",

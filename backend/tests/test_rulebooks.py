@@ -71,15 +71,44 @@ class TestTheNumbersSurviveTheChallengeBrain:
             return
 
         if book.rules.automated_trading_allowed is None:
-            # Every catalogued book is in this state today, so this is the
-            # branch that actually runs. It is not a transcription error: the
-            # permission is a fact about the holder's contract, and no reading
-            # of a public page can settle it. The block is the correct answer
-            # and stays until somebody confirms the account they bought.
+            # It is not a transcription error: the permission is a fact about
+            # the holder's contract, and the block is the correct answer until
+            # somebody confirms the account they bought.
+            #
+            # This used to say "every catalogued book is in this state today".
+            # On 8 Sep 2026 FTMO's own strategy page was read - "whether it's
+            # discretionary trading, algorithmic trading, EAs, etc." - and the
+            # four FTMO books left this branch.
             assert verdict.allowed is False
             assert any(
                 "automation permission" in g.lower() for g in verdict.gates
             ), "a block on an unread permission must say that is what it is"
+            return
+
+        if book.rules.news_trading_allowed is False or (
+            book.rules.weekend_holding_allowed is False
+        ):
+            # A rule this system cannot currently obey, stated plainly rather
+            # than encoded as permission.
+            #
+            # FTMO's funded Standard account forbids opening or closing a
+            # position within two minutes either side of a listed release,
+            # and requires positions closed before the weekend. Neither is a
+            # size that can be reduced: obeying the first needs an economic
+            # calendar this deployment does not have, and obeying the second
+            # needs a scheduled flatten it does not run.
+            #
+            # So the brain blocks, and the reason it gives is that it does not
+            # know where it is in time rather than that the account is unwell.
+            # That is the honest answer, and it is why entering these two
+            # rules was worth doing even though the effect is a closed gate:
+            # before today the same account would have traded through both
+            # restrictions and reported itself compliant.
+            assert verdict.allowed is False
+            assert any(
+                "news-window" in g or "weekend proximity" in g
+                for g in verdict.gates
+            ), "the block must name the state it could not establish"
             return
 
         assert verdict.allowed is True, verdict.unverified
@@ -255,11 +284,19 @@ class TestWhatThePageDoesNotSayStaysUnknown:
         [b for b in rb.RULEBOOKS if b.provider == "FTMO"],
         ids=lambda b: b.key,
     )
-    def test_ftmo_weekend_holding_stays_unknown(self, book):
-        """FundedNext publishing it says nothing about FTMO. Copying it
-        across because both are prop firms is how a rulebook acquires a rule
-        its provider never wrote."""
-        assert book.rules.weekend_holding_allowed is None
+    def test_ftmo_weekend_holding_is_read_per_phase(self, book):
+        """Unknown until 8 Sep 2026, and it was never unpublished - it was on
+        a page of FTMO's own site that nobody had opened.
+
+        The reason it stayed `None` so long is the reason it is interesting:
+        the rule is not a property of the firm, it is a property of the
+        *phase*. FTMO lifts it for the whole Evaluation Process - "you are
+        allowed to keep your positions open overnight and over the weekend" -
+        and imposes it once the account is funded. A single per-provider flag
+        could not have held that, which is why looking for one found nothing.
+        """
+        expected = book.phase != "funded"
+        assert book.rules.weekend_holding_allowed is expected
 
     @pytest.mark.parametrize(
         "book",
@@ -267,8 +304,16 @@ class TestWhatThePageDoesNotSayStaysUnknown:
         ids=lambda b: b.key,
     )
     def test_ftmo_leverage_stays_unknown(self, book):
-        """FTMO's objectives page does not publish it. FundedNext's numbers
-        are FundedNext's."""
+        """The last FTMO field still unread, and the one that did not move
+        when the other four did on 8 Sep 2026.
+
+        Four fields changed that day because pages were found that stated
+        them. This one was looked for on the objectives page, the symbols
+        page, the how-it-works page and the FAQ index, and is on none of
+        them: FTMO sets leverage per account type at purchase. The figure
+        every forum repeats is 1:100, and writing it here on that authority
+        is the exact move this file exists to refuse.
+        """
         assert book.rules.max_leverage is None
 
     @pytest.mark.parametrize(
@@ -305,11 +350,17 @@ class TestWhatThePageDoesNotSayStaysUnknown:
         [b for b in rb.RULEBOOKS if b.provider == "FTMO"],
         ids=lambda b: b.key,
     )
-    def test_ftmo_news_trading_stays_unknown(self, book):
-        """The FTMO trading-objectives page does not mention news trading at
-        all. Copying FundedNext's "allowed" across because both are prop firms
-        is exactly how a rulebook acquires a rule its provider never wrote."""
-        assert book.rules.news_trading_allowed is None
+    def test_ftmo_news_trading_is_read_per_phase(self, book):
+        """Same shape as weekend holding, and read from the same visit.
+
+        FundedNext's "allowed" still says nothing about FTMO - the point of
+        the old test stands. What changed is that FTMO's own page was read:
+        free during the Evaluation Process regardless of account type,
+        restricted to a two-minute window either side of listed releases once
+        the account is funded.
+        """
+        expected = book.phase != "funded"
+        assert book.rules.news_trading_allowed is expected
 
 
 class TestThePayloadKeepsAbsentApartFromUnknown:

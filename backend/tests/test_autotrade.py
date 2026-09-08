@@ -1327,18 +1327,75 @@ class TestThePropRulebookGovernsWhenThereIsOne:
 
     def test_an_incomplete_rulebook_says_what_is_missing(self, session, monkeypatch):
         """Blocked with no breach means the engine was never told a limit. The
-        fix is confirming the rulebook, not finding a trade that passes."""
+        fix is confirming the rulebook, not finding a trade that passes.
+
+        This used to assert the shut gate too, on the same book. It no longer
+        can: on 8 Sep 2026 FTMO's automation, news and weekend rules were read
+        from the firm's own pages, and phase 1 of the 2-Step stopped having a
+        gate to shut. What is left on it is the honest remainder - a leverage
+        cap FTMO does not publish, and an R this account has not priced. The
+        shut-gate half moved to the test below, where a gate is genuinely
+        shut.
+        """
         self.registry(monkeypatch, [self.account()])
 
         allowed, why, _ = self.gate(session)
 
         assert allowed is False
-        # Both halves, because they need different answers: a gate is a rule
-        # that is entered and could not be cleared, an incomplete rulebook is
-        # one nobody wrote down.
         assert "incomplete" in why
-        assert "challenge gate is shut" in why
-        assert "leverage" in why or "position cap" in why
+        assert "leverage cap was never entered" in why
+
+    def test_the_funded_ftmo_restrictions_bind_only_when_the_state_says_so(self):
+        """Entering a restriction is not the same as closing a gate.
+
+        FTMO's funded account forbids opening or closing within two minutes
+        either side of a listed release, and forbids carrying a position over
+        the weekend. Before 8 Sep 2026 both fields were `None` here, which
+        made them unverified - reported, never enforced, and the account
+        traded straight through both.
+
+        Now they are `False`, and the difference that makes is conditional
+        rather than absolute: the live gate answers both questions before it
+        asks - `_any_high_impact_now` off the release calendar, and
+        `_weekend_ahead` off the clock - so a quiet Tuesday is permitted and
+        the two minutes around NFP are not. Asserted at the brain rather than
+        through the worker, because it is the rule that is under test and the
+        worker's job is only to supply the state.
+        """
+        from datetime import date
+
+        from app.brain import challenge as ch
+        from app.brain import rulebooks
+
+        rules = rulebooks.get("ftmo-account-2step").rules
+
+        def state(**over):
+            base = dict(
+                starting_balance=200_000.0,
+                current_equity=200_000.0,
+                peak_equity=200_000.0,
+                daily_starting_equity=200_000.0,
+                daily_starting_balance=200_000.0,
+                current_balance=200_000.0,
+                days_traded=5,
+                open_positions=1,
+                current_date=date(2026, 9, 8),
+                currency_per_r=1500.0,
+                current_leverage=0.0,
+                in_news_window=False,
+                weekend_ahead=False,
+            )
+            base.update(over)
+            return ch.ChallengeState(**base)
+
+        assert ch.check(rules, state(), 1.0).allowed is True
+
+        inside_news = ch.check(rules, state(in_news_window=True), 1.0)
+        assert inside_news.allowed is False
+        assert any("news window" in g for g in inside_news.gates)
+
+        before_weekend = ch.check(rules, state(weekend_ahead=True), 1.0)
+        assert before_weekend.allowed is False
 
     def test_an_unreadable_registry_refuses_rather_than_passing(
         self, session, monkeypatch
