@@ -333,7 +333,7 @@ class TestStoppingIsNotForgetting:
         assert mt5_link.validate_power("term-g", "STOP").action == "stop"
 
     def test_a_power_request_can_be_submitted_like_any_other(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("MOLIDO_MT5_QUEUE", str(tmp_path))
+        monkeypatch.setattr(mt5_link, "queue_dir", lambda: tmp_path)
         result = mt5_link.submit(mt5_link.validate_power("term-g", "stop"))
 
         assert result.queued is True
