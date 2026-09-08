@@ -254,3 +254,28 @@ wrong — so the persistence is now printed beside every t.
 | news dependence (§18) | not implemented; `robustness.by_hour` is the half of it that exists |
 | XAGUSD (§2) | not yet checked against the collected universe |
 | walk-forward efficiency (§15) | `geometry.py` walks forward; the efficiency ratio is not computed |
+
+## Fleet narrowed to four, 2026-09-08
+
+The owner asked for two prop accounts and two RoboForex, the rest off.
+
+Trading: `term-h` (FundedNext 34911052) and `term-j` (FTMO 1514533027), both
+on `trend-following`; `term-c` (short-horizon-reversal) and `term-d`
+(stochastic-reversion).
+
+Those two RoboForex were kept because their brains are the two the props do
+not cover, and because they carry the most forward evidence of the reversion
+set - eleven independent instants for short-horizon-reversal, the most of any
+brain that trades, and the best honest H1 t of the group for
+stochastic-reversion.
+
+**Silenced rather than powered down, and the distinction matters.** Thirteen
+positions were open across b, e, f and g. A terminal stopped with positions
+on it leaves them at the broker unmanaged and invisible - this codebase has
+that written into `CloseOne`'s docstring because it happened once already.
+
+So the four are assigned an **empty strategy**, which `_strategy_for` reads
+as "refusing to trade rather than falling back to a brain nobody chose". They
+send no new orders; their terminals keep running, so their open positions
+stay visible and their stops keep trailing. Once they are flat the units can
+be stopped, which is when the memory is actually returned.
