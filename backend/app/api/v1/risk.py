@@ -35,7 +35,7 @@ from app.brain import rulebooks as rulebook_module
 from app.brain import stress as stress_brain
 from app.core.enums import AccountKind, Permission
 from app.db.session import get_db
-from app.services import challenge_accounts
+from app.services import challenge_accounts, custom_rulebooks
 
 router = APIRouter(prefix="/risk", tags=["risk"])
 
@@ -312,6 +312,128 @@ def read_rulebooks(_: Principal = READ) -> dict[str, Any]:
     }
 
 
+class CustomRulebookPayload(BaseModel):
+    """A rulebook the holder writes, rather than one read off a firm's page.
+
+    `rules` is a free-form document because the engine's own rule set is what
+    validates it, in `custom_rulebooks.normalise`. Restating the thirteen
+    fields here would give the API a second opinion about what a rule is, and
+    the two would drift.
+
+    A rule left out of `rules` means nobody has decided it, which blocks. To
+    say a rulebook deliberately caps nothing, send the string "not imposed" -
+    a claim somebody made, rather than a field somebody left alone.
+    """
+
+    name: str = Field(min_length=1, max_length=120)
+    rules: dict[str, Any] = Field(default_factory=dict)
+    notes: str = Field(default="", max_length=2000)
+
+
+class CustomRulebookEdit(BaseModel):
+    """An edit. `rules` replaces the document rather than merging into it."""
+
+    rules: dict[str, Any] | None = None
+    notes: str | None = Field(default=None, max_length=2000)
+
+
+def _custom_body(row: Any) -> dict[str, Any]:
+    return {
+        **custom_rulebooks.to_rulebook(row).as_dict(),
+        "editable": True,
+        "changed_by": row.changed_by,
+    }
+
+
+@router.get("/rulebooks/custom")
+def read_custom_rulebooks(
+    session: Session = Depends(get_db), _: Principal = READ
+) -> dict[str, Any]:
+    """The rulebooks this deployment's holder wrote.
+
+    Kept on their own route rather than folded into `/rulebooks`. The two
+    kinds answer different questions - what a firm published, and what the
+    holder decided - and a single list would invite reading a self-imposed
+    limit as evidence of somebody else's terms.
+    """
+    tenant_id = challenge_accounts.default_tenant(session)
+    rows = custom_rulebooks.listing(session, tenant_id=tenant_id)
+    return {
+        "rulebooks": [_custom_body(row) for row in rows],
+        "note": (
+            "these are limits the holder set, not a firm's published terms. "
+            "They are enforced exactly like a transcribed rulebook and they "
+            "are evidence of nothing but the decision to keep them"
+        ),
+    }
+
+
+@router.post("/rulebooks/custom", status_code=201)
+def create_custom_rulebook(
+    payload: CustomRulebookPayload,
+    session: Session = Depends(get_db),
+    principal: Principal = RULEBOOK_WRITE,
+) -> dict[str, Any]:
+    """Write a rulebook.
+
+    `RULEBOOK_WRITE` for the same reason recording an account needs it: a
+    daily-loss limit typed one digit out does not fail, it passes a trade that
+    ends the account.
+    """
+    row = custom_rulebooks.create(
+        session,
+        tenant_id=challenge_accounts.default_tenant(session),
+        name=payload.name,
+        rules=payload.rules,
+        notes=payload.notes,
+        changed_by=getattr(principal, "subject", "") or "",
+    )
+    session.commit()
+    return {
+        "created": True,
+        "rulebook": _custom_body(row),
+        "note": (
+            "a rule you did not set blocks rather than passes. Send "
+            f"{custom_rulebooks.NOT_IMPOSED_WORD!r} for any limit this rulebook "
+            "deliberately does not impose"
+        ),
+    }
+
+
+@router.patch("/rulebooks/custom/{key:path}")
+def edit_custom_rulebook(
+    key: str,
+    payload: CustomRulebookEdit,
+    session: Session = Depends(get_db),
+    principal: Principal = RULEBOOK_WRITE,
+) -> dict[str, Any]:
+    """Edit one. A transcribed rulebook is refused here, by design."""
+    row = custom_rulebooks.update(
+        session,
+        tenant_id=challenge_accounts.default_tenant(session),
+        key=key,
+        rules=payload.rules,
+        notes=payload.notes,
+        changed_by=getattr(principal, "subject", "") or "",
+    )
+    session.commit()
+    return {"updated": True, "rulebook": _custom_body(row)}
+
+
+@router.delete("/rulebooks/custom/{key:path}")
+def delete_custom_rulebook(
+    key: str,
+    session: Session = Depends(get_db),
+    _: Principal = RULEBOOK_WRITE,
+) -> dict[str, Any]:
+    """Delete one, unless an account is still measured against it."""
+    custom_rulebooks.remove(
+        session, tenant_id=challenge_accounts.default_tenant(session), key=key
+    )
+    session.commit()
+    return {"deleted": True, "key": key}
+
+
 @router.get("/challenge")
 def read_challenge(
     starting_balance: float = Query(default=100_000.0, gt=0),
@@ -428,9 +550,7 @@ def create_challenge_account(
         rules_confirmed=payload.rules_confirmed,
         notes=payload.notes,
     )
-    view = challenge_accounts.AccountView(
-        account=account, rulebook=challenge_accounts._resolve(account.rulebook_key)
-    )
+    view = challenge_accounts.view_of(session, account)
     return {
         "created": True,
         "account": view.as_dict(),
@@ -462,9 +582,7 @@ def confirm_challenge_account(
         account_id=account_id,
         notes=payload.notes,
     )
-    view = challenge_accounts.AccountView(
-        account=account, rulebook=challenge_accounts._resolve(account.rulebook_key)
-    )
+    view = challenge_accounts.view_of(session, account)
     return {"confirmed": True, "account": view.as_dict()}
 
 
@@ -496,9 +614,7 @@ def move_challenge_account(
         kind=payload.kind.value if payload.kind is not None else None,
         starting_balance=payload.starting_balance,
     )
-    view = challenge_accounts.AccountView(
-        account=account, rulebook=challenge_accounts._resolve(account.rulebook_key)
-    )
+    view = challenge_accounts.view_of(session, account)
     return {
         "moved": True,
         "account": view.as_dict(),
@@ -565,7 +681,5 @@ def set_challenge_account_active(
         account_id=account_id,
         active=payload.active,
     )
-    view = challenge_accounts.AccountView(
-        account=account, rulebook=challenge_accounts._resolve(account.rulebook_key)
-    )
+    view = challenge_accounts.view_of(session, account)
     return {"active": account.is_active, "account": view.as_dict()}
