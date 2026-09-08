@@ -42,6 +42,37 @@ jobs:
             exit 1
           }
 
+  host:
+    # The scripts that run on the machine itself, which the backend job never
+    # sees: it sets `working-directory: backend`, so `ruff check .` has never
+    # covered `infra/` and the guard's own tests have never run here at all.
+    #
+    # Both were found on 2026-09-08 by running them by hand. `infra/` had
+    # seven lint findings, and the guard had spent that morning restarting two
+    # terminals every fifteen minutes while they were still authorising - a
+    # fault its tests catch and nothing was running them.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install "ruff>=0.7"
+      - name: Lint the whole repository
+        run: ruff check .
+      - name: The updater guard's own tests
+        # A stubbed systemctl and a temporary tree of fake prefixes; nothing
+        # is started, stopped or deleted. It is the only test of the one
+        # script that can take a terminal down.
+        run: bash infra/host/test-mt5-updater-guard.sh
+      - name: Every host script parses
+        run: |
+          set -e
+          for script in infra/*.sh infra/host/*.sh; do
+            bash -n "$script"
+            echo "ok  $script"
+          done
+
   migration:
     # Proves migration 0001 applies against the real TimescaleDB image,
     # which the SQLite-backed unit suite cannot cover.
