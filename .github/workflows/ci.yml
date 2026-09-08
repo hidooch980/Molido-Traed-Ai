@@ -65,6 +65,11 @@ jobs:
         # is started, stopped or deleted. It is the only test of the one
         # script that can take a terminal down.
         run: bash infra/host/test-mt5-updater-guard.sh
+      - name: The disk hygiene job's own tests
+        # It runs unattended on the trading host and it can delete. The tests
+        # are mostly about the boundary - that it prunes build cache and
+        # nothing else - so they matter more than most.
+        run: bash infra/host/test-disk-hygiene.sh
       - name: Every host script parses
         run: |
           set -e
