@@ -76,22 +76,22 @@ def uncapped() -> ch.ChallengeRules:
     short name is how the two would drift back together.
     """
     return ch.ChallengeRules(
-            profit_target_pct=ch.NOT_IMPOSED,
-            max_daily_drawdown_pct=ch.NOT_IMPOSED,
-            max_total_drawdown_pct=ch.NOT_IMPOSED,
-            min_trading_days=ch.NOT_IMPOSED,
-            max_trading_days=ch.NOT_IMPOSED,
-            max_leverage=ch.NOT_IMPOSED,
-            max_single_day_profit_share=ch.NOT_IMPOSED,
-            news_trading_allowed=ch.NOT_IMPOSED,
-            weekend_holding_allowed=ch.NOT_IMPOSED,
-            max_concurrent_positions=ch.NOT_IMPOSED,
-            # Read like the rest. The docstring says the documentation was
-            # read and carries no rule; leaving this one `None` would say the
-            # reader stopped before the last page, and since it gates that is
-            # a different fixture than the one this helper claims to be.
-            automated_trading_allowed=ch.NOT_IMPOSED,
-        )
+        profit_target_pct=ch.NOT_IMPOSED,
+        max_daily_drawdown_pct=ch.NOT_IMPOSED,
+        max_total_drawdown_pct=ch.NOT_IMPOSED,
+        min_trading_days=ch.NOT_IMPOSED,
+        max_trading_days=ch.NOT_IMPOSED,
+        max_leverage=ch.NOT_IMPOSED,
+        max_single_day_profit_share=ch.NOT_IMPOSED,
+        news_trading_allowed=ch.NOT_IMPOSED,
+        weekend_holding_allowed=ch.NOT_IMPOSED,
+        max_concurrent_positions=ch.NOT_IMPOSED,
+        # Read like the rest. The docstring says the documentation was
+        # read and carries no rule; leaving this one `None` would say the
+        # reader stopped before the last page, and since it gates that is
+        # a different fixture than the one this helper claims to be.
+        automated_trading_allowed=ch.NOT_IMPOSED,
+    )
 
 
 class TestRuleAbsence:
@@ -552,9 +552,7 @@ class TestGates:
 
     def test_an_unknown_news_window_blocks_when_the_rule_exists(self):
         """Not knowing whether news is running is not evidence that it is not."""
-        verdict = ch.check(
-            rules(news_trading_allowed=False), state(in_news_window=None), 1.0
-        )
+        verdict = ch.check(rules(news_trading_allowed=False), state(in_news_window=None), 1.0)
 
         assert verdict.allowed is False
         assert any("news-window" in u for u in verdict.unverified)
@@ -610,9 +608,7 @@ class TestGates:
 class TestIntegrity:
     def test_a_history_from_the_future_is_refused_outright(self):
         """A state that cannot be true must not be measured as if it were."""
-        verdict = ch.check(
-            rules(), state(daily_profits={date(2026, 3, 20): 1_000.0}), 1.0
-        )
+        verdict = ch.check(rules(), state(daily_profits={date(2026, 3, 20): 1_000.0}), 1.0)
 
         assert verdict.verdict == "block"
         assert any("not internally consistent" in u for u in verdict.unverified)
@@ -635,9 +631,7 @@ class TestIntegrity:
         ):
             unknown = ch.check(rules(), state(**hole), 1.0)
 
-            assert (unknown.max_additional_risk_r or 0.0) <= (
-                known.max_additional_risk_r or 0.0
-            )
+            assert (unknown.max_additional_risk_r or 0.0) <= (known.max_additional_risk_r or 0.0)
             assert unknown.allowed <= known.allowed
 
     def test_a_failed_challenge_allows_nothing(self):
@@ -661,9 +655,7 @@ class TestIntegrity:
         assert "before execution" in payload["note"]
 
     def test_the_payload_keeps_absent_and_measured_apart(self):
-        payload = ch.check(
-            rules(max_daily_drawdown_pct=ch.NOT_IMPOSED), state(), 1.0
-        ).as_dict()
+        payload = ch.check(rules(max_daily_drawdown_pct=ch.NOT_IMPOSED), state(), 1.0).as_dict()
 
         assert payload["headroom"]["daily"]["imposed"] is False
         assert payload["headroom"]["total"]["imposed"] is True
@@ -697,9 +689,7 @@ class TestTheCapCannotBeMistakenForNoCap:
         assert verdict.max_additional_risk_r == 0.0
 
     def test_a_rulebook_with_no_drawdown_rule_really_has_no_cap(self):
-        verdict = ch.check(
-            dataclasses.replace(uncapped(), profit_target_pct=0.10), state(), None
-        )
+        verdict = ch.check(dataclasses.replace(uncapped(), profit_target_pct=0.10), state(), None)
 
         assert verdict.risk_cap_measurable is True
         assert verdict.max_additional_risk_r is None
@@ -771,16 +761,12 @@ class TestBalanceBasisIsReadOnItsOwnRuler:
 class TestSilenceInTheRulebookIsVisible:
     def test_an_unstated_news_rule_is_reported_as_unchecked(self):
         """Rewritten: the previous version pinned silence as permission."""
-        verdict = ch.check(
-            rules(news_trading_allowed=None), state(in_news_window=True), None
-        )
+        verdict = ch.check(rules(news_trading_allowed=None), state(in_news_window=True), None)
 
         assert any("news" in u for u in verdict.unverified)
 
     def test_an_unstated_weekend_rule_is_reported_as_unchecked(self):
-        verdict = ch.check(
-            rules(weekend_holding_allowed=None), state(weekend_ahead=True), None
-        )
+        verdict = ch.check(rules(weekend_holding_allowed=None), state(weekend_ahead=True), None)
 
         assert any("weekend" in u for u in verdict.unverified)
 
@@ -790,8 +776,9 @@ class TestSilenceInTheRulebookIsVisible:
         assert any("leverage" in u for u in verdict.unverified)
 
     def test_an_unstated_allowance_basis_takes_the_smaller_figure(self):
-        drawn_down = state(current_equity=90_000.0, current_balance=90_000.0,
-                           daily_starting_equity=90_000.0)
+        drawn_down = state(
+            current_equity=90_000.0, current_balance=90_000.0, daily_starting_equity=90_000.0
+        )
 
         stated = ch.check(rules(), drawn_down, None)
         unstated = ch.check(rules(allowance_basis=None), drawn_down, None)
@@ -804,12 +791,11 @@ class TestSilenceInTheRulebookIsVisible:
 class TestAnUndefinedRatioIsNotAMeasurement:
     def test_a_zero_allowance_reports_no_share_spent(self):
         """0.0 and 1.0 were both published for a quantity that is undefined."""
-        verdict = ch.check(
-            rules(max_daily_drawdown_pct=0.0), state(current_equity=90_000.0), None
-        )
+        verdict = ch.check(rules(max_daily_drawdown_pct=0.0), state(current_equity=90_000.0), None)
 
         assert verdict.daily.consumed is None
         assert verdict.daily.as_dict()["consumed"] is None
+
 
 class TestTheMarkerDidNotBreakTheRulesItTouched:
     """Regressions the three-state split introduced, found by driving the
@@ -867,9 +853,7 @@ class TestAutomatedTrading:
     """
 
     def test_a_provider_that_forbids_it_is_a_breach(self):
-        verdict = ch.check(
-            rules(automated_trading_allowed=False), state(), proposed_risk_r=0.5
-        )
+        verdict = ch.check(rules(automated_trading_allowed=False), state(), proposed_risk_r=0.5)
 
         assert verdict.breaches, "a forbidden account must not be tradeable"
         assert any("automated" in b.lower() for b in verdict.breaches)
@@ -880,15 +864,11 @@ class TestAutomatedTrading:
         never in doubt. There is no window to wait out and no size to reduce
         to - so it is not something that can be satisfied by trading smaller.
         """
-        verdict = ch.check(
-            rules(automated_trading_allowed=False), state(), proposed_risk_r=0.01
-        )
+        verdict = ch.check(rules(automated_trading_allowed=False), state(), proposed_risk_r=0.01)
         assert verdict.allowed is False
 
     def test_a_provider_that_permits_it_says_nothing(self):
-        verdict = ch.check(
-            rules(automated_trading_allowed=True), state(), proposed_risk_r=0.5
-        )
+        verdict = ch.check(rules(automated_trading_allowed=True), state(), proposed_risk_r=0.5)
         assert not any("automated" in b.lower() for b in verdict.breaches)
         assert not any("automated" in u.lower() for u in verdict.unverified)
 
@@ -913,9 +893,7 @@ class TestAutomatedTrading:
         It was gated, then reported-only, and is gated again. The reversal is
         recorded in the check itself with both arguments intact.
         """
-        verdict = ch.check(
-            rules(automated_trading_allowed=None), state(), proposed_risk_r=0.5
-        )
+        verdict = ch.check(rules(automated_trading_allowed=None), state(), proposed_risk_r=0.5)
 
         assert any("automated" in u.lower() for u in verdict.unverified)
         assert verdict.allowed is False
@@ -927,9 +905,7 @@ class TestAutomatedTrading:
         """A breach is a rule the account broke. Nobody has broken anything
         here - the document was not read. Filing it as a breach would tell a
         holder their account had failed."""
-        verdict = ch.check(
-            rules(automated_trading_allowed=None), state(), proposed_risk_r=0.5
-        )
+        verdict = ch.check(rules(automated_trading_allowed=None), state(), proposed_risk_r=0.5)
 
         assert not any("automated" in b.lower() for b in verdict.breaches)
 
@@ -1090,6 +1066,105 @@ class TestTheHolderAnswersTheAutomationQuestion:
         answer that costs least when wrong."""
         from app.brain.challenge import ChallengeState
 
-        assert ChallengeState.__dataclass_fields__[
-            "rules_confirmed_by_holder"
-        ].default is False
+        assert ChallengeState.__dataclass_fields__["rules_confirmed_by_holder"].default is False
+
+
+class TestAPermissionWithACeiling:
+    """FundedNext permits EAs below $50,000 and forbids them at or above it.
+
+    Both halves matter. A flat prohibition would refuse the small accounts
+    the firm actually allows; a flat permission is what sent forty orders to
+    a $200,000 account that was never allowed to place one.
+    """
+
+    @staticmethod
+    def _state(starting_balance: float) -> ch.ChallengeState:
+        return ch.ChallengeState(
+            starting_balance=starting_balance,
+            current_equity=starting_balance,
+            peak_equity=starting_balance,
+            daily_starting_equity=starting_balance,
+            daily_starting_balance=starting_balance,
+            current_balance=starting_balance,
+            days_traded=5,
+            open_positions=0,
+            current_date=date(2026, 9, 8),
+            currency_per_r=starting_balance * 0.0075,
+            current_leverage=0.0,
+            in_news_window=False,
+            weekend_ahead=False,
+            rules_confirmed_by_holder=True,
+        )
+
+    @staticmethod
+    def _rules(**over):
+        base = dict(
+            profit_target_pct=0.10,
+            max_daily_drawdown_pct=0.05,
+            max_total_drawdown_pct=0.10,
+            min_trading_days=ch.NOT_IMPOSED,
+            max_trading_days=ch.NOT_IMPOSED,
+            max_leverage=ch.NOT_IMPOSED,
+            max_single_day_profit_share=ch.NOT_IMPOSED,
+            news_trading_allowed=True,
+            weekend_holding_allowed=True,
+            max_concurrent_positions=ch.NOT_IMPOSED,
+            automated_trading_allowed=True,
+            automation_max_account_size=50_000.0,
+        )
+        base.update(over)
+        return ch.ChallengeRules(**base)
+
+    def test_below_the_ceiling_is_permitted(self):
+        verdict = ch.check(self._rules(), self._state(15_000.0), 1.0)
+
+        assert verdict.allowed is True
+
+    def test_at_the_ceiling_is_a_breach(self):
+        """The firm says "$50,000 and above", so the line is inclusive."""
+        verdict = ch.check(self._rules(), self._state(50_000.0), 1.0)
+
+        assert verdict.allowed is False
+        assert any("automated trading only below" in b for b in verdict.breaches)
+
+    def test_the_breach_names_the_account_not_the_firm(self):
+        """ "which account of mine is this about" is the question somebody has
+        when five terminals are running."""
+        verdict = ch.check(self._rules(), self._state(200_000.0), 1.0)
+
+        breach = next(b for b in verdict.breaches if "only below" in b)
+        assert "200,000" in breach
+        assert "50,000" in breach
+
+    def test_a_ceiling_nobody_entered_permits_everything(self):
+        """`None` here is "no ceiling was read", and it must not become a
+        prohibition - every provider that has no such rule leaves it unset."""
+        verdict = ch.check(
+            self._rules(automation_max_account_size=None),
+            self._state(200_000.0),
+            1.0,
+        )
+
+        assert verdict.allowed is True
+
+    def test_it_is_read_from_the_starting_balance_not_the_equity(self):
+        """A $200,000 account that has drawn down to $40,000 has not become
+        eligible - the firm sold an account size, not a balance."""
+        state = self._state(200_000.0)
+        drawn_down = dataclasses.replace(state, current_equity=40_000.0, current_balance=40_000.0)
+
+        verdict = ch.check(self._rules(), drawn_down, 1.0)
+
+        assert verdict.allowed is False
+        assert any("only below" in b for b in verdict.breaches)
+
+    def test_an_outright_prohibition_is_not_reported_twice(self):
+        """A provider that forbids EAs at every size says so once."""
+        verdict = ch.check(
+            self._rules(automated_trading_allowed=False),
+            self._state(200_000.0),
+            1.0,
+        )
+
+        assert verdict.allowed is False
+        assert len([b for b in verdict.breaches if "automat" in b]) == 1
