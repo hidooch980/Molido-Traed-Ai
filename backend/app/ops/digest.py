@@ -50,6 +50,23 @@ class Digest:
     refusals: list[tuple[str, int]] = field(default_factory=list)
     decisions_recorded: int = 0
     resolved_today: int = 0
+    #: Swap and commission the accounts paid, across every terminal.
+    #:
+    #: Reported because it was invisible. Swap on a position that is still
+    #: open is booked nightly as its own deal, the expert published only
+    #: closing ones, and six accounts drifted dollars below their starting
+    #: balance with nothing anywhere to say where it went.
+    swap_paid: float = 0.0
+    commission_paid: float = 0.0
+    #: Terminal key to the operator's name for it, read once while building.
+    #:
+    #: Read here rather than in `as_text`, which used to look each one up as
+    #: it wrote the line. That put a database call inside a function whose
+    #: whole job is to format a string: the guard around it caught exceptions
+    #: and a connection that never answers raises none, so on 2026-09-08 a
+    #: unit test that only wanted a formatted message hung against a host
+    #: that had stopped responding. Rendering is now pure.
+    labels: dict[str, str] = field(default_factory=dict)
 
     @property
     def has_trouble(self) -> bool:
@@ -64,6 +81,9 @@ class Digest:
             "refusals": [{"reason": r, "count": n} for r, n in self.refusals],
             "decisions_recorded": self.decisions_recorded,
             "resolved_today": self.resolved_today,
+            "labels": dict(self.labels),
+            "swap_paid": round(self.swap_paid, 2),
+            "commission_paid": round(self.commission_paid, 2),
         }
 
     def as_text(self) -> str:
@@ -77,13 +97,11 @@ class Digest:
             which account this is; the key is what every page, log line and
             directory is named after, and a message giving only the label
             leaves them with nothing to search for.
-            """
-            try:
-                from app.services import terminal_names
 
-                label = terminal_names.label_for(key)
-            except Exception:  # noqa: BLE001 - a digest never raises at 6am
-                label = None
+            From `self.labels`, filled while building. This function used to
+            read the database, which is not something a formatter should do.
+            """
+            label = self.labels.get(str(key))
             return f"{label} ({key})" if label else str(key)
 
         # Trouble first. A digest that led with yesterday's profit while a
@@ -113,6 +131,19 @@ class Digest:
                 lines.append(
                     f"  {deal['symbol']}  {float(deal.get('net') or 0):+,.2f}"
                 )
+            lines.append("")
+
+        # Named even when nothing closed, which is the case it exists for:
+        # an account holding positions for days pays swap every night and
+        # closes nothing, so a digest that only reported closes showed a
+        # quiet day while the balance fell.
+        if self.swap_paid or self.commission_paid:
+            carried = self.swap_paid + self.commission_paid
+            lines.append(f"carrying cost so far: {carried:+,.2f}")
+            lines.append(
+                f"  swap {self.swap_paid:+,.2f}   commission "
+                f"{self.commission_paid:+,.2f}"
+            )
             lines.append("")
 
         if self.refusals:
@@ -160,6 +191,15 @@ def build(session: Any, *, now: datetime | None = None) -> Digest:
     moment = now or datetime.now(UTC)
     since = moment - timedelta(days=1)
     digest = Digest(at=moment)
+
+    # Once, here, where there is already a session - not once per line while
+    # the message is being written.
+    try:
+        from app.services import terminal_names
+
+        digest.labels = dict(terminal_names.all_names())
+    except Exception:  # noqa: BLE001 - a name never stops a digest
+        digest.labels = {}
 
     try:
         digest.silent_terminals = _silent(moment)
@@ -213,6 +253,8 @@ def build(session: Any, *, now: datetime | None = None) -> Digest:
             published = MetaTraderBridge(directory=path).deals()
         except Exception:  # noqa: BLE001, S112 - one unreadable bridge is not the day
             continue
+        digest.swap_paid += float(published.get("swap_paid") or 0.0)
+        digest.commission_paid += float(published.get("commission_paid") or 0.0)
         for deal in published.get("deals") or []:
             closed_at = str(deal.get("closed_at") or "")
             if closed_at and closed_at[:10] != moment.strftime("%Y-%m-%d"):
