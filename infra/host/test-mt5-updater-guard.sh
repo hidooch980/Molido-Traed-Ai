@@ -45,8 +45,18 @@ mkdir -p "$STARTED_DIR"
 
 # Say that a unit entered its active state this many seconds ago, in the
 # monotonic microseconds systemd reports.
+# A fixed monotonic clock, handed to the guard as well. The real
+# /proc/uptime was used here until CI failed on a runner that had been up
+# for less than a minute: "started 60 seconds ago" came out negative, the
+# guard's `-gt 0` skipped the whole freshness branch, and the terminal was
+# restarted. Three other fixtures were passing the same way - too old to be
+# fresh because their timestamps were negative, not because they were old.
+FAKE_UPTIME=100000
+printf '%s %s
+' "$FAKE_UPTIME" "$FAKE_UPTIME" > "$ROOT/uptime"
+
 started_ago() { # unit, seconds
-  awk -v s="$2" '{printf "%d", ($1 - s) * 1000000}' /proc/uptime > "$STARTED_DIR/$1"
+  awk -v u="$FAKE_UPTIME" -v s="$2" 'BEGIN{printf "%d", (u - s) * 1000000}' > "$STARTED_DIR/$1"
 }
 
 terminal() { # name, heartbeat_age, has_payload_exe, log_has_liveupdate
@@ -120,7 +130,7 @@ touch -d "@$(( $(date +%s) - 900 ))" "$ROOT/.mt5branded/$SUFFIX/molido_heartbeat
 started_ago molido-mt5branded 4000
 
 SYSTEMCTL_CALLS="$ACTIONS" PATH="$ROOT/bin:$PATH" \
-  bash -c "sed 's#/root/.mt5\*#$ROOT/.mt5*#; s#/root/.mt5#$ROOT/.mt5#g' '$GUARD' > '$ROOT/guard.sh'; STALE_SECONDS=420 LOG='$LOG' bash '$ROOT/guard.sh'"
+  bash -c "sed 's#/root/.mt5\*#$ROOT/.mt5*#; s#/root/.mt5#$ROOT/.mt5#g' '$GUARD' > '$ROOT/guard.sh'; STALE_SECONDS=420 LOG='$LOG' UPTIME_FILE='$ROOT/uptime' bash '$ROOT/guard.sh'"
 
 has_exe() { [ -f "$ROOT/.mt5$1/drive_c/users/root/AppData/Roaming/MetaQuotes/Terminal/ABC/liveupdate/terminal64.exe" ] && echo yes || echo no; }
 defused_dirs() { find "$ROOT/.mt5$1" -maxdepth 10 -type d -name "liveupdate.defused-*" 2>/dev/null | wc -l; }

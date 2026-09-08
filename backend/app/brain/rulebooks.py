@@ -188,6 +188,24 @@ _COMMON: dict[str, Any] = {
     # unread, and the holder confirms it for the account they actually bought.
     # Writing `True` would assert an add-on nobody has evidence of.
     "automated_trading_allowed": None,
+    # And above this size the add-on is not on sale at all.
+    #
+    # Read 8 Sep 2026 from the firm's own EA article, updated that day:
+    # "Traders on accounts of $50,000 and above must trade fully manually on
+    # MetaTrader 4 or MetaTrader 5, both in Challenge and FundedNext
+    # accounts." Below it, EAs are permitted with the paid add-on above.
+    #
+    # This is a different rule from the add-on and it was learned by
+    # confusing the two. A $15,000 Free Trial refused 38 automated orders
+    # because Free accounts do not carry the add-on - buying it would have
+    # fixed that account. A $200,000 account refused them because no account
+    # that size may be automated at any price, and no purchase fixes it. Both
+    # answer the terminal with the same retcode 10026, which is why one
+    # explanation was offered for both and one of them was wrong.
+    #
+    # The same article classifies a tool that only moves SL, TP or lot size
+    # as an EA, so the trailing worker falls under this too.
+    "automation_max_account_size": 50_000.0,
     "drawdown_basis": DrawdownBasis.EQUITY,
     "allowance_basis": AllowanceBasis.STARTING_BALANCE,
     "total_drawdown_trailing": False,
