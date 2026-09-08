@@ -63,6 +63,7 @@ from app.execution.contracts import (
 )
 from app.execution.metatrader_broker import MetaTraderBroker
 from app.models.journal import ARM_RULE, SOURCE_BROKER, JournalEntry
+from app.ops import incidents as incident_memory
 
 log = get_logger(__name__)
 
@@ -1941,9 +1942,41 @@ def run_cycle(
         # for. What changes is that it is counted as a refusal, with the
         # broker's own words, instead of as a trade.
         if report.state is OrderState.REJECTED:
-            refuse(
-                entry,
-                f"the broker refused it: {report.reason or 'no reason given'}",
+            reason = report.reason or "no reason given"
+            refuse(entry, f"the broker refused it: {reason}")
+            # And say it somewhere a human will pass.
+            #
+            # The journal entry above is the audit trail and it is complete,
+            # but nothing read it unprompted. On 8 September a FundedNext
+            # account answered every automated order with "AutoTrading
+            # disabled by server" - the firm sells the EA add-on separately
+            # and this account did not carry it - and it did so forty times
+            # across two logins and thirteen symbols without one line of it
+            # reaching the digest, the health score or the channel. The
+            # account looked identical to a working one from outside: the
+            # terminal was up, the bridge published, the cycle reported
+            # success. It was found because the owner asked why that
+            # terminal was quiet.
+            #
+            # Keyed by login rather than by reason, because the question
+            # somebody actually has is "which account is not trading", and
+            # because a refusal that repeats on one account is a different
+            # thing from the same words appearing once on each of five.
+            incident_memory.record(
+                session,
+                incident_memory.Report(
+                    source=f"broker-refusal:{login}",
+                    summary=f"the broker refused an order: {reason}",
+                    severity="serious",
+                    details={
+                        "login": str(login),
+                        "symbol": entry.symbol,
+                        "side": entry.decision,
+                        "lots": lots,
+                        "reason": reason,
+                    },
+                ),
+                now=moment,
             )
             continue
         sent.append(

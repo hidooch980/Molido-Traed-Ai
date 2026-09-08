@@ -104,6 +104,15 @@ class Report:
     considered: int = 0
     moves: list[Move] = field(default_factory=list)
     skipped: dict[str, int] = field(default_factory=dict)
+    #: Open positions the broker is holding no stop for, as
+    #: "login:SYMBOL:ticket".
+    #:
+    #: This worker cannot fix them - it tightens a stop, it does not invent
+    #: one, and a stop it invented would be a geometry nobody chose. What it
+    #: can do is refuse to pass over them silently, which is what counting
+    #: them as a skip amounted to. The caller has the session and raises the
+    #: alarm.
+    unprotected: list[str] = field(default_factory=list)
 
     def skip(self, why: str) -> None:
         self.skipped[why] = self.skipped.get(why, 0) + 1
@@ -114,6 +123,7 @@ class Report:
             "moved": sum(1 for m in self.moves if m.sent),
             "proposed": len(self.moves),
             "skipped": dict(self.skipped),
+            "unprotected": list(self.unprotected),
             "moves": [m.as_dict() for m in self.moves],
         }
 
@@ -266,7 +276,20 @@ def run(
         if not stop:
             # Nothing to tighten, and nothing this worker should invent - a
             # position with no stop is a separate defect with its own alarm.
+            #
+            # That alarm was a comment. `real_money._stops_reach_the_broker`
+            # looks for exactly this and nothing runs it: it hangs off an
+            # HTTP readiness endpoint somebody has to think to call. So on
+            # 8 September nine gold positions sat open on a live account
+            # with no stop at the broker, and the only thing that noticed
+            # was a counter in this worker's skip tally that no one reads.
+            #
+            # Naming them here costs one list. The caller turns it into an
+            # incident, which is the thing that reaches a person.
             report.skip("no stop on the position")
+            report.unprotected.append(
+                f"{login}:{position.get('symbol')}:{position.get('ticket')}"
+            )
             continue
         if not price or not entry or not ticket:
             report.skip("the bridge published no quote, entry or ticket")

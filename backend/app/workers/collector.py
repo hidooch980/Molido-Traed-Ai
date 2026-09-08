@@ -40,6 +40,7 @@ from app.core.logging import bind_trace, configure_logging, get_logger
 from app.db.session import session_scope
 from app.models.instruments import Instrument, Provider
 from app.models.market_data import Bar
+from app.ops import incidents as incident_memory
 from app.providers.base import MarketDataProvider
 from app.providers.registry import get_provider, install_defaults, register
 from app.services import (
@@ -560,6 +561,7 @@ def tighten_stops() -> dict[str, Any]:
         return {"moved": 0, "reason": "no account has trailing switched on"}
 
     moved = 0
+    unprotected: list[str] = []
     per_terminal: dict[str, Any] = {}
     for key, path in sorted(bridge_dirs().items()):
         try:
@@ -580,8 +582,47 @@ def tighten_stops() -> dict[str, Any]:
         if report.considered or report.moves:
             per_terminal[key] = report.as_dict()
             moved += sum(1 for m in report.moves if m.sent)
+        unprotected.extend(report.unprotected)
 
-    return {"moved": moved, "logins": sorted(logins), "by_terminal": per_terminal}
+    # A position the broker holds no stop for, said out loud.
+    #
+    # `real_money._stops_reach_the_broker` has looked for exactly this since
+    # it was written, and nothing has ever run it: it hangs off an HTTP
+    # readiness endpoint somebody has to think to call. So on 8 September
+    # nine gold positions sat open on a live account with no stop at the
+    # broker, and the only record of it was a counter in the trailing
+    # worker's skip tally that nothing reads.
+    #
+    # This sweep already walks every position on every terminal every cycle,
+    # which makes it the one place that sees them all and runs on its own.
+    #
+    # Deliberately an alarm and not a refusal: a stopless position is usually
+    # one a person opened by hand, and closing it or capping it is their
+    # decision rather than this worker's. What it must not be is invisible.
+    if unprotected:
+        try:
+            with session_scope() as session:
+                incident_memory.record(
+                    session,
+                    incident_memory.Report(
+                        source="unprotected-position",
+                        summary=(
+                            "open position(s) with no stop at the broker: "
+                            + ", ".join(sorted(unprotected)[:12])
+                        ),
+                        severity="serious",
+                        details={"positions": sorted(unprotected)},
+                    ),
+                )
+        except Exception as problem:  # noqa: BLE001 - the sweep is not the alarm
+            log.warning("trailing.alarm_failed", error=str(problem))
+
+    return {
+        "moved": moved,
+        "logins": sorted(logins),
+        "unprotected": sorted(unprotected),
+        "by_terminal": per_terminal,
+    }
 
 
 def send_orders() -> dict[str, Any]:

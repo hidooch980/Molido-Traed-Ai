@@ -259,6 +259,74 @@ class TestARejectedOrderIsNotAnOrder:
         assert orders, "the attempt must be recorded even when refused"
         assert any(v.get("state") == str(OrderState.REJECTED) for v in orders.values())
 
+    def test_a_refusal_raises_an_incident(self, session, live):
+        """The journal row is the audit trail; nothing read it unprompted.
+
+        A FundedNext account answered forty automated orders across two
+        logins and thirteen symbols with "AutoTrading disabled by server" -
+        the firm sells the EA add-on separately - and not one of them
+        reached the digest, the health score or the channel. From outside
+        the account looked identical to a working one: terminal up, bridge
+        publishing, cycle reporting success. It was found because the owner
+        asked why that terminal was quiet.
+        """
+        from app.ops import incidents as incident_memory
+
+        decide(session)
+
+        autotrade.run_cycle(
+            session,
+            now=NOW,
+            broker=FakeBroker(state=OrderState.REJECTED),
+            bridge=FakeBridge(),
+        )
+
+        open_now = incident_memory.open_incidents(session)
+        assert open_now, "a refused order must leave something a person sees"
+        assert any(i.source.startswith("broker-refusal:") for i in open_now)
+
+    def test_the_incident_names_the_account_not_the_reason(self, session, live):
+        """The question somebody has is which account is not trading.
+
+        Keyed by reason, five accounts hearing the same words from five
+        brokers would collapse into one incident and the one that mattered
+        would be invisible inside it.
+        """
+        from app.ops import incidents as incident_memory
+
+        decide(session)
+
+        autotrade.run_cycle(
+            session,
+            now=NOW,
+            broker=FakeBroker(state=OrderState.REJECTED),
+            bridge=FakeBridge(),
+        )
+
+        refusals = [
+            i
+            for i in incident_memory.open_incidents(session)
+            if i.source.startswith("broker-refusal:")
+        ]
+        assert refusals
+        login = refusals[0].source.split(":", 1)[1]
+        assert login, "the source must carry the login"
+        assert refusals[0].details.get("login") == login
+
+    def test_a_filled_order_raises_no_incident(self, session, live):
+        """An alarm that fires on success is one nobody keeps listening to."""
+        from app.ops import incidents as incident_memory
+
+        decide(session)
+
+        autotrade.run_cycle(session, now=NOW, broker=FakeBroker(), bridge=FakeBridge())
+
+        assert not [
+            i
+            for i in incident_memory.open_incidents(session)
+            if i.source.startswith("broker-refusal:")
+        ]
+
     def test_a_filled_order_still_counts(self, session, live):
         decide(session)
         broker = FakeBroker()

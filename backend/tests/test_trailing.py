@@ -199,6 +199,35 @@ class TestTheSweep:
         assert broker.calls == []
         assert "no stop on the position" in report.skipped
 
+    def test_a_position_with_no_stop_is_named_so_it_can_be_alarmed_on(self):
+        """Skipping it was the whole of the response, and a skip counter is
+        not an alarm.
+
+        Nine gold positions sat open on a live account with no stop at the
+        broker on 8 September. Every layer behaved correctly - this worker
+        declined to invent a stop, the readiness check knew how to spot it -
+        and nobody was told, because the check runs only when a person calls
+        an HTTP endpoint. The position is named here so the caller, which
+        has a session, can raise an incident.
+        """
+        report = trailing.run(
+            Bridge(login="34911052", positions=[winner(stop=0)]),
+            Broker(),
+            logins={"34911052"},
+            dry_run=False,
+        )
+
+        assert report.unprotected == ["34911052:EURUSD:1"]
+        assert report.as_dict()["unprotected"] == ["34911052:EURUSD:1"]
+
+    def test_a_protected_position_is_not_named(self):
+        """The list is the alarm's input, so a false entry is a false alarm."""
+        report = trailing.run(
+            Bridge(positions=[winner()]), Broker(), logins={"111"}, dry_run=False
+        )
+
+        assert report.unprotected == []
+
     def test_a_tiny_improvement_is_not_worth_a_round_trip(self):
         """Each amend is a file, a claim, a venue call and a log line. A few
         points every cycle forever is a cost with no benefit.
