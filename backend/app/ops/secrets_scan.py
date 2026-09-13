@@ -40,11 +40,13 @@ import subprocess
 import sys
 from collections.abc import Iterable
 from dataclasses import asdict, dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 
 #: The host runs this with its system python (3.10), which has no
 #: `datetime.UTC`. Spelled the long way so the same file runs there and here.
-UTC = UTC
+#: A lint autofix once rewrote this to the 3.11 constant import, the cron
+#: died on the import, and a stale note blocked every order for four days.
+UTC = timezone.utc  # noqa: UP017 - must import on python 3.10
 
 #: Files whose names suggest they hold credentials. Matched on the path's last
 #: segment so `docs/secrets-policy.md` is not caught by "secret".

@@ -97,3 +97,14 @@ class TestThisRepository:
         result = scan.scan(root)
         assert result.scanned_files > 100
         assert result.secrets == [], [(f.path, f.category, f.line) for f in result.secrets]
+
+
+class TestRunsOnTheHostPython:
+    def test_it_does_not_import_what_python_3_10_lacks(self):
+        """The host cron runs this with python 3.10, where `datetime.UTC` does
+        not exist. The import once crept back in, the scan died before writing,
+        and the stale note it left refused every order for four days."""
+        source = pathlib.Path(scan.__file__).read_text(encoding="utf-8")
+
+        assert "import UTC" not in source
+        assert not any(line.startswith(("from app", "import app")) for line in source.splitlines())
