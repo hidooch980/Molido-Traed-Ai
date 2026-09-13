@@ -1526,21 +1526,41 @@ class TestTheGateSuppliesWhatItAlreadyKnows:
     somebody to their contract to fix a bug in this file.
     """
 
-    #: FundedNext rather than FTMO, because only a book that carries a
-    #: leverage cap can gate on an unmeasurable leverage. FTMO's is unread,
-    #: so there is nothing to be unable to measure against.
-    KEY = "fundednext-stellar-2step-phase1"
+    #: A rulebook written for the test rather than a transcribed one, because
+    #: it needs two things no shipped rulebook carries together: a leverage
+    #: cap, so there is something to be unable to measure against, and an
+    #: unread automation permission, so the gate still stops on the holder's
+    #: contract. FTMO's leverage is unread and its EA permission is stated,
+    #: and the FundedNext book that had both was retired on 13 Sep 2026.
+    RULES = {
+        "profit_target_pct": 0.08,
+        "max_daily_drawdown_pct": 0.05,
+        "max_total_drawdown_pct": 0.10,
+        "min_trading_days": 5,
+        "max_trading_days": "not imposed",
+        "max_leverage": 30.0,
+        "max_concurrent_positions": "not imposed",
+        "max_single_day_profit_share": "not imposed",
+        "news_trading_allowed": True,
+        "weekend_holding_allowed": True,
+        "total_drawdown_trailing": False,
+        "allowance_basis": "starting_balance",
+    }
 
     def register(self, session, **over):
         from decimal import Decimal
 
-        from app.services import challenge_accounts
+        from app.services import challenge_accounts, custom_rulebooks
 
+        tenant = challenge_accounts.default_tenant(session)
+        book = custom_rulebooks.create(
+            session, tenant_id=tenant, name="leverage capped", rules=self.RULES
+        )
         return challenge_accounts.create(
             session,
-            tenant_id=challenge_accounts.default_tenant(session),
-            label="FundedNext 10k",
-            rulebook_key=self.KEY,
+            tenant_id=tenant,
+            label="Capped 10k",
+            rulebook_key=book.key,
             starting_balance=Decimal("10000"),
             **over,
         )
@@ -2336,7 +2356,7 @@ class TestARulebookBindsItsOwnAccount:
             session,
             tenant_id=challenge_accounts.default_tenant(session),
             label=label,
-            rulebook_key="fundednext-free-trial",
+            rulebook_key="ftmo-challenge-1step",
             starting_balance=Decimal(balance),
             rules_confirmed=True,
         )

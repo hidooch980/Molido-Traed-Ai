@@ -461,8 +461,11 @@ class TestSwitchingAnAccountOff:
         assert response.status_code >= 400
 
 
-PHASE_ONE = next(b.key for b in rulebook_module.RULEBOOKS if b.phase == "phase 1")
-PHASE_TWO = next(b.key for b in rulebook_module.RULEBOOKS if b.phase == "phase 2")
+# By prefix rather than equality: FTMO labels its phases "phase 1 (FTMO
+# Challenge)" and "phase 2 (Verification)", and the exact-match lookup only
+# ever worked because a FundedNext book happened to be called "phase 1".
+PHASE_ONE = next(b.key for b in rulebook_module.RULEBOOKS if b.phase.startswith("phase 1"))
+PHASE_TWO = next(b.key for b in rulebook_module.RULEBOOKS if b.phase.startswith("phase 2"))
 
 
 class TestATwoPhaseProgramme:
@@ -656,7 +659,7 @@ class TestRemovingAnAccountThatShouldNotExist:
             session,
             tenant_id=challenge_accounts.default_tenant(session),
             label="typo",
-            rulebook_key="fundednext-free-trial",
+            rulebook_key="ftmo-challenge-1step",
             starting_balance=Decimal("15000"),
         )
 
@@ -690,37 +693,3 @@ class TestRemovingAnAccountThatShouldNotExist:
                 tenant_id=challenge_accounts.default_tenant(session),
                 account_id=uuid.uuid4(),
             )
-
-
-class TestTheFreeTrialRulebook:
-    """Transcribed from the account's own objectives panel, because the
-    general-rules table has no Free Trial column."""
-
-    def test_it_asks_for_five_percent_over_three_days(self):
-        from app.brain import rulebooks
-
-        book = rulebooks.get("fundednext-free-trial")
-
-        assert book is not None
-        assert book.rules.profit_target_pct == 0.05
-        assert book.rules.min_trading_days == 3
-
-    def test_it_does_not_inherit_the_paid_program_numbers(self):
-        """Copying Stellar 2-Step would set a target half again too high and
-        a day count that fails this account for being too quick."""
-        from app.brain import rulebooks
-
-        trial = rulebooks.get("fundednext-free-trial")
-        paid = rulebooks.get("fundednext-stellar-2step-phase1")
-
-        assert trial.rules.profit_target_pct != paid.rules.profit_target_pct
-        assert trial.rules.min_trading_days != paid.rules.min_trading_days
-
-    def test_the_loss_limits_match_the_panel(self):
-        from app.brain import rulebooks
-
-        book = rulebooks.get("fundednext-free-trial")
-
-        # $750 daily and $1,500 total on a $15,000 account.
-        assert book.rules.max_daily_drawdown_pct * 15000 == 750
-        assert book.rules.max_total_drawdown_pct * 15000 == 1500

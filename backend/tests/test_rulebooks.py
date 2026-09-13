@@ -18,7 +18,6 @@ import pytest
 
 from app.brain import challenge as ch
 from app.brain import rulebooks as rb
-from app.core.enums import AssetClass
 
 
 class TestEveryRulebookCarriesItsProvenance:
@@ -160,64 +159,7 @@ class TestTheNumbersSurviveTheChallengeBrain:
                 assert word in notes, f"{field} is unentered but unnamed in {book.key}"
 
 
-class TestTheFundedNextFiguresAreWhatThePagePublishes:
-    """Spot checks against the published table, not against the code.
-
-    Written out longhand rather than looped, because a loop over the same
-    constants the module defines would pass no matter what those constants say.
-    """
-
-    def test_one_step(self):
-        rules = rb.get("fundednext-stellar-1step").rules
-
-        assert rules.profit_target_pct == 0.10
-        assert rules.max_daily_drawdown_pct == 0.03
-        assert rules.max_total_drawdown_pct == 0.06
-        assert rules.min_trading_days == 2
-
-    def test_two_step_phase_one(self):
-        rules = rb.get("fundednext-stellar-2step-phase1").rules
-
-        assert rules.profit_target_pct == 0.08
-        assert rules.max_daily_drawdown_pct == 0.05
-        assert rules.max_total_drawdown_pct == 0.10
-        assert rules.min_trading_days == 5
-
-    def test_two_step_phase_two_lowers_only_the_target(self):
-        """The phase-2 target drops to 5% while both loss limits stay where
-        they were - a rulebook that relaxed the floors between phases would be
-        a different and much easier challenge."""
-        one = rb.get("fundednext-stellar-2step-phase1").rules
-        two = rb.get("fundednext-stellar-2step-phase2").rules
-
-        assert two.profit_target_pct == 0.05
-        assert two.max_daily_drawdown_pct == one.max_daily_drawdown_pct
-        assert two.max_total_drawdown_pct == one.max_total_drawdown_pct
-
-    def test_lite(self):
-        one = rb.get("fundednext-stellar-lite-phase1").rules
-        two = rb.get("fundednext-stellar-lite-phase2").rules
-
-        assert (one.profit_target_pct, two.profit_target_pct) == (0.08, 0.04)
-        assert one.max_daily_drawdown_pct == 0.04
-        assert one.max_total_drawdown_pct == 0.08
-
-    def test_instant_is_the_only_trailing_fundednext_floor(self):
-        """The FundedNext page marks exactly one program Trailing. Getting this
-        backwards moves the floor by the whole account once it is in profit.
-
-        Scoped to FundedNext, which is what it always meant: FTMO trails every
-        program, and a provider-wide assertion in a class about one provider's
-        page would have made adding any other firm look like a regression.
-        """
-        trailing = [
-            b.key
-            for b in rb.RULEBOOKS
-            if b.provider == "FundedNext" and b.rules.total_drawdown_trailing
-        ]
-
-        assert trailing == ["fundednext-stellar-instant"]
-
+class TestTheFtmoFloorIsReadAsItIsPublished:
     def test_every_ftmo_floor_trails(self):
         """FTMO calls it "an end-of-day trailing limit" that "can only
         increase". Reading it as static would report headroom the account does
@@ -226,16 +168,6 @@ class TestTheFundedNextFiguresAreWhatThePagePublishes:
 
         assert ftmo, "the FTMO rulebooks went missing"
         assert all(b.rules.total_drawdown_trailing is True for b in ftmo)
-
-    def test_instant_has_no_target_and_no_daily_limit_but_says_so(self):
-        """Absent is not unknown here: the page states there is none, so the
-        marker is used rather than a blank."""
-        rules = rb.get("fundednext-stellar-instant").rules
-
-        assert rules.profit_target_pct is rb.NOT_IMPOSED
-        assert rules.max_daily_drawdown_pct is rb.NOT_IMPOSED
-        assert rules.max_total_drawdown_pct == 0.06
-
 
 class TestTheRulersAreTranscribedNotAssumed:
     @pytest.mark.parametrize("book", rb.RULEBOOKS, ids=lambda b: b.key)
@@ -268,17 +200,6 @@ class TestTheRulersAreTranscribedNotAssumed:
 
 
 class TestWhatThePageDoesNotSayStaysUnknown:
-    @pytest.mark.parametrize(
-        "book",
-        [b for b in rb.RULEBOOKS if b.provider == "FundedNext"],
-        ids=lambda b: b.key,
-    )
-    def test_fundednext_weekend_holding_is_allowed_because_it_is_stated(self, book):
-        """Unknown until 30 Aug, when the Symbols & Conditions tab gained
-        "overnight and weekend holding are allowed across every CFDs account,
-        at every stage". Read now, where before there was nothing to read."""
-        assert book.rules.weekend_holding_allowed is True
-
     @pytest.mark.parametrize(
         "book",
         [b for b in rb.RULEBOOKS if b.provider == "FTMO"],
@@ -318,35 +239,6 @@ class TestWhatThePageDoesNotSayStaysUnknown:
 
     @pytest.mark.parametrize(
         "book",
-        [b for b in rb.RULEBOOKS if b.provider == "FundedNext"],
-        ids=lambda b: b.key,
-    )
-    def test_fundednext_leverage_is_read_per_asset_class(self, book):
-        """One float could not hold this and so it stayed unread until 30 Aug:
-        the same account is capped at 1:100 on forex and 1:1 on crypto. The
-        cap for an unnamed asset is the tightest published, never the
-        loosest."""
-        caps = book.rules.max_leverage
-
-        assert isinstance(caps, ch.LeverageCaps)
-        assert caps.binding(AssetClass.CRYPTO) == 1.0
-        assert caps.binding(AssetClass.FOREX) > caps.binding(AssetClass.CRYPTO)
-        assert caps.binding(None) == caps.most_restrictive
-        # An asset class the page never listed is not a licence.
-        assert caps.binding(AssetClass.BOND) == caps.most_restrictive
-
-    @pytest.mark.parametrize(
-        "book",
-        [b for b in rb.RULEBOOKS if b.provider == "FundedNext"],
-        ids=lambda b: b.key,
-    )
-    def test_fundednext_news_trading_is_allowed_because_it_is_stated(self, book):
-        """"allowed, with no restrictions on when or how you trade", and the
-        news profit split explicitly excludes the challenge phases."""
-        assert book.rules.news_trading_allowed is True
-
-    @pytest.mark.parametrize(
-        "book",
         [b for b in rb.RULEBOOKS if b.provider == "FTMO"],
         ids=lambda b: b.key,
     )
@@ -365,24 +257,29 @@ class TestWhatThePageDoesNotSayStaysUnknown:
 
 class TestThePayloadKeepsAbsentApartFromUnknown:
     def test_a_stated_absence_reads_as_words_not_as_null(self):
-        """Both render empty in JSON otherwise, and they are opposite facts."""
-        payload = rb.get("fundednext-stellar-instant").as_dict()
+        """Both render empty in JSON otherwise, and they are opposite facts.
+
+        The funded FTMO account has no profit target and no minimum day
+        count, and the page says so - which is what lets the marker be
+        written rather than a blank."""
+        payload = rb.get("ftmo-account-2step").as_dict()
 
         assert payload["profit_target_pct"] == "not imposed"
+        assert payload["min_trading_days"] == "not imposed"
 
     def test_a_real_number_survives_the_trip(self):
-        payload = rb.get("fundednext-stellar-1step").as_dict()
+        payload = rb.get("ftmo-challenge-1step").as_dict()
 
         assert payload["max_daily_drawdown_pct"] == 0.03
 
     def test_the_notes_carry_what_the_numbers_cannot(self):
-        """The automation note is the one worth having: EAs are permitted on
-        every model but need a paid add-on, so running this system against a
-        challenge without one is a rule breach rather than a technical
-        problem."""
-        notes = " ".join(rb.get("fundednext-stellar-2step-phase1").as_dict()["notes"])
+        """The automation note is the one worth having: FTMO permits EAs
+        outright but caps the platform at 200 open orders, and a number
+        field has nowhere to put the second half of that sentence."""
+        notes = " ".join(rb.get("ftmo-challenge-2step-phase1").as_dict()["notes"])
 
-        assert "add-on" in notes
+        assert "algorithmic trading" in notes
+        assert "200 open orders" in notes
 
 
 def _fresh() -> ch.ChallengeState:
