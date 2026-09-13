@@ -41,4 +41,8 @@ logs/
 # dominate the diff of every clone. Reinstall with:
 #   git clone --depth 1 https://github.com/nextlevelbuilder/ui-ux-pro-max-skill
 #   cp -r ui-ux-pro-max-skill/.claude/skills/* .claude/skills/
-.claude/skills/
+.claude/skills/*
+# The project's own kit (MOLIDO-SKILLS-v2-PRO) is project code and is tracked.
+!.claude/skills/molido-*/
+!.claude/skills/impeccable/
+!.claude/skills/ponytail/
