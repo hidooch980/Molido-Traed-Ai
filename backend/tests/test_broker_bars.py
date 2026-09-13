@@ -252,6 +252,33 @@ class TestRepublishingDoesNotMultiplyTheSeries:
         assert float(first.open) == 2400.0
 
 
+class TestSettledBarsAreNotRewritten:
+    def test_a_bar_behind_the_rewrite_window_is_left_as_stored(
+        self, session, bridge, monkeypatch
+    ):
+        """The bridge republishes its whole window every twenty seconds. Only
+        the newest few bars can still move; rewriting the rest every cycle
+        cost 88 s of a 211 s cycle on production and changed nothing."""
+        monkeypatch.setattr(broker_bars, "REWRITE_BARS", 1)
+        bridge(base=2300.0)
+        broker_bars.ingest(session, directory=bridge.directory, now=NOW)
+
+        bridge(base=2400.0)
+        result = broker_bars.ingest(session, directory=bridge.directory, now=NOW)
+
+        closes = [
+            float(bar.open)
+            for bar in session.query(Bar)
+            .join(Instrument, Instrument.id == Bar.instrument_id)
+            .filter(Instrument.symbol == "XAUUSD")
+            .order_by(Bar.event_time)
+        ]
+        assert result["skipped_settled"] > 0
+        assert closes[0] == 2300.0
+        assert closes[-1] != 2300.0
+        assert broker_bars_for(session, "XAUUSD") == 3
+
+
 class TestNothingFailsQuietly:
     def test_a_missing_directory_says_so(self, session, tmp_path):
         result = broker_bars.ingest(session, directory=tmp_path / "absent", now=NOW)
