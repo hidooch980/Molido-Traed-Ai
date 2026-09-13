@@ -145,58 +145,69 @@ def snapshot(
     if not active_ids:
         return {}, instant
 
-    start = _window_start(cutoff, timeframe, lookback)
-    latest_revision = (
-        select(
-            Bar.instrument_id,
-            Bar.event_time,
-            func.max(Bar.revision).label("revision"),
-        )
-        .where(
-            Bar.instrument_id.in_(active_ids),
-            Bar.timeframe == timeframe.value,
-            Bar.provider_id == provider_id,
-            Bar.event_time >= start,
-            Bar.event_time <= cutoff,
-        )
-        .group_by(Bar.instrument_id, Bar.event_time)
-        .subquery()
-    )
-
-    ranked = (
-        select(
-            Bar,
-            func.row_number()
-            .over(
-                partition_by=Bar.instrument_id,
-                order_by=Bar.event_time.desc(),
+    def newest_bars(ids: list[uuid.UUID], start: datetime | None) -> list[Any]:
+        bounds = [Bar.event_time <= cutoff]
+        if start is not None:
+            bounds.append(Bar.event_time >= start)
+        latest_revision = (
+            select(
+                Bar.instrument_id,
+                Bar.event_time,
+                func.max(Bar.revision).label("revision"),
             )
-            .label("_rn"),
+            .where(
+                Bar.instrument_id.in_(ids),
+                Bar.timeframe == timeframe.value,
+                Bar.provider_id == provider_id,
+                *bounds,
+            )
+            .group_by(Bar.instrument_id, Bar.event_time)
+            .subquery()
         )
-        .join(
-            latest_revision,
-            (Bar.instrument_id == latest_revision.c.instrument_id)
-            & (Bar.event_time == latest_revision.c.event_time)
-            & (Bar.revision == latest_revision.c.revision),
+        ranked = (
+            select(
+                Bar,
+                func.row_number()
+                .over(
+                    partition_by=Bar.instrument_id,
+                    order_by=Bar.event_time.desc(),
+                )
+                .label("_rn"),
+            )
+            .join(
+                latest_revision,
+                (Bar.instrument_id == latest_revision.c.instrument_id)
+                & (Bar.event_time == latest_revision.c.event_time)
+                & (Bar.revision == latest_revision.c.revision),
+            )
+            .where(
+                Bar.instrument_id.in_(ids),
+                Bar.timeframe == timeframe.value,
+                Bar.provider_id == provider_id,
+                *bounds,
+            )
+            .subquery()
         )
-        .where(
-            Bar.timeframe == timeframe.value,
-            Bar.provider_id == provider_id,
-            Bar.event_time >= start,
-            Bar.event_time <= cutoff,
-        )
-        .subquery()
-    )
-
-    rows = session.execute(
-        select(ranked).where(ranked.c._rn <= lookback)
-    ).all()
+        return list(session.execute(select(ranked).where(ranked.c._rn <= lookback)).all())
 
     by_instrument: dict[uuid.UUID, list[Any]] = {}
-    for row in rows:
+    for row in newest_bars(active_ids, _window_start(cutoff, timeframe, lookback)):
         values = row._mapping
-        instrument_id = values["instrument_id"]
-        by_instrument.setdefault(instrument_id, []).append(values)
+        by_instrument.setdefault(values["instrument_id"], []).append(values)
+
+    # The window is a speed-up and must never change which bars are read. An
+    # instrument that trades a few hours a day, or stopped printing a week
+    # ago, has its newest `lookback` bars further back than the window, and
+    # the bounded read alone dropped it from the cross-section: on production
+    # that changed the picks of nine of eighteen brain-and-source pairs. Those
+    # few are read again without the bound, exactly as before.
+    short = [i for i in active_ids if len(by_instrument.get(i, [])) < lookback]
+    if short:
+        for i in short:
+            by_instrument.pop(i, None)
+        for row in newest_bars(short, None):
+            values = row._mapping
+            by_instrument.setdefault(values["instrument_id"], []).append(values)
 
     built: dict[str, dict[str, Any]] = {}
     for instrument in instruments:
@@ -268,20 +279,27 @@ def _instant(
     # Find the newest closed timestamp shared by enough active instruments.
     # This replaces one expensive latest-row query per instrument with one
     # grouped query over the hypertable.
-    stamp = session.scalar(
-        select(Bar.event_time)
-        .where(
+    def shared_stamp(floor: datetime | None) -> datetime | None:
+        conditions = [
             Bar.instrument_id.in_(active_ids),
             Bar.timeframe == timeframe.value,
             Bar.provider_id == provider_id,
-            Bar.event_time >= _window_start(newest, timeframe, LOOKBACK),
             Bar.event_time <= ceiling,
+        ]
+        if floor is not None:
+            conditions.append(Bar.event_time >= floor)
+        return session.scalar(
+            select(Bar.event_time)
+            .where(*conditions)
+            .group_by(Bar.event_time)
+            .having(func.count(func.distinct(Bar.instrument_id)) >= MIN_FOR_INSTANT)
+            .order_by(Bar.event_time.desc())
+            .limit(1)
         )
-        .group_by(Bar.event_time)
-        .having(func.count(func.distinct(Bar.instrument_id)) >= MIN_FOR_INSTANT)
-        .order_by(Bar.event_time.desc())
-        .limit(1)
-    )
+
+    # Windowed first; the full read only if no shared stamp is that recent, so
+    # the answer is always the one the unbounded query would give.
+    stamp = shared_stamp(_window_start(newest, timeframe, LOOKBACK)) or shared_stamp(None)
     return stamp
 
 

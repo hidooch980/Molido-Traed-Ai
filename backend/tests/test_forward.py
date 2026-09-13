@@ -141,6 +141,43 @@ class TestTheSnapshotIsOneInstant:
         assert len(built) == 30
         assert all(len(v["closes"]) == forward.LOOKBACK for v in built.values())
 
+    def test_an_instrument_whose_history_outruns_the_window_is_still_read(
+        self, market, session, provider
+    ):
+        """The window only speeds the read up. An instrument whose newest
+        eighty bars began before it - a stock that trades seven hours a day,
+        a series that stopped a fortnight ago - must come back with exactly
+        the bars the unbounded read would have given it."""
+        from app.core.enums import AssetClass
+
+        slow = Instrument(symbol="EURSEK", name="Sparse", asset_class=AssetClass.FOREX)
+        session.add(slow)
+        session.flush()
+        for i in range(forward.LOOKBACK):
+            session.add(
+                Bar(
+                    instrument_id=slow.id,
+                    timeframe=Timeframe.H1.value,
+                    provider_id=provider.id,
+                    # One bar every seven hours: eighty of them span 23 days.
+                    event_time=NOW - timedelta(hours=7 * (forward.LOOKBACK - i)),
+                    revision=1,
+                    ingested_at=NOW,
+                    open=50.0 + i,
+                    high=51.0 + i,
+                    low=49.0 + i,
+                    close=50.0 + i,
+                    volume=1,
+                    quality_score=1.0,
+                )
+            )
+        session.flush()
+
+        built, _ = forward.snapshot(session, as_of=NOW)
+
+        assert "EURSEK" in built
+        assert built["EURSEK"]["closes"] == [50.0 + i for i in range(forward.LOOKBACK)]
+
     def test_bars_older_than_the_window_are_not_read(self):
         start = forward._window_start(NOW, Timeframe.H1, forward.LOOKBACK)
         assert start == NOW - timedelta(days=14)
