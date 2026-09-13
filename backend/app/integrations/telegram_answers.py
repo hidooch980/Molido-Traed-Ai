@@ -107,9 +107,7 @@ def brains(session: Session) -> str:
     """Which brain decides for which account, and how many must agree."""
     from app.learning import rules as rules_module
     from app.providers.metatrader import MetaTraderBridge, bridge_dirs
-    from app.workers.autotrade import _consensus_required, _strategy_for
-
-    from app.workers.autotrade import _risk_percent
+    from app.workers.autotrade import _consensus_required, _risk_percent, _strategy_for
 
     lines = [f"مغزهای ثبت‌شده: {len(rules_module.CANDIDATES)}", ""]
     lines += [f"• {name}" for name in sorted(rules_module.CANDIDATES)]
