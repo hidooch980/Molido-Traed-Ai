@@ -246,13 +246,20 @@ def _instant(
     # feed that stopped a month ago still has an instant - an old one, which
     # the staleness checks downstream then refuse by name - rather than
     # vanishing into "no instrument has enough bars".
-    newest = session.scalar(
-        select(func.max(Bar.event_time)).where(
+    def newest_since(floor: datetime | None) -> datetime | None:
+        conditions = [
             Bar.timeframe == timeframe.value,
             Bar.provider_id == provider_id,
             Bar.event_time <= ceiling,
-        )
-    )
+        ]
+        if floor is not None:
+            conditions.append(Bar.event_time >= floor)
+        return session.scalar(select(func.max(Bar.event_time)).where(*conditions))
+
+    # Recent first, because a time constant is what lets the planner skip old
+    # chunks (5.5 s of planning without one). Only a feed silent for longer
+    # than the recent window pays for the full read.
+    newest = newest_since(ceiling - RECENT_WINDOW) or newest_since(None)
     if newest is None:
         return None
     if newest.tzinfo is None:
@@ -285,6 +292,9 @@ WINDOW_MARGIN = 3
 
 #: The narrowest the window may be, whatever the lookback.
 MIN_WINDOW = timedelta(days=14)
+
+#: Where the search for a feed's newest bar looks first.
+RECENT_WINDOW = timedelta(days=30)
 
 
 def _window_start(cutoff: datetime, timeframe: Timeframe, lookback: int) -> datetime:
@@ -500,6 +510,9 @@ def record_cycle(
             .where(
                 Bar.timeframe == timeframe.value,
                 Provider.code == SOURCE_PUBLIC,
+                # Only a public bar newer than this series' own can put it
+                # behind; with none, the answer is "not behind" either way.
+                Bar.event_time > latest,
             )
         )
         if public_newest is not None:
@@ -545,7 +558,14 @@ def record_cycle(
         select(Instrument.symbol, func.max(Bar.event_time))
         .join(Bar, Bar.instrument_id == Instrument.id)
         .join(Provider, Provider.id == Bar.provider_id)
-        .where(Bar.timeframe == timeframe.value, Provider.code == price_source)
+        .where(
+            Bar.timeframe == timeframe.value,
+            Provider.code == price_source,
+            # Only a bar past the instant can make an instrument answered, so
+            # nothing older needs reading - and without a time constant the
+            # planner opened all 265 chunks: 4.7 s planning, 2.2 s running.
+            Bar.event_time > latest,
+        )
         .group_by(Instrument.symbol)
     ).all()
     moved_on = set()

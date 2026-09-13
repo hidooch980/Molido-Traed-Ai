@@ -132,7 +132,14 @@ def _measure_offset(
             None, 0, None, None, f"the reference file is unreadable: {problem}"
         )
 
-    return broker_offset.align(broker_offset.public_closes(session), published)
+    if not published:
+        return broker_offset.align({}, published)
+    # Widest lag either way, so every pairing align() could try is still read.
+    reach = timedelta(hours=max(abs(lag) for lag in broker_offset.CANDIDATES) + 1)
+    since = min(published) - reach
+    return broker_offset.align(
+        broker_offset.public_closes(session, since=since), published
+    )
 
 
 def ingest(
