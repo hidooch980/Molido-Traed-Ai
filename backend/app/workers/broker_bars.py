@@ -273,7 +273,13 @@ def ingest(
         if not rows:
             continue
 
-        statement = pg_insert(Bar).values(rows)
+        # The rows go as parameters, not baked into the statement. `.values(rows)`
+        # built a fresh INSERT with ~13 bind parameters per bar - half a million
+        # across a cycle - and compiled each one from scratch: profiled on
+        # production at 133 s of a 227 s ingest, against 50 s actually
+        # executing. One statement compiled once, rows sent in batches, writes
+        # the same rows under the same conflict rule.
+        statement = pg_insert(Bar)
         statement = statement.on_conflict_do_update(
             index_elements=[
                 Bar.instrument_id,
@@ -291,7 +297,7 @@ def ingest(
                 "ingested_at": statement.excluded.ingested_at,
             },
         )
-        session.execute(statement)
+        session.execute(statement, rows)
         written += len(rows)
 
     session.commit()
