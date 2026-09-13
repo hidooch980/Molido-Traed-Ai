@@ -101,6 +101,52 @@ class TestTheSnapshotIsOneInstant:
         assert len(built) == 30
         assert all(len(v["closes"]) == forward.LOOKBACK for v in built.values())
 
+    def test_a_weekend_inside_the_lookback_still_fills_the_window(
+        self, session, provider
+    ):
+        """The window is bounded in wall-clock time, and markets shut. Eighty
+        hourly bars with a 64-hour weekend in the middle must still all be read,
+        or every Monday would rank fewer instruments than the rule needs."""
+        from app.brain.crosssection import RANKED_UNIVERSE
+        from app.core.enums import AssetClass
+
+        for n, symbol in enumerate(sorted(RANKED_UNIVERSE)[:30]):
+            instrument = Instrument(symbol=symbol, name=f"Gap {n}", asset_class=AssetClass.FOREX)
+            session.add(instrument)
+            session.flush()
+            for i in range(forward.LOOKBACK):
+                hours_back = forward.LOOKBACK - i + (64 if i < forward.LOOKBACK // 2 else 0)
+                close = 100.0 + (n if i == forward.LOOKBACK - 1 else 0)
+                session.add(
+                    Bar(
+                        instrument_id=instrument.id,
+                        timeframe=Timeframe.H1.value,
+                        provider_id=provider.id,
+                        event_time=NOW - timedelta(hours=hours_back),
+                        revision=1,
+                        ingested_at=NOW,
+                        open=close,
+                        high=close + 1,
+                        low=close - 1,
+                        close=close,
+                        volume=100,
+                        quality_score=1.0,
+                    )
+                )
+        session.flush()
+
+        built, latest = forward.snapshot(session, as_of=NOW)
+
+        assert latest is not None
+        assert len(built) == 30
+        assert all(len(v["closes"]) == forward.LOOKBACK for v in built.values())
+
+    def test_bars_older_than_the_window_are_not_read(self):
+        start = forward._window_start(NOW, Timeframe.H1, forward.LOOKBACK)
+        assert start == NOW - timedelta(days=14)
+        deep = forward._window_start(NOW, Timeframe.H1, 282)
+        assert deep == NOW - timedelta(hours=282 * forward.WINDOW_MARGIN)
+
     def test_an_instrument_without_enough_history_is_left_out(self, session):
         built, latest = forward.snapshot(session, as_of=NOW)
 
