@@ -63,6 +63,33 @@ class TestTheWeeklyScorecard:
         }
         assert report["accounts"]["222"]["filled"] == 1
 
+    def test_a_view_held_for_hours_is_one_position(self, session):
+        """The recorder rewrites the same view every cycle it holds. One oil
+        rally became 65 wins for one brain; it was one position."""
+        start = NOW - timedelta(days=2)
+        for hours, closes_after, r in ((0, 6, 1.5), (1, 5, 1.5), (10, 2, -1.0)):
+            session.add(
+                JournalEntry(
+                    symbol="WTI",
+                    decision="long",
+                    opened_at=start + timedelta(hours=hours),
+                    closed_at=start + timedelta(hours=hours + closes_after),
+                    arm=ARM_RULE,
+                    strategy="time-series-momentum",
+                    r_multiple=r,
+                    during={},
+                )
+            )
+        session.flush()
+
+        brain = build_report(session)["brains"][0]
+
+        assert brain["resolved"] == 3
+        assert brain["positions"] == 2
+        assert brain["positions_resolved"] == 2
+        assert brain["position_wins"] == 1
+        assert brain["position_mean_r"] == 0.25
+
     def test_old_rows_are_outside_the_window(self, session):
         entry(session, r=5.0, days_ago=30)
 

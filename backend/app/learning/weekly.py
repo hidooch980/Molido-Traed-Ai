@@ -91,6 +91,51 @@ class BrainWeek:
         }
 
 
+def positions(rows: list[JournalEntry]) -> dict[str, dict[str, Any]]:
+    """Rule-arm decisions grouped into the positions they really are.
+
+    The recorder writes the same view every cycle while it holds, so one
+    oil rally became 65 "wins" for one brain and 109 of its 165 resolved
+    rows. Rows count as one position when they share brain, symbol, side
+    and price source and each opens while an earlier one is still open; the
+    position's outcome is its first row's. On 13 September 9,233 rows were
+    128 resolved positions.
+    """
+    far_future = datetime.max.replace(tzinfo=UTC)
+    keyed: dict[tuple[Any, ...], list[JournalEntry]] = {}
+    for row in rows:
+        if row.arm != ARM_RULE or row.outcome == "excluded":
+            continue
+        key = (row.strategy, row.symbol, row.decision, row.price_source)
+        keyed.setdefault(key, []).append(row)
+
+    out: dict[str, dict[str, Any]] = {}
+    for (strategy, *_rest), group in keyed.items():
+        bucket = out.setdefault(
+            strategy, {"positions": 0, "resolved": 0, "wins": 0, "total_r": 0.0}
+        )
+        group.sort(key=lambda r: _aware(r.opened_at))
+        open_until: datetime | None = None
+        for row in group:
+            opened = _aware(row.opened_at)
+            closed = _aware(row.closed_at) if row.closed_at is not None else far_future
+            if open_until is None or opened > open_until:
+                bucket["positions"] += 1
+                if row.r_multiple is not None:
+                    bucket["resolved"] += 1
+                    bucket["total_r"] += float(row.r_multiple)
+                    if row.r_multiple > 0:
+                        bucket["wins"] += 1
+                open_until = closed
+            else:
+                open_until = max(open_until, closed)
+    return out
+
+
+def _aware(moment: datetime) -> datetime:
+    return moment if moment.tzinfo is not None else moment.replace(tzinfo=UTC)
+
+
 def build_report(session: Session, *, days: int = 7) -> dict[str, Any]:
     """Every brain's week from the journal, and every account's orders.
 
@@ -155,10 +200,24 @@ def build_report(session: Session, *, days: int = 7) -> dict[str, Any]:
         for name, b in sorted(brains.items())
     ]
 
+    grouped = positions(list(rows))
+    brain_rows = []
+    for week in weeks:
+        brain_row = week.as_dict()
+        held = grouped.get(week.strategy, {})
+        resolved = int(held.get("resolved", 0))
+        brain_row["positions"] = int(held.get("positions", 0))
+        brain_row["positions_resolved"] = resolved
+        brain_row["position_wins"] = int(held.get("wins", 0))
+        brain_row["position_mean_r"] = (
+            round(held["total_r"] / resolved, 4) if resolved else None
+        )
+        brain_rows.append(brain_row)
+
     return {
         "window_days": days,
         "since": since.isoformat(),
-        "brains": [week.as_dict() for week in weeks],
+        "brains": brain_rows,
         "accounts": {
             login: {**counts, "resolved_r": round(counts["resolved_r"], 3)}
             for login, counts in sorted(orders_by_login.items())
