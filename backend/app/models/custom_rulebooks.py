@@ -14,7 +14,7 @@ register the account against somebody else's programme and quietly mean
 something different by it.
 
 **The two kinds never share a namespace.** Every key here is stored with a
-`custom:` prefix, so a custom rulebook cannot shadow `fundednext-stellar-1step`
+`custom:` prefix, so a custom rulebook cannot shadow `ftmo-challenge-1step`
 and a log line naming a key says which kind it was without a lookup.
 
 **The three states of a rule survive the round trip.** `None` means nobody

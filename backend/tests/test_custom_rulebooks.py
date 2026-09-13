@@ -64,7 +64,7 @@ class TestTheTranscribedOnesAreReadOnly:
     def test_there_is_no_update_path_to_a_transcribed_rulebook(self, session, tenant):
         with pytest.raises(ValidationFailedError) as raised:
             custom_rulebooks.update(
-                session, tenant_id=tenant, key="fundednext-stellar-1step", rules={}
+                session, tenant_id=tenant, key="ftmo-challenge-1step", rules={}
             )
 
         assert "read only" in str(raised.value)
@@ -125,7 +125,7 @@ class TestTheTwoNamespacesCannotCollide:
 
     def test_is_custom_reads_the_prefix(self):
         assert custom_rulebooks.is_custom("custom:anything") is True
-        assert custom_rulebooks.is_custom("fundednext-stellar-1step") is False
+        assert custom_rulebooks.is_custom("ftmo-challenge-1step") is False
 
     def test_is_custom_on_nothing_is_false(self):
         assert custom_rulebooks.is_custom(None) is False
