@@ -39,6 +39,7 @@ from app.brain import rulebooks as rulebook_module
 from app.core.enums import AccountKind
 from app.core.errors import NotFoundError, ValidationFailedError
 from app.models.challenge_accounts import ChallengeAccount
+from app.services import custom_rulebooks
 
 MAX_LABEL = 120
 MAX_NOTES = 2000
@@ -164,15 +165,35 @@ def default_tenant(session: Session) -> uuid.UUID:
     return tenant.id
 
 
-def _resolve(key: str | None):
-    """The rulebook with this key, or None.
+def _resolve(session: Session, tenant_id: uuid.UUID | None, key: str | None):
+    """The rulebook with this key, transcribed or written here, or None.
 
     None in, None out: a live account has no key, and that is an answer rather
     than a lookup failure.
+
+    A `custom:` key is looked up in this tenant's own rulebooks and a bare one
+    in the transcribed set. The prefix decides which, so the two namespaces can
+    never be searched in an order that lets one shadow the other.
     """
     if not key:
         return None
+    if custom_rulebooks.is_custom(key):
+        if tenant_id is None:
+            # A custom rulebook belongs to a tenant, so a lookup with no tenant
+            # cannot answer. Reported as unresolved rather than searched across
+            # tenants, which would resolve one holder's account against
+            # another's rules.
+            return None
+        return custom_rulebooks.resolve(session, tenant_id=tenant_id, key=key)
     return next((book for book in rulebook_module.RULEBOOKS if book.key == key), None)
+
+
+def _known_keys(session: Session, tenant_id: uuid.UUID | None) -> str:
+    """Every key a caller could legitimately have meant, for a refusal."""
+    keys = [book.key for book in rulebook_module.RULEBOOKS]
+    if tenant_id is not None:
+        keys += [row.key for row in custom_rulebooks.listing(session, tenant_id=tenant_id)]
+    return ", ".join(keys)
 
 
 def create(
@@ -225,10 +246,10 @@ def create(
                 f"A {kind} account is measured against a rulebook, so one has to "
                 "be named. Only a live account has none."
             )
-        if _resolve(rulebook_key) is None:
-            known = ", ".join(book.key for book in rulebook_module.RULEBOOKS)
+        if _resolve(session, tenant_id, rulebook_key) is None:
+            known = _known_keys(session, tenant_id)
             raise ValidationFailedError(
-                f"No transcribed rulebook has the key {rulebook_key!r}. Known keys: {known}"
+                f"No rulebook has the key {rulebook_key!r}. Known keys: {known}"
             )
 
     if starting_balance < MIN_BALANCE:
@@ -363,10 +384,10 @@ def move_to(
             "live account separately."
         )
 
-    if _resolve(rulebook_key) is None:
-        known = ", ".join(book.key for book in rulebook_module.RULEBOOKS)
+    if _resolve(session, tenant_id, rulebook_key) is None:
+        known = _known_keys(session, tenant_id)
         raise ValidationFailedError(
-            f"No transcribed rulebook has the key {rulebook_key!r}. Known keys: {known}"
+            f"No rulebook has the key {rulebook_key!r}. Known keys: {known}"
         )
 
     if starting_balance is not None and starting_balance < MIN_BALANCE:
@@ -457,12 +478,28 @@ def remove(
     return label
 
 
+def view_of(session: Session, account: ChallengeAccount) -> AccountView:
+    """One account with its rulebook resolved.
+
+    Public because four routes were reaching into `_resolve` to build this by
+    hand, which is how a signature change turned into four call sites - and
+    why one of them could have been left resolving against the wrong tenant.
+    """
+    return AccountView(
+        account=account,
+        rulebook=_resolve(session, account.tenant_id, account.rulebook_key),
+    )
+
+
 def listing(session: Session, *, tenant_id: uuid.UUID | None = None) -> list[AccountView]:
     query = select(ChallengeAccount).order_by(ChallengeAccount.created_at)
     if tenant_id is not None:
         query = query.where(ChallengeAccount.tenant_id == tenant_id)
     return [
-        AccountView(account=account, rulebook=_resolve(account.rulebook_key))
+        AccountView(
+            account=account,
+            rulebook=_resolve(session, account.tenant_id, account.rulebook_key),
+        )
         for account in session.scalars(query)
     ]
 

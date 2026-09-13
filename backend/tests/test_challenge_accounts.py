@@ -54,9 +54,7 @@ class TestRecordingAnAccount:
         assert account.confirmed_at is None
 
     def test_an_unconfirmed_account_cannot_be_tracked(self, session):
-        view = challenge_accounts.AccountView(
-            account=make(session), rulebook=challenge_accounts._resolve(KEY)
-        )
+        view = challenge_accounts.view_of(session, make(session))
 
         assert view.as_dict()["tracking_available"] is False
         assert "wrong document" in view.as_dict()["why_not"]
@@ -68,9 +66,7 @@ class TestRecordingAnAccount:
             session, tenant_id=challenge_accounts.default_tenant(session), account_id=account.id, notes="matches my contract"
         )
 
-        view = challenge_accounts.AccountView(
-            account=account, rulebook=challenge_accounts._resolve(KEY)
-        )
+        view = challenge_accounts.view_of(session, account)
         assert view.as_dict()["tracking_available"] is True
         assert account.confirmed_at is not None
 
@@ -121,7 +117,7 @@ class TestConfirmationIsPerAccount:
         account = make(session)
         challenge_accounts.confirm(session, tenant_id=challenge_accounts.default_tenant(session), account_id=account.id)
 
-        book = challenge_accounts._resolve(KEY)
+        book = challenge_accounts._resolve(session, challenge_accounts.default_tenant(session), KEY)
 
         assert book.confirmed_by_holder is False
 
@@ -353,9 +349,7 @@ class TestSwitchingAnAccountOff:
 
     def test_switching_it_off_stops_it_being_tracked(self, session):
         account = make(session, rules_confirmed=True)
-        assert challenge_accounts.AccountView(
-            account=account, rulebook=challenge_accounts._resolve(KEY)
-        ).as_dict()["tracking_available"] is True
+        assert challenge_accounts.view_of(session, account).as_dict()["tracking_available"] is True
 
         challenge_accounts.set_active(
             session,
@@ -364,9 +358,7 @@ class TestSwitchingAnAccountOff:
             active=False,
         )
 
-        view = challenge_accounts.AccountView(
-            account=account, rulebook=challenge_accounts._resolve(KEY)
-        ).as_dict()
+        view = challenge_accounts.view_of(session, account).as_dict()
         assert view["tracking_available"] is False
         assert "switched off" in view["why_not"]
 
@@ -379,9 +371,7 @@ class TestSwitchingAnAccountOff:
             session, tenant_id=account.tenant_id, account_id=account.id, active=False
         )
 
-        why = challenge_accounts.AccountView(
-            account=account, rulebook=challenge_accounts._resolve(KEY)
-        ).as_dict()["why_not"]
+        why = challenge_accounts.view_of(session, account).as_dict()["why_not"]
 
         assert "switched off" in why
         assert "confirm" not in why
@@ -398,9 +388,7 @@ class TestSwitchingAnAccountOff:
             )
 
         assert account.rules_confirmed is True
-        assert challenge_accounts.AccountView(
-            account=account, rulebook=challenge_accounts._resolve(KEY)
-        ).as_dict()["tracking_available"] is True
+        assert challenge_accounts.view_of(session, account).as_dict()["tracking_available"] is True
 
     def test_the_history_survives_being_switched_off(self, session):
         account = make(session, notes="phase 1 failed on the daily limit")
@@ -526,9 +514,7 @@ class TestATwoPhaseProgramme:
             rulebook_key=PHASE_TWO,
         )
 
-        view = challenge_accounts.AccountView(
-            account=account, rulebook=challenge_accounts._resolve(PHASE_TWO)
-        ).as_dict()
+        view = challenge_accounts.view_of(session, account).as_dict()
 
         assert view["tracking_available"] is False
         assert "confirmed" in view["why_not"]

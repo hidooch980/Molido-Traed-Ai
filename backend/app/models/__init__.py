@@ -9,6 +9,7 @@ from app.models.account_policy import AccountPolicy
 from app.models.audit import AuditChainHead, AuditEvent
 from app.models.calendar import MarketHoliday
 from app.models.challenge_accounts import ChallengeAccount
+from app.models.custom_rulebooks import CustomRulebook
 from app.models.episodes import Episode
 from app.models.equity import EquitySample
 from app.models.features import FeatureValue
@@ -44,6 +45,7 @@ __all__ = [
     "TelegramConfig",
     "RecoveryCode",
     "ChallengeAccount",
+    "CustomRulebook",
     "ApiKey",
     "AuditChainHead",
     "AuditEvent",
