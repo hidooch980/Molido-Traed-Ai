@@ -109,6 +109,8 @@ def brains(session: Session) -> str:
     from app.providers.metatrader import MetaTraderBridge, bridge_dirs
     from app.workers.autotrade import _consensus_required, _strategy_for
 
+    from app.workers.autotrade import _risk_percent
+
     lines = [f"مغزهای ثبت‌شده: {len(rules_module.CANDIDATES)}", ""]
     lines += [f"• {name}" for name in sorted(rules_module.CANDIDATES)]
     lines += ["", f"توافق لازم برای سفارش: {_consensus_required()} مغز", ""]
@@ -119,7 +121,9 @@ def brains(session: Session) -> str:
             continue
         login = str(account.get("login") or "")
         strategy, refusal = _strategy_for(login)
-        lines.append(f"• {key} ({login}) ← {strategy or refusal[:50]}")
+        # A frozenset printed as itself read "frozenset({'trend-following'})".
+        names = "، ".join(sorted(strategy)) if strategy else refusal[:50]
+        lines.append(f"• {key} ({login}) ← {names} | ریسک {_risk_percent(login):g}٪")
 
     lines += [
         "",
@@ -142,6 +146,14 @@ def challenge(session: Session) -> str:
     )
     if not views:
         return "هیچ حساب چلنجی ثبت نشده است."
+
+    # Active only. Retired rulebooks stay in the table for their history, but
+    # a phone screen of limits for accounts nobody trades hides the one that
+    # binds today.
+    hidden = sum(1 for view in views if not view.account.is_active)
+    views = [view for view in views if view.account.is_active]
+    if not views:
+        return f"هیچ حساب چلنج فعالی نیست ({hidden} غیرفعال پنهان شد)."
 
     lines: list[str] = []
     for view in views:
@@ -177,6 +189,9 @@ def challenge(session: Session) -> str:
             )
         if rules.min_trading_days:
             lines.append(f"    حداقل روز معاملاتی: {rules.min_trading_days}")
+    if hidden:
+        lines.append("")
+        lines.append(f"{hidden} حساب غیرفعال نمایش داده نشد.")
     return "\n".join(lines)
 
 

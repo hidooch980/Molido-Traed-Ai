@@ -58,6 +58,46 @@ class TestItAnswersInPersian:
         assert "the bridge is unreadable" in reply.text
 
 
+class TestWhyNoTradeOnlyReads:
+    def test_it_never_runs_an_order_cycle(self, session, monkeypatch):
+        """The button used to call the order cycle itself - gates, a journal
+        entry marked submitting, a call to the broker - from a channel that
+        promises it cannot place an order."""
+        from app.workers import autotrade
+
+        def forbidden(*_a, **_k):
+            raise AssertionError("the chat answer ran an order cycle")
+
+        monkeypatch.setattr(autotrade, "run_all_accounts", forbidden)
+        monkeypatch.setattr(autotrade, "run_cycle", forbidden)
+
+        reply = telegram_bot.answer_command(session, "/why_no_trade")
+
+        assert "نتوانستم" not in reply.text
+
+    def test_a_recorded_refusal_is_what_it_shows(self, session):
+        from datetime import UTC, datetime
+
+        from app.models.journal import ARM_RULE, JournalEntry
+
+        session.add(
+            JournalEntry(
+                symbol="WTI",
+                decision="long",
+                opened_at=datetime.now(UTC),
+                arm=ARM_RULE,
+                strategy="time-series-momentum",
+                during={"refused": {"67209480": {"reason": "WTI is not on the traded list. More"}}},
+            )
+        )
+        session.flush()
+
+        text = telegram_bot.answer_command(session, "/why_no_trade").text
+
+        assert "67209480" in text
+        assert "WTI is not on the traded list" in text
+
+
 class TestOnlyAdminsAreAnswered:
     def poll_with(self, session, monkeypatch, update):
         calls = []

@@ -143,8 +143,28 @@ def build_report(session: Session, *, days: int = 7) -> dict[str, Any]:
     that writes is a report somebody will one day be afraid to run.
     """
     since = datetime.now(UTC) - timedelta(days=days)
+    # Only the columns this report reads. The `before` and `after` documents
+    # are the largest thing on a journal row and nothing here looks at them;
+    # loading them made the Telegram journal button take 25 s.
+    from sqlalchemy.orm import load_only
+
     rows = session.scalars(
-        select(JournalEntry).where(JournalEntry.opened_at >= since)
+        select(JournalEntry)
+        .options(
+            load_only(
+                JournalEntry.strategy,
+                JournalEntry.arm,
+                JournalEntry.symbol,
+                JournalEntry.decision,
+                JournalEntry.price_source,
+                JournalEntry.opened_at,
+                JournalEntry.closed_at,
+                JournalEntry.outcome,
+                JournalEntry.r_multiple,
+                JournalEntry.during,
+            )
+        )
+        .where(JournalEntry.opened_at >= since)
     ).all()
 
     brains: dict[str, dict[str, Any]] = {}
