@@ -370,7 +370,16 @@ def read_metatrader(_: Principal = READ) -> dict[str, Any]:
     for hours looking healthy, because the terminal was up and Market Watch was
     full of quotes cached from a session that had ended.
     """
-    bridge = MetaTraderBridge()
+    # The top-level summary is the first usable terminal, not the default
+    # directory - on a fleet nothing writes there, and the page read "not
+    # running" above seven connected accounts.
+    directories = sorted(bridge_dirs().items())
+    bridge = MetaTraderBridge(directory=directories[0][1])
+    for _key, path in directories:
+        candidate = MetaTraderBridge(directory=path)
+        if candidate.state().usable:
+            bridge = candidate
+            break
     state = bridge.state()
     payload: dict[str, Any] = {"state": state.as_dict()}
 

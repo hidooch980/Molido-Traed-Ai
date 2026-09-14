@@ -90,11 +90,11 @@ def read_timezones(_: Principal = READ) -> dict[str, Any]:
     decides which day a trade books to and which bar it lands in, so it is the
     one value here that must never be guessed.
     """
-    from app.providers.metatrader import MetaTraderBridge
+    from app.execution import autopilot
     from app.services import calendar as calendar_service
 
-    published = MetaTraderBridge().account()
-    offset = published.get("server_offset_hours") if published.get("available") else None
+    found = autopilot.first_connected()
+    offset = found[2].get("server_offset_hours") if found else None
 
     payload = calendar_service.convert(
         broker_offset=float(offset) if isinstance(offset, int | float) else None
@@ -127,13 +127,24 @@ def calculate(
     ounces - a calculator that assumes one is the difference between risking 1%
     and 10%, and it looks correct in both cases.
     """
-    from app.providers.metatrader import MetaTraderBridge
+    from app.providers.metatrader import MetaTraderBridge, bridge_dirs
     from app.services import calculators
 
-    published = MetaTraderBridge().symbols()
-    spec = next(
-        (s for s in published.get("symbols", []) if s.get("name") == symbol), None
-    )
+    # The first terminal whose Market Watch carries the symbol. Brokers in
+    # one fleet can differ in contract size, so the spec comes from one
+    # terminal's own file rather than a default directory nobody writes.
+    published: dict[str, Any] = {"symbols": []}
+    spec = None
+    for _key, directory in sorted(bridge_dirs().items()):
+        each = MetaTraderBridge(directory=directory).symbols()
+        if not each.get("available"):
+            continue
+        if not published.get("available"):
+            published = each
+        spec = next((s for s in each.get("symbols", []) if s.get("name") == symbol), None)
+        if spec is not None:
+            published = each
+            break
     if spec is None:
         return {
             "available": False,

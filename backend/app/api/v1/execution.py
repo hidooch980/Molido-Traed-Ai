@@ -262,11 +262,13 @@ def read_accounts(_: Principal = READ) -> dict[str, Any]:
     If it does not, the response says nothing is connected rather than implying
     nothing can be.
     """
+    from app.execution import autopilot
     from app.execution.metatrader_broker import MetaTraderBroker
     from app.providers.metatrader import MetaTraderBridge
 
     book = routing_module.AccountBook()
-    published = MetaTraderBridge().account()
+    found = autopilot.first_connected()
+    published: dict[str, Any] = found[2] if found else {}
     login = str(published.get("login") or "") if published.get("available") else ""
 
     if login:
@@ -366,10 +368,11 @@ def read_equity(
     would return an empty curve that looks like a flat account rather than like
     a question about the wrong account.
     """
-    from app.providers.metatrader import MetaTraderBridge
+    from app.execution import autopilot
     from app.services import equity as equity_service
 
-    published = MetaTraderBridge().account()
+    found = autopilot.first_connected(session)
+    published: dict[str, Any] = found[2] if found else {}
     login = str(published.get("login") or "") if published.get("available") else ""
     if not login:
         return {
@@ -468,10 +471,21 @@ def read_autopilot(
     """
     from app.execution import autopilot, context
     from app.learning import edge as edge_registry
+    from app.providers.metatrader import MetaTraderBridge, bridge_dirs
+
     mode, reason, override = autopilot.mode_now()
-    account_ok, account_why = autopilot.fleet_account_gate(session)
+    accounts = autopilot.fleet_accounts(session)
+    account_ok, account_why, account_terminals = autopilot.fleet_account_gates(accounts)
     edge_ok, edge_why = edge_registry.live_trading_allowed()
-    built = context.build(session)
+    # The context is built from a terminal that is actually connected, not
+    # from the default directory no fleet terminal writes to.
+    directories = bridge_dirs(session=session)
+    connected = next((k for k, a in accounts.items() if a.get("available")), None)
+    built = (
+        context.build(session, bridge=MetaTraderBridge(directory=directories[connected]))
+        if connected is not None
+        else None
+    )
 
     return {
         "mode": mode,
@@ -483,7 +497,11 @@ def read_autopilot(
                 "detail": reason if mode == autopilot.HALTED else "execution is enabled",
             },
             "proven_edge": {"open": edge_ok, "detail": edge_why},
-            "account": {"open": account_ok, "detail": account_why},
+            "account": {
+                "open": account_ok,
+                "detail": account_why,
+                "terminals": account_terminals,
+            },
             "inputs": {
                 "open": built is not None,
                 "detail": (
@@ -505,7 +523,10 @@ def read_autopilot(
 
 
 @router.get("/positions")
-def read_positions(_: Principal = READ) -> dict[str, Any]:
+def read_positions(
+    _: Principal = READ,
+    session: Session = Depends(get_db),
+) -> dict[str, Any]:
     """What is open at the broker right now.
 
     Read from the bridge rather than from anything this system believes it
@@ -513,22 +534,41 @@ def read_positions(_: Principal = READ) -> dict[str, Any]:
     without the reply arriving, a position closed by the broker's own stop -
     and the broker's answer is the one the account is judged on.
     """
-    from app.providers.metatrader import MetaTraderBridge
+    from app.providers.metatrader import MetaTraderBridge, bridge_dirs
 
-    bridge = MetaTraderBridge()
-    published = bridge.positions()
-    account = bridge.account()
+    positions: list[dict[str, Any]] = []
+    terminals: dict[str, Any] = {}
+    reasons: list[str] = []
+    first_account: dict[str, Any] | None = None
+    for key, directory in sorted(bridge_dirs(session=session).items()):
+        bridge = MetaTraderBridge(directory=directory)
+        published = bridge.positions()
+        account = bridge.account()
+        summary = (
+            {
+                "login": account.get("login"),
+                "server": account.get("server"),
+                "equity": account.get("equity"),
+                "balance": account.get("balance"),
+            }
+            if account.get("available")
+            else None
+        )
+        if summary is not None and first_account is None:
+            first_account = summary
+        if published.get("available"):
+            positions.extend({**p, "terminal": key} for p in published.get("positions", []))
+        else:
+            reasons.append(f"{key}: {published.get('reason')}")
+        terminals[key] = {**published, "account": summary}
 
+    available = any(t.get("available") for t in terminals.values())
     return {
-        **published,
-        "account": {
-            "login": account.get("login"),
-            "server": account.get("server"),
-            "equity": account.get("equity"),
-            "balance": account.get("balance"),
-        }
-        if account.get("available")
-        else None,
+        "available": available,
+        "positions": positions,
+        **({} if available else {"reason": "; ".join(reasons) or "no terminal is configured"}),
+        "account": first_account,
+        "terminals": terminals,
         "note": (
             "read from the terminal, not from this system's own record. They "
             "disagree exactly when it matters, and the broker's answer is the "
