@@ -700,7 +700,7 @@ def _challenge_gate(
             None,
         )
     if live_positions is not None:
-        return _prop_guard(
+        allowed, why, room_r = _prop_guard(
             session,
             book.rules,
             account,
@@ -710,7 +710,54 @@ def _challenge_gate(
             verdict.max_additional_risk_r,
             moment,
         )
-    return True, "", verdict.max_additional_risk_r
+        return allowed, why, _r_as_equity_fraction(room_r, account, equity)
+    return True, "", _r_as_equity_fraction(verdict.max_additional_risk_r, account, equity)
+
+
+def _r_as_equity_fraction(room_r: float | None, account: Any, equity: float) -> float | None:
+    """The challenge engine's R, in the unit the order is sized in.
+
+    The engine counts R in the registration's `currency_per_r` ($1,500 on the
+    FTMO account); the order is sized as a fraction of equity (0.01 = 1%).
+    They were compared raw, so a room of 0.55 R never bound an order sized at
+    0.01 and no challenge limit ever reached a lot size (found 14 Sep 2026).
+    Without a currency figure there is nothing to convert, and None - no
+    cap from here - is what the caller already treats as "not binding".
+    """
+    per_r = getattr(account, "currency_per_r", None)
+    if room_r is None or not per_r or equity <= 0:
+        return None if room_r is None or not per_r else room_r
+    return room_r * float(per_r) / equity
+
+
+#: The most every open stop on one account may lose together, as a share of
+#: equity - on every account, prop rulebook or not. At a 19% setting mt5f held
+#: $27,099 (13.5%) behind stops on 14 Sep 2026 with nothing counting the sum.
+MAX_OPEN_RISK_FRACTION = 0.06
+
+
+def _open_risk_room(
+    positions: list[dict[str, Any]],
+    specifications: dict[str, dict[str, Any]],
+    equity: float,
+) -> tuple[bool, str, float]:
+    """Whether the book may grow, and by how much, as a fraction of equity."""
+    if equity <= 0:
+        return False, "open risk cap: the account published no equity", 0.0
+    open_risk = _open_stop_risk(positions, specifications)
+    if open_risk is None:
+        return False, (
+            "open risk cap: an open position has no stop or its symbol no tick "
+            "value, so what the book can lose cannot be priced"
+        ), 0.0
+    room = MAX_OPEN_RISK_FRACTION - open_risk / equity
+    if room <= 0:
+        return False, (
+            f"open risk cap: open stops risk {open_risk:,.0f} "
+            f"({open_risk / equity:.1%} of equity), at or above the "
+            f"{MAX_OPEN_RISK_FRACTION:.0%} cap"
+        ), 0.0
+    return True, "", room
 
 
 #: Share of the daily allowance that open stops may hold together. Each order
@@ -1663,6 +1710,9 @@ def run_cycle(
     # brain does not: whether the challenge survives this trade losing. An
     # account with none registered passes - inventing limits it was never
     # given would be a rule nobody agreed to.
+    specifications = {
+        str(s.get("name")): s for s in (feed.symbols().get("symbols") or [])
+    }
     passes, why, headroom_r = _challenge_gate(
         session,
         published,
@@ -1675,9 +1725,7 @@ def run_cycle(
         # instrument happens to be exposed.
         in_news_window=_any_high_impact_now(moment, releases),
         live_positions=live_positions,
-        specifications={
-            str(s.get("name")): s for s in (feed.symbols().get("symbols") or [])
-        },
+        specifications=specifications,
     )
     if not passes:
         return _report(mode=mode, refused=why)
@@ -1685,6 +1733,12 @@ def run_cycle(
         # The tighter of the two governs. Two limits consulted and the looser
         # obeyed is one limit consulted.
         verdict.permitted_risk_r = headroom_r
+
+    book_ok, book_why, book_room = _open_risk_room(live_positions, specifications, equity)
+    if not book_ok:
+        return _report(mode=mode, refused=book_why, open_positions=open_now)
+    if book_room < verdict.permitted_risk_r:
+        verdict.permitted_risk_r = book_room
 
     cap = _max_open_positions()
     room = cap - open_now
@@ -2321,6 +2375,7 @@ def _fresh_votes(
         )
     ).all()
 
+    silenced = _silenced_brains(session, moment)
     votes: dict[tuple[str, str], set[str]] = {}
     # Filled for the caller when one is supplied: which sides exist on
     # each timeframe, which is a different question from how many brains
@@ -2332,11 +2387,48 @@ def _fresh_votes(
             minutes=MAX_DECISION_AGE_MINUTES + _bar_minutes(row)
         ):
             continue
-        votes.setdefault((row.symbol, row.decision), set()).add(row.strategy)
+        if row.strategy not in silenced:
+            votes.setdefault((row.symbol, row.decision), set()).add(row.strategy)
         by_timeframe.setdefault((row.symbol, row.timeframe), set()).add(
             row.decision
         )
     return votes
+
+#: Positions a brain needs before a losing record takes its vote away.
+MIN_POSITIONS_TO_SILENCE = 15
+
+_SILENCED_CACHE: dict[str, frozenset[str]] = {}
+
+
+def _silenced_brains(session: Session, moment: datetime) -> frozenset[str]:
+    """Brains that lose after cost and to their own coin flip: no vote.
+
+    A brain earning -0.53 R net and 0.33 R under its control was vetoing
+    orders from brains ahead of theirs (mt5d, 14 Sep 2026). Recording stays
+    - its decisions are still journalled and measured, and it gets the vote
+    back the day its record turns. Computed once per cycle hour.
+    """
+    key = moment.strftime("%Y-%m-%dT%H")
+    if key in _SILENCED_CACHE:
+        return _SILENCED_CACHE[key]
+    try:
+        from app.learning import brain_selection
+
+        silenced = frozenset(
+            s.strategy
+            for s in brain_selection.standings(session)
+            if s.positions >= MIN_POSITIONS_TO_SILENCE
+            and s.net_r is not None
+            and s.net_r < 0
+            and s.over_control is not None
+            and s.over_control < 0
+        )
+    except Exception:  # noqa: BLE001 - unmeasured takes no vote away
+        silenced = frozenset()
+    _SILENCED_CACHE.clear()
+    _SILENCED_CACHE[key] = silenced
+    return silenced
+
 
 #: Brains an unassigned account may be given, in a fixed order.
 #:
