@@ -161,6 +161,7 @@ def proposed_stop(
     risk: float | None = None,
     start_at_r: float = START_AT_R,
     trail_fraction: float = TRAIL_FRACTION,
+    lock_at_r: float | None = None,
 ) -> tuple[float | None, str]:
     """Where this position's stop belongs now, or None and why not.
 
@@ -178,6 +179,12 @@ def proposed_stop(
 
     ahead = (price - entry) if side == "buy" else (entry - price)
     r = ahead / distance
+    if lock_at_r is not None and r >= lock_at_r and r < start_at_r:
+        # The weekend lock: far enough ahead to keep, not far enough to trail.
+        # The stop goes to entry and no further, and only if that tightens it.
+        if (side == "buy" and entry > stop) or (side == "sell" and entry < stop):
+            return entry, f"{r:.2f} R ahead before the weekend, stop to entry"
+        return None, "the stop already sits at or past entry"
     if r < start_at_r:
         return None, f"only {r:.2f} R ahead, below the {start_at_r:.2f} R start"
 
@@ -225,6 +232,7 @@ def run(
     *,
     logins: set[str] | None = None,
     dry_run: bool = True,
+    lock_at_r: float | None = None,
 ) -> Report:
     """Walk this terminal's open positions and tighten what has earned it.
 
@@ -299,7 +307,7 @@ def run(
             entry=entry, stop=stop, target=float(position.get("target") or 0) or None
         )
         candidate, why = proposed_stop(
-            side=side, entry=entry, stop=stop, price=price, risk=risk
+            side=side, entry=entry, stop=stop, price=price, risk=risk, lock_at_r=lock_at_r
         )
         if candidate is None:
             report.skip(why)

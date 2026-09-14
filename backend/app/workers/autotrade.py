@@ -227,6 +227,23 @@ WEEKEND_WARNING_HOUR_UTC = 16
 #: Friday, as `weekday()` counts.
 _FRIDAY = 4
 
+#: How far ahead, in R, a prop position must be before the weekend lock moves
+#: its stop to entry.
+WEEKEND_LOCK_AT_R = 0.3
+
+
+def weekend_lock_logins() -> set[str]:
+    """Accounts the weekend lock applies to: `MOLIDO_WEEKEND_LOCK_LOGINS`.
+
+    A setting rather than read from the challenge registry, because a
+    registration and a login are matched by label and a wrong guess here would
+    stop a non-prop account trading every Friday afternoon.
+    """
+    import os
+
+    raw = os.environ.get("MOLIDO_WEEKEND_LOCK_LOGINS", "")
+    return {part.strip() for part in raw.split(",") if part.strip()}
+
 
 def _weekend_ahead(moment: datetime) -> bool:
     """Whether this is the last session before the break.
@@ -734,6 +751,13 @@ def _r_as_equity_fraction(room_r: float | None, account: Any, equity: float) -> 
 #: equity - on every account, prop rulebook or not. At a 19% setting mt5f held
 #: $27,099 (13.5%) behind stops on 14 Sep 2026 with nothing counting the sum.
 MAX_OPEN_RISK_FRACTION = 0.06
+
+#: The most one order may put behind its stop, as a share of equity, whatever
+#: the risk setting. At the 19% setting mt5d sized a single order at 15.41
+#: lots - about $10,000 behind one stop - and only the bridge's MaxLots 10
+#: refused it (14 Sep 2026). With the 6% book cap this means at least three
+#: positions before the book is full.
+MAX_ORDER_RISK_FRACTION = 0.02
 
 
 def _open_risk_room(
@@ -1734,11 +1758,21 @@ def run_cycle(
         # obeyed is one limit consulted.
         verdict.permitted_risk_r = headroom_r
 
+    if login in weekend_lock_logins() and _weekend_ahead(moment):
+        # A prop challenge is lost on a Monday gap as surely as on a bad trade.
+        return _report(
+            mode=mode,
+            refused="weekend lock: no new position after Friday 16:00 UTC on a prop account",
+            open_positions=open_now,
+        )
+
     book_ok, book_why, book_room = _open_risk_room(live_positions, specifications, equity)
     if not book_ok:
         return _report(mode=mode, refused=book_why, open_positions=open_now)
     if book_room < verdict.permitted_risk_r:
         verdict.permitted_risk_r = book_room
+    if verdict.permitted_risk_r > MAX_ORDER_RISK_FRACTION:
+        verdict.permitted_risk_r = MAX_ORDER_RISK_FRACTION
 
     cap = _max_open_positions()
     room = cap - open_now

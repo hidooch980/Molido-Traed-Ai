@@ -89,6 +89,7 @@ x-backend-env: &backend-env
   # bucket for everybody. The default of 0 uses the socket address.
   MOLIDO_TRUSTED_PROXY_HOPS: ${MOLIDO_TRUSTED_PROXY_HOPS:-0}
   MOLIDO_SESSION_COOKIE_SECURE: ${MOLIDO_SESSION_COOKIE_SECURE:-false}
+  MOLIDO_WEEKEND_LOCK_LOGINS: ${MOLIDO_WEEKEND_LOCK_LOGINS:-}
 
   # Outbound mail, for account verification. Unset means this deployment does
   # not send, stated rather than silent.
