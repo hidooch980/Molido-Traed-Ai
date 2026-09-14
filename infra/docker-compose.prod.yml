@@ -81,6 +81,14 @@ x-backend-env: &backend-env
   # deployment, this is a decision about the account being traded.
   MOLIDO_ALLOW_REAL_MONEY_ORDERS: ${MOLIDO_ALLOW_REAL_MONEY_ORDERS:-false}
   MOLIDO_REQUIRE_AUTH: ${MOLIDO_REQUIRE_AUTH:-true}
+  # How many proxies in front of the API may supply the client's address:
+  # ArvanCloud's edge, then Caddy, so 2 on this deployment (Caddy trusts only
+  # ArvanCloud's ranges - see Caddyfile). .env.prod already said 2 and it never
+  # arrived, because it was missing from this list: every sign-in attempt was
+  # recorded against Caddy's own address and the per-address limiter was one
+  # bucket for everybody. The default of 0 uses the socket address.
+  MOLIDO_TRUSTED_PROXY_HOPS: ${MOLIDO_TRUSTED_PROXY_HOPS:-0}
+  MOLIDO_SESSION_COOKIE_SECURE: ${MOLIDO_SESSION_COOKIE_SECURE:-false}
 
   # Outbound mail, for account verification. Unset means this deployment does
   # not send, stated rather than silent.

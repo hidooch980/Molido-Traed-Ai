@@ -69,6 +69,8 @@ class Trial:
     gross_r: float
     cost_r: float
     t_statistic: float
+    #: The management policy the trial was walked under (`exits.ExitPolicy.label`).
+    exit: str = "fixed"
 
     @property
     def net_r(self) -> float:
@@ -90,6 +92,7 @@ class Trial:
             "cost_r": round(self.cost_r, 4),
             "net_r": round(self.net_r, 4),
             "t_statistic": round(self.t_statistic, 3),
+            "exit": self.exit,
         }
 
 
@@ -149,6 +152,7 @@ def trial(
     target_multiple: float,
     cost_at_incumbent: float,
     rule: Any = None,
+    exit_policy: Any = None,
 ) -> Trial:
     """Score one geometry over one window."""
     result = measure_module.measure(
@@ -157,6 +161,7 @@ def trial(
         rule=rule,
         stop_multiple=stop_multiple,
         target_multiple=target_multiple,
+        exit_policy=exit_policy,
     )
     return Trial(
         stop_multiple=stop_multiple,
@@ -170,6 +175,7 @@ def trial(
         gross_r=result.edge_r,
         cost_r=cost_for(stop_multiple, cost_at_incumbent=cost_at_incumbent),
         t_statistic=result.t_statistic,
+        exit=getattr(exit_policy, "label", "fixed"),
     )
 
 
@@ -355,6 +361,95 @@ def sweep(
         train_window=(start, cut),
         test_window=(cut, end),
         trials=tuple(sorted(scored, key=lambda t: -t.net_r)),
+        refusal=why,
+    )
+
+
+def sweep_exits(
+    series: dict[str, list[Any]],
+    *,
+    bar_interval: timedelta,
+    cost_at_incumbent: float,
+    rule: Any = None,
+    policies: tuple[Any, ...] | None = None,
+    fraction: float = TRAIN_FRACTION,
+) -> Sweep:
+    """Choose a management policy on training; report it on the held-out window.
+
+    The geometry stays the deployed one, so the only thing that differs between
+    trials is what happens after entry. The incumbent is the trail production
+    runs today, not the fixed geometry: a policy has to beat what is already
+    live to be worth switching to.
+    """
+    from app.learning import exits
+
+    grid = exits.POLICIES if policies is None else policies
+    start, cut, end = split(series, fraction=fraction)
+    if start is None or cut is None or end is None:
+        return Sweep(None, None, None, None, None, None, refusal="the series is empty")
+    train = _window(series, start, cut)
+    test = _window(series, cut, end)
+
+    def run(window: dict[str, list[Any]], policy: Any) -> Trial:
+        return trial(
+            window,
+            bar_interval=bar_interval,
+            stop_multiple=STOP_MULTIPLE,
+            target_multiple=TARGET_MULTIPLE,
+            cost_at_incumbent=cost_at_incumbent,
+            rule=rule,
+            exit_policy=None if policy == exits.NONE else policy,
+        )
+
+    scored = [t for t in (run(train, p) for p in grid) if t.instants >= MIN_INSTANTS]
+    by_label = {getattr(p, "label", "fixed"): p for p in grid}
+    incumbent_train = next((t for t in scored if t.exit == exits.DEPLOYED.label), None)
+    if not scored:
+        return Sweep(
+            None,
+            None,
+            incumbent_train,
+            None,
+            (start, cut),
+            (cut, end),
+            refusal=f"no policy was scored on {MIN_INSTANTS} instants or more in training",
+        )
+
+    chosen = max(scored, key=lambda t: t.net_r)
+    confirmed = run(test, by_label[chosen.exit])
+    incumbent_test = run(test, exits.DEPLOYED)
+    kept = tuple(sorted(scored, key=lambda t: -t.net_r))
+    result = Sweep(
+        chosen=chosen,
+        confirmed=confirmed,
+        incumbent_train=incumbent_train,
+        incumbent_test=incumbent_test,
+        train_window=(start, cut),
+        test_window=(cut, end),
+        trials=kept,
+    )
+    if result.survived:
+        return result
+    if confirmed.instants < MIN_INSTANTS:
+        why = f"the held-out window scored only {confirmed.instants} instants"
+    elif confirmed.net_r <= 0:
+        why = (
+            f"{chosen.exit} earned {confirmed.net_r:+.4f} R net on data it had not "
+            "seen - it does not clear its own cost"
+        )
+    else:
+        why = (
+            f"{chosen.exit} earned {confirmed.net_r:+.4f} R on held-out data against "
+            f"the deployed trail's {incumbent_test.net_r:+.4f} R - not an improvement"
+        )
+    return Sweep(
+        chosen=chosen,
+        confirmed=confirmed,
+        incumbent_train=incumbent_train,
+        incumbent_test=incumbent_test,
+        train_window=(start, cut),
+        test_window=(cut, end),
+        trials=kept,
         refusal=why,
     )
 

@@ -35,7 +35,7 @@ value it is told: this one is verified against prices that already exist here.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import select
@@ -194,20 +194,31 @@ def align(
 
 
 def public_closes(
-    session: Session, *, symbol: str = REFERENCE_SYMBOL, timeframe: str = "H1"
+    session: Session,
+    *,
+    symbol: str = REFERENCE_SYMBOL,
+    timeframe: str = "H1",
+    since: datetime | None = None,
 ) -> dict[Any, float]:
-    """The public feed's closes for the reference instrument."""
+    """The public feed's closes for the reference instrument.
+
+    `since` bounds the read. Alignment only ever pairs a broker bar with a
+    public bar a few hours either side of it, so nothing older than the
+    broker's first bar can count - and an unbounded read planned across every
+    chunk of the table, four seconds each time, several times a cycle.
+    """
     instrument = session.scalar(select(Instrument).where(Instrument.symbol == symbol))
     provider = session.scalar(select(Provider.id).where(Provider.code == "yfinance"))
     if instrument is None or provider is None:
         return {}
-    rows = session.execute(
-        select(Bar.event_time, Bar.close).where(
-            Bar.instrument_id == instrument.id,
-            Bar.timeframe == timeframe,
-            Bar.provider_id == provider,
-        )
-    ).all()
+    conditions = [
+        Bar.instrument_id == instrument.id,
+        Bar.timeframe == timeframe,
+        Bar.provider_id == provider,
+    ]
+    if since is not None:
+        conditions.append(Bar.event_time >= since)
+    rows = session.execute(select(Bar.event_time, Bar.close).where(*conditions)).all()
     return {when: float(close) for when, close in rows}
 
 

@@ -244,8 +244,13 @@ def _resolve(
     entry: float,
     stop: float,
     target: float,
+    policy: Any = None,
 ) -> float | None:
     """What the bars after `index` did to this entry, in R.
+
+    With a `policy` the trade is managed after entry (see `learning.exits`);
+    without one it is the fixed geometry, scored by the live resolver's rule.
+
 
     Strictly after: the entry bar's own high and low say nothing about what
     happened next, and using them is lookahead wearing the costume of a fill.
@@ -254,6 +259,12 @@ def _resolve(
     window = series[index + 1 : index + 1 + HORIZON]
     if not window:
         return None
+    if policy is not None:
+        from app.learning import exits
+
+        return exits.walk(
+            list(window), side=side, entry=entry, stop=stop, target=target, policy=policy
+        )
     verdict = _outcome(
         list(window), side=side, entry=entry, stop=stop, target=target
     )
@@ -287,6 +298,7 @@ def measure(
     spread_price: float = DEFAULT_SPREAD,
     stop_multiple: float | None = None,
     target_multiple: float | None = None,
+    exit_policy: Any = None,
 ) -> Measurement:
     """Walk every instant in a stored series and score both arms.
 
@@ -435,6 +447,7 @@ def measure(
                     entry=pick.price,
                     stop=pick.price - distance * side,
                     target=pick.price + distance * target_mult * side,
+                    policy=exit_policy,
                 )
 
                 entry = control_module.entry_for(
@@ -454,6 +467,9 @@ def measure(
                         entry=entry.entry,
                         stop=entry.stop,
                         target=entry.target,
+                        # The coin flip is managed by the same policy, so the
+                        # comparison is of direction, not of management.
+                        policy=exit_policy,
                     )
                 )
 

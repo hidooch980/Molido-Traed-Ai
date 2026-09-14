@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Sequence
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import func, select
@@ -145,54 +145,69 @@ def snapshot(
     if not active_ids:
         return {}, instant
 
-    latest_revision = (
-        select(
-            Bar.instrument_id,
-            Bar.event_time,
-            func.max(Bar.revision).label("revision"),
-        )
-        .where(
-            Bar.instrument_id.in_(active_ids),
-            Bar.timeframe == timeframe.value,
-            Bar.provider_id == provider_id,
-            Bar.event_time <= cutoff,
-        )
-        .group_by(Bar.instrument_id, Bar.event_time)
-        .subquery()
-    )
-
-    ranked = (
-        select(
-            Bar,
-            func.row_number()
-            .over(
-                partition_by=Bar.instrument_id,
-                order_by=Bar.event_time.desc(),
+    def newest_bars(ids: list[uuid.UUID], start: datetime | None) -> list[Any]:
+        bounds = [Bar.event_time <= cutoff]
+        if start is not None:
+            bounds.append(Bar.event_time >= start)
+        latest_revision = (
+            select(
+                Bar.instrument_id,
+                Bar.event_time,
+                func.max(Bar.revision).label("revision"),
             )
-            .label("_rn"),
+            .where(
+                Bar.instrument_id.in_(ids),
+                Bar.timeframe == timeframe.value,
+                Bar.provider_id == provider_id,
+                *bounds,
+            )
+            .group_by(Bar.instrument_id, Bar.event_time)
+            .subquery()
         )
-        .join(
-            latest_revision,
-            (Bar.instrument_id == latest_revision.c.instrument_id)
-            & (Bar.event_time == latest_revision.c.event_time)
-            & (Bar.revision == latest_revision.c.revision),
+        ranked = (
+            select(
+                Bar,
+                func.row_number()
+                .over(
+                    partition_by=Bar.instrument_id,
+                    order_by=Bar.event_time.desc(),
+                )
+                .label("_rn"),
+            )
+            .join(
+                latest_revision,
+                (Bar.instrument_id == latest_revision.c.instrument_id)
+                & (Bar.event_time == latest_revision.c.event_time)
+                & (Bar.revision == latest_revision.c.revision),
+            )
+            .where(
+                Bar.instrument_id.in_(ids),
+                Bar.timeframe == timeframe.value,
+                Bar.provider_id == provider_id,
+                *bounds,
+            )
+            .subquery()
         )
-        .where(
-            Bar.timeframe == timeframe.value,
-            Bar.provider_id == provider_id,
-        )
-        .subquery()
-    )
-
-    rows = session.execute(
-        select(ranked).where(ranked.c._rn <= lookback)
-    ).all()
+        return list(session.execute(select(ranked).where(ranked.c._rn <= lookback)).all())
 
     by_instrument: dict[uuid.UUID, list[Any]] = {}
-    for row in rows:
+    for row in newest_bars(active_ids, _window_start(cutoff, timeframe, lookback)):
         values = row._mapping
-        instrument_id = values["instrument_id"]
-        by_instrument.setdefault(instrument_id, []).append(values)
+        by_instrument.setdefault(values["instrument_id"], []).append(values)
+
+    # The window is a speed-up and must never change which bars are read. An
+    # instrument that trades a few hours a day, or stopped printing a week
+    # ago, has its newest `lookback` bars further back than the window, and
+    # the bounded read alone dropped it from the cross-section: on production
+    # that changed the picks of nine of eighteen brain-and-source pairs. Those
+    # few are read again without the bound, exactly as before.
+    short = [i for i in active_ids if len(by_instrument.get(i, [])) < lookback]
+    if short:
+        for i in short:
+            by_instrument.pop(i, None)
+        for row in newest_bars(short, None):
+            values = row._mapping
+            by_instrument.setdefault(values["instrument_id"], []).append(values)
 
     built: dict[str, dict[str, Any]] = {}
     for instrument in instruments:
@@ -238,23 +253,96 @@ def _instant(
 
     active_ids = [instrument.id for instrument in instruments]
 
+    # The window is anchored on this feed's newest bar, not on the clock. A
+    # feed that stopped a month ago still has an instant - an old one, which
+    # the staleness checks downstream then refuse by name - rather than
+    # vanishing into "no instrument has enough bars".
+    def newest_since(floor: datetime | None) -> datetime | None:
+        conditions = [
+            Bar.timeframe == timeframe.value,
+            Bar.provider_id == provider_id,
+            Bar.event_time <= ceiling,
+        ]
+        if floor is not None:
+            conditions.append(Bar.event_time >= floor)
+        return session.scalar(select(func.max(Bar.event_time)).where(*conditions))
+
+    # Recent first, because a time constant is what lets the planner skip old
+    # chunks (5.5 s of planning without one). Only a feed silent for longer
+    # than the recent window pays for the full read.
+    newest = newest_since(ceiling - RECENT_WINDOW) or newest_since(None)
+    if newest is None:
+        return None
+    if newest.tzinfo is None:
+        newest = newest.replace(tzinfo=UTC)
+
     # Find the newest closed timestamp shared by enough active instruments.
     # This replaces one expensive latest-row query per instrument with one
     # grouped query over the hypertable.
-    stamp = session.scalar(
-        select(Bar.event_time)
-        .where(
+    def shared_stamp(floor: datetime | None) -> datetime | None:
+        conditions = [
             Bar.instrument_id.in_(active_ids),
             Bar.timeframe == timeframe.value,
             Bar.provider_id == provider_id,
             Bar.event_time <= ceiling,
+        ]
+        if floor is not None:
+            conditions.append(Bar.event_time >= floor)
+        return session.scalar(
+            select(Bar.event_time)
+            .where(*conditions)
+            .group_by(Bar.event_time)
+            .having(func.count(func.distinct(Bar.instrument_id)) >= MIN_FOR_INSTANT)
+            .order_by(Bar.event_time.desc())
+            .limit(1)
         )
-        .group_by(Bar.event_time)
-        .having(func.count(func.distinct(Bar.instrument_id)) >= MIN_FOR_INSTANT)
-        .order_by(Bar.event_time.desc())
-        .limit(1)
-    )
+
+    # Windowed first; the full read only if no shared stamp is that recent, so
+    # the answer is always the one the unbounded query would give.
+    stamp = shared_stamp(_window_start(newest, timeframe, LOOKBACK)) or shared_stamp(None)
     return stamp
+
+
+#: How much wall-clock time the snapshot reads, as a multiple of the bars it
+#: keeps. Markets shut at weekends and on holidays, so 80 hourly bars span more
+#: than 80 hours; three times covers a week's closure with room over.
+WINDOW_MARGIN = 3
+
+#: The narrowest the window may be, whatever the lookback.
+MIN_WINDOW = timedelta(days=14)
+
+#: Where the search for a feed's newest bar looks first.
+RECENT_WINDOW = timedelta(days=30)
+
+
+def _window_start(cutoff: datetime, timeframe: Timeframe, lookback: int) -> datetime:
+    """The oldest bar the snapshot needs to look at.
+
+    Without it every cycle read the whole history to keep the newest 80 bars:
+    24 seconds on 529,000 hourly rows, run several times per cycle on two
+    price series, and the collect cycle took seven minutes. Bounded to thirty
+    days the same query took 1.7 seconds. Only the old side is bounded - the
+    newest bar allowed is still the instant, so nothing after the moment being
+    decided on can enter.
+    """
+    return cutoff - max(timeframe.delta * lookback * WINDOW_MARGIN, MIN_WINDOW)
+
+
+def _pickable() -> frozenset[str] | None:
+    """The analysis symbols a decision may be recorded on, or None for any.
+
+    The traded list is written in the names orders are sent as; the ranking
+    works in analysis names. Gold is ranked as GCFUT and filled as XAUUSD,
+    so both spellings of an allowed instrument are allowed here - the same
+    mapping the order gate uses, so the two can never disagree.
+    """
+    from app.workers.autotrade import EXECUTION_SYMBOL, traded_universe
+
+    traded = traded_universe()
+    if not traded:
+        return None
+    analysis = {name for name, sent_as in EXECUTION_SYMBOL.items() if sent_as in traded}
+    return frozenset(traded | analysis)
 
 
 def _provider_id(session: Session, code: str) -> uuid.UUID | None:
@@ -310,7 +398,10 @@ def _record_candidates(
             continue  # the incumbent is already recorded, with richer fields
         needs = int(getattr(rule, "lookback", 0)) + 1
         view = deep if deep is not None and needs > LOOKBACK else built
-        picks = rule(view, universe=None)
+        # Scored only on what the accounts may trade. These brains judge each
+        # instrument on its own history, so narrowing their eligible set
+        # changes where their picks land, never how an instrument is scored.
+        picks = rule(view, universe=_pickable())
         if picks.empty:
             continue
         for symbols, side in ((picks.longs, "long"), (picks.shorts, "short")):
@@ -457,6 +548,9 @@ def record_cycle(
             .where(
                 Bar.timeframe == timeframe.value,
                 Provider.code == SOURCE_PUBLIC,
+                # Only a public bar newer than this series' own can put it
+                # behind; with none, the answer is "not behind" either way.
+                Bar.event_time > latest,
             )
         )
         if public_newest is not None:
@@ -502,7 +596,14 @@ def record_cycle(
         select(Instrument.symbol, func.max(Bar.event_time))
         .join(Bar, Bar.instrument_id == Instrument.id)
         .join(Provider, Provider.id == Bar.provider_id)
-        .where(Bar.timeframe == timeframe.value, Provider.code == price_source)
+        .where(
+            Bar.timeframe == timeframe.value,
+            Provider.code == price_source,
+            # Only a bar past the instant can make an instrument answered, so
+            # nothing older needs reading - and without a time constant the
+            # planner opened all 265 chunks: 4.7 s planning, 2.2 s running.
+            Bar.event_time > latest,
+        )
         .group_by(Instrument.symbol)
     ).all()
     moved_on = set()
@@ -525,11 +626,25 @@ def record_cycle(
     if not ranked.available:
         return {"recorded": 0, "reason": ranked.reason, "considered": ranked.considered}
 
+    # Picks only where the accounts may trade (owner's decision, 13 September).
+    #
+    # On the first bar after the weekend 40 decisions were recorded and not
+    # one became an order: the picks were NVDA, MSFT, WTI, XAUEUR - symbols
+    # the order gate refuses because they are not on the traded list. The
+    # ranking still runs across the whole cross-section, because it needs
+    # twenty instruments to be a ranking; only what is picked from it is
+    # held to the list. An empty list still means no limit.
+    allowed = _pickable()
+    dropped_off_list = 0
+
     written = 0
     duplicates = 0
     for picks, side in ((ranked.longs, "long"), (ranked.shorts, "short")):
         side_sign = 1 if side == "long" else -1
         for pick in picks:
+            if allowed is not None and pick.symbol not in allowed:
+                dropped_off_list += 1
+                continue
             result = journal_log.record_with_control(
                 session,
                 symbol=pick.symbol,
@@ -621,6 +736,7 @@ def record_cycle(
         "already_answered": len(answered),
         "already_answered_names": answered[:20],
         "candidates_recorded": candidate_written,
+        "picks_off_traded_list": dropped_off_list,
         "recorded": written,
         # Published rather than swallowed. A cycle that writes nothing because
         # everything was already recorded and one that writes nothing because

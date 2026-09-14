@@ -153,7 +153,10 @@ def _status(session: Session) -> str:
 
     mode, reason, _ = autopilot.mode_now()
     words = {"live": "زنده", "paper": "کاغذی", "halted": "متوقف"}
-    lines = [f"حالت اجرا: *{words.get(mode, mode)}*", f"دلیل: {reason}", ""]
+    # The first sentence only. The full reason runs to a paragraph of English
+    # and pushed the accounts it was meant to sit above off a phone screen.
+    short = str(reason).split(". ")[0][:160]
+    lines = [f"حالت اجرا: *{words.get(mode, mode)}*", f"دلیل: {short}", ""]
 
     live = 0
     for key, directory in sorted(bridge_dirs().items()):
@@ -200,26 +203,17 @@ def _positions(session: Session) -> str:
 
 
 def _health(session: Session) -> str:
-    from datetime import UTC, datetime, timedelta
+    """The same one-command health report an operator runs on the host.
 
-    from sqlalchemy import func, select
+    It used to say "services are up" and count the last two hours of
+    decisions - which is zero every weekend and says nothing about which
+    cycle stopped, the question this button is pressed to answer.
+    """
+    from app.workers.health_report import report
 
-    from app.models.journal import JournalEntry
-
-    since = datetime.now(UTC) - timedelta(hours=2)
-    recent = session.scalar(
-        select(func.count())
-        .select_from(JournalEntry)
-        .where(JournalEntry.opened_at >= since)
-    )
-    return "\n".join(
-        [
-            "سرویس‌ها بالا هستند.",
-            f"تصمیم‌های ثبت‌شده در دو ساعت اخیر: {recent or 0}",
-            "",
-            "این کانال فقط پاسخ می‌دهد و هرگز سفارشی ثبت نمی‌کند.",
-        ]
-    )
+    fresh, text = report(session)
+    head = "✅ همهٔ چرخه‌ها تازه‌اند." if fresh else "⚠️ دست‌کم یک چرخه عقب افتاده است."
+    return f"{head}\n\n```\n{text}\n```"
 
 
 def _drawdown(session: Session) -> str:
@@ -253,38 +247,85 @@ def _journal(session: Session) -> str:
     report = build_report(session, days=7)
     if not report["brains"]:
         return "در هفت روز اخیر تصمیمی ثبت نشده است."
-    lines = ["هفت روز اخیر، به تفکیک مغز:", ""]
-    for brain in report["brains"]:
-        edge = brain["edge_r"]
-        thin = " (نمونهٔ کم)" if brain["thin_sample"] else ""
+    lines = ["هفت روز اخیر، به تفکیک مغز (هر پوزیشن یک بار):", ""]
+    ordered = sorted(
+        report["brains"],
+        key=lambda b: (b.get("position_mean_r") is None, -(b.get("position_mean_r") or 0)),
+    )
+    for brain in ordered:
+        mean = brain.get("position_mean_r")
+        resolved = brain.get("positions_resolved", 0)
         lines.append(
-            f"• {brain['strategy']}: {brain['decided']} تصمیم، "
-            f"{brain['resolved']} حل‌شده، مجموع {brain['total_r']:+.2f}R"
-            + (f"، نسبت به کنترل {edge:+.4f}R" if edge is not None else "")
-            + thin
+            f"• {brain['strategy']}: {brain.get('positions', 0)} پوزیشن، "
+            f"{resolved} بسته‌شده، {brain.get('position_wins', 0)} برد"
+            + (f"، میانگین {mean:+.2f}R" if mean is not None else "")
         )
+    lines.append("")
+    lines.append(
+        "زیر ۵۰ پوزیشن بسته‌شده هیچ حکمی گرفته نمی‌شود. ژورنال همان دید را هر "
+        "ساعت دوباره ثبت می‌کند؛ این شمارش آن تکرارها را یکی می‌کند."
+    )
     return "\n".join(lines)
 
 
-def _why_no_trade(session: Session) -> str:
-    """The named refusals from the last order cycle, not a guess."""
-    from app.workers.autotrade import run_all_accounts
+#: How far back the refusal view reads.
+WHY_WINDOW_HOURS = 30
 
-    report = run_all_accounts(session)
-    lines = ["آخرین چرخهٔ سفارش:", ""]
-    for key, account in sorted((report.get("by_account") or {}).items()):
-        orders = account.get("orders", 0)
-        considered = account.get("considered")
-        head = f"• {key}: {orders} سفارش"
-        if considered is not None:
-            head += f" از {considered} تصمیم بررسی‌شده"
+
+def _why_no_trade(session: Session) -> str:
+    """The refusals the collector already wrote down, read - never re-run.
+
+    This used to call `run_all_accounts`, which is the order cycle itself:
+    a button in a channel that promises it cannot place an order ran the
+    gates, marked decisions as submitting and called the broker. The chat
+    container's bridges are mounted read-only, so the send failed - but a
+    decision marked before the send is one the collector then leaves alone.
+    Every refusal is already recorded per account in `during["refused"]`,
+    so this reads that and nothing else.
+    """
+    from collections import Counter
+    from datetime import UTC, datetime, timedelta
+
+    from sqlalchemy import select
+
+    from app.models.journal import ARM_RULE, JournalEntry
+
+    since = datetime.now(UTC) - timedelta(hours=WHY_WINDOW_HOURS)
+    rows = session.execute(
+        select(JournalEntry.during).where(
+            JournalEntry.arm == ARM_RULE, JournalEntry.opened_at >= since
+        )
+    ).scalars().all()
+
+    reasons: dict[str, Counter[str]] = {}
+    sent: Counter[str] = Counter()
+    for during in rows:
+        during = during or {}
+        for login, refusal in (during.get("refused") or {}).items():
+            text = str((refusal or {}).get("reason") or "").split(".")[0][:90]
+            reasons.setdefault(str(login), Counter())[text] += 1
+        for login, order in (during.get("orders") or {}).items():
+            sent[f"{login} {(order or {}).get('state') or '?'}"] += 1
+
+    if not reasons and not sent:
+        return (
+            f"در {WHY_WINDOW_HOURS} ساعت اخیر نه سفارشی ثبت شده و نه ردی. "
+            "اگر بازار بسته است، این همان بسته بودن بازار است."
+        )
+
+    lines = [f"{WHY_WINDOW_HOURS} ساعت اخیر، از ژورنال:", ""]
+    for login in sorted(set(reasons) | {key.split()[0] for key in sent}):
+        states = {k.split(" ", 1)[1]: v for k, v in sent.items() if k.split()[0] == login}
+        head = f"• {login}: " + (
+            "، ".join(f"{n} {state}" for state, n in sorted(states.items()))
+            if states
+            else "بدون سفارش"
+        )
         lines.append(head)
-        if account.get("refused"):
-            lines.append(f"   رد: {account['refused']}")
-        for skipped in (account.get("skipped") or [])[:3]:
-            lines.append(f"   — {skipped}")
+        for text, count in (reasons.get(login) or Counter()).most_common(3):
+            lines.append(f"   — {count}× {text}")
     lines.append("")
-    lines.append("هر رد با نام دلیلش ثبت می‌شود؛ «صفر سفارش» هیچ‌وقت بی‌دلیل نیست.")
+    lines.append("این پاسخ فقط می‌خواند؛ هیچ چرخهٔ سفارشی اجرا نمی‌کند.")
     return "\n".join(lines)
 
 

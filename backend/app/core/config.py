@@ -71,6 +71,12 @@ class Settings(BaseSettings):
     #: address ladder becomes one bucket holding everybody.
     trusted_proxy_hops: int = 0
 
+    #: Mark the session cookie Secure. True on any deployment served over
+    #: HTTPS; false only where the site is reached over plain HTTP (a bare IP,
+    #: a local test stack), because a Secure cookie over HTTP is dropped in
+    #: silence and sign-in appears to succeed while nothing is signed in.
+    session_cookie_secure: bool = False
+
     #: Where the API drops broker-login requests for the host agent to apply.
     #: The API runs in a container and MetaTrader runs on the host under Wine,
     #: so a shared directory is the seam - the alternative is handing a
@@ -194,7 +200,7 @@ class Settings(BaseSettings):
     #: registered is a refusal at cycle time, never a silent fallback - an
     #: account trading a brain nobody assigned is the mistake this exists
     #: to prevent.
-    account_strategies: str = ""
+    account_strategies: str = ""
     #: The instruments an order may be placed in, named by the symbol the
     #: order is actually sent as - `XAUUSD`, not the `GCFUT` series it was
     #: ranked on. Comma-separated; empty means no restriction, which is what

@@ -24,6 +24,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import AuthenticationError, Principal, require
 from app.api.guard import public_mutation
 from app.api.net import client_address, user_agent
+from app.core.config import get_settings
 from app.core.enums import AuditEventType, Permission
 from app.core.errors import MolidoError, ValidationFailedError
 from app.db.session import get_db
@@ -333,13 +334,10 @@ def sign_in(
         value=result.token,
         httponly=True,
         samesite="lax",
-        # Not Secure, because this deployment has no TLS - it is reachable by
-        # IP and has no certificate. Marking a cookie Secure over plain HTTP
-        # makes the browser drop it in silence: sign-in returns 200 and nothing
-        # is signed in, which is the most confusing failure available. This
-        # flips the day a domain and a certificate exist, and the comment is
-        # here so the reason travels with the line.
-        secure=False,
+        # Secure wherever the site is served over HTTPS. It stays a setting,
+        # not a constant: over plain HTTP a Secure cookie is dropped in
+        # silence - sign-in returns 200 and nothing is signed in.
+        secure=get_settings().session_cookie_secure,
         max_age=int(sessions_auth.SESSION_LIFETIME.total_seconds()),
         path="/",
     )
@@ -378,7 +376,13 @@ def sign_out(
     is the opposite of what pressing sign-out means.
     """
     ended = sessions_auth.sign_out(session, molido_session) if molido_session else False
-    response.delete_cookie(sessions_auth.COOKIE_NAME, path="/")
+    response.delete_cookie(
+        sessions_auth.COOKIE_NAME,
+        path="/",
+        secure=get_settings().session_cookie_secure,
+        httponly=True,
+        samesite="lax",
+    )
     return {
         "signed_out": True,
         "session_revoked": ended,

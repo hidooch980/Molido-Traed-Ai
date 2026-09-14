@@ -120,6 +120,59 @@ def _outcome(
     return None
 
 
+def _best_before_close(
+    bars: list[HasRange], *, side: int, entry: float, stop: float, target: float
+) -> float:
+    """The furthest the entry went in its favour, in R, before the closing bar.
+
+    Measured so stop management can be judged on evidence: a loser that had
+    reached +1R first is one a tighter trail would have saved, one that never
+    got past +0.2R is not. The closing bar is left out - inside one bar the
+    order of its high and low is unknowable, the same reason `_outcome` drops
+    a bar that touched both levels.
+    """
+    risk = abs(entry - stop)
+    best = 0.0
+    for bar in bars:
+        high, low = float(bar.high), float(bar.low)
+        if side > 0:
+            closes = low <= stop or high >= target
+            favour = high - entry
+        else:
+            closes = high >= stop or low <= target
+            favour = entry - low
+        if closes:
+            break
+        best = max(best, favour / risk)
+    return round(best, 3)
+
+
+def _worst_before_close(
+    bars: list[HasRange], *, side: int, entry: float, stop: float, target: float
+) -> float:
+    """The furthest the entry went against itself, in R, before the closing bar.
+
+    The other half of `_best_before_close`. A winner that never went below
+    -0.3 R is one a shorter stop would have kept; a winner that touched -0.9 R
+    is one a shorter stop would have lost. The closing bar is left out for the
+    same reason as there.
+    """
+    risk = abs(entry - stop)
+    worst = 0.0
+    for bar in bars:
+        high, low = float(bar.high), float(bar.low)
+        if side > 0:
+            closes = low <= stop or high >= target
+            against = low - entry
+        else:
+            closes = high >= stop or low <= target
+            against = entry - high
+        if closes:
+            break
+        worst = min(worst, against / risk)
+    return round(worst, 3)
+
+
 def _with_retraction(entry: JournalEntry, verdict: dict[str, Any]) -> dict[str, Any]:
     """The new verdict, carrying any withdrawn one along with it.
 
@@ -318,6 +371,12 @@ def resolve_open(
             {
                 "bars_to_resolve": len(bars),
                 "price_source": entry.price_source,
+                "best_r_before_close": _best_before_close(
+                    list(bars), side=side, entry=price, stop=stop, target=target
+                ),
+                "worst_r_before_close": _worst_before_close(
+                    list(bars), side=side, entry=price, stop=stop, target=target
+                ),
             },
         )
         resolved += 1

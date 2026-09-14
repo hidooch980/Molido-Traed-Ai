@@ -48,7 +48,7 @@ import uuid
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.core.errors import ValidationFailedError
@@ -524,6 +524,8 @@ def _challenge_gate(
     today: date,
     moment: datetime,
     in_news_window: bool | None = None,
+    live_positions: list[dict[str, Any]] | None = None,
+    specifications: dict[str, dict[str, Any]] | None = None,
 ) -> tuple[bool, str, float | None]:
     """Check the account against its prop rulebook, if it has one.
 
@@ -635,7 +637,10 @@ def _challenge_gate(
         starting_balance=float(account.starting_balance or 0.0),
         current_equity=equity,
         peak_equity=max(equity, float(account.starting_balance or 0.0)),
-        daily_starting_equity=equity,
+        # The day's opening balance, as FTMO writes the daily floor. This
+        # was the live equity, which re-anchored the floor every cycle so the
+        # daily rule could never be reached (found 14 Sep 2026).
+        daily_starting_equity=_day_open(session, published, moment) or equity,
         days_traded=0,
         open_positions=open_positions,
         # `getattr` because a stand-in account in a test predates the field,
@@ -694,7 +699,218 @@ def _challenge_gate(
             f"against it: {unverified or 'unspecified'}",
             None,
         )
-    return True, "", verdict.max_additional_risk_r
+    if live_positions is not None:
+        allowed, why, room_r = _prop_guard(
+            session,
+            book.rules,
+            account,
+            published,
+            live_positions,
+            specifications or {},
+            verdict.max_additional_risk_r,
+            moment,
+        )
+        return allowed, why, _r_as_equity_fraction(room_r, account, equity)
+    return True, "", _r_as_equity_fraction(verdict.max_additional_risk_r, account, equity)
+
+
+def _r_as_equity_fraction(room_r: float | None, account: Any, equity: float) -> float | None:
+    """The challenge engine's R, in the unit the order is sized in.
+
+    The engine counts R in the registration's `currency_per_r` ($1,500 on the
+    FTMO account); the order is sized as a fraction of equity (0.01 = 1%).
+    They were compared raw, so a room of 0.55 R never bound an order sized at
+    0.01 and no challenge limit ever reached a lot size (found 14 Sep 2026).
+    Without a currency figure there is nothing to convert, and None - no
+    cap from here - is what the caller already treats as "not binding".
+    """
+    per_r = getattr(account, "currency_per_r", None)
+    if room_r is None or not per_r or equity <= 0:
+        return None if room_r is None or not per_r else room_r
+    return room_r * float(per_r) / equity
+
+
+#: The most every open stop on one account may lose together, as a share of
+#: equity - on every account, prop rulebook or not. At a 19% setting mt5f held
+#: $27,099 (13.5%) behind stops on 14 Sep 2026 with nothing counting the sum.
+MAX_OPEN_RISK_FRACTION = 0.06
+
+
+def _open_risk_room(
+    positions: list[dict[str, Any]],
+    specifications: dict[str, dict[str, Any]],
+    equity: float,
+) -> tuple[bool, str, float]:
+    """Whether the book may grow, and by how much, as a fraction of equity."""
+    if equity <= 0:
+        return False, "open risk cap: the account published no equity", 0.0
+    open_risk = _open_stop_risk(positions, specifications)
+    if open_risk is None:
+        return False, (
+            "open risk cap: an open position has no stop or its symbol no tick "
+            "value, so what the book can lose cannot be priced"
+        ), 0.0
+    room = MAX_OPEN_RISK_FRACTION - open_risk / equity
+    if room <= 0:
+        return False, (
+            f"open risk cap: open stops risk {open_risk:,.0f} "
+            f"({open_risk / equity:.1%} of equity), at or above the "
+            f"{MAX_OPEN_RISK_FRACTION:.0%} cap"
+        ), 0.0
+    return True, "", room
+
+
+#: Share of the daily allowance that open stops may hold together. Each order
+#: used to be checked alone, so seven orders that each fitted added up to
+#: $11,077 behind stops against a $6,000 daily limit on 14 Sep 2026.
+OPEN_RISK_SHARE = 0.7
+
+#: Share of the daily allowance lost today after which nothing new opens.
+DAILY_STOP_SHARE = 0.5
+
+#: The next trade may risk at most this share of the room left before the
+#: daily floor (open stops counted), so four losses in a row still leave the
+#: day alive...
+DAILY_ROOM_SHARE = 0.25
+#: ...eight before the total floor...
+TOTAL_ROOM_SHARE = 0.125
+#: ...and, near the target, no more than half of what is still missing,
+#: counted at the 1.5 R target, so one loss cannot undo a nearly-passed phase.
+TARGET_GAP_SHARE = 0.5
+
+
+def _day_open(session: Session, published: dict[str, Any], moment: datetime) -> float | None:
+    from app.services import equity as equity_series
+
+    login = str(published.get("login") or "")
+    if not login:
+        return None
+    try:
+        return equity_series.day_open_balance(session, login, at=moment)
+    except Exception:  # noqa: BLE001 - unknown falls back to the old anchor
+        return None
+
+
+def _open_stop_risk(
+    positions: list[dict[str, Any]], specifications: dict[str, dict[str, Any]]
+) -> float | None:
+    """Account currency lost if every open stop fills, or None if unpriceable."""
+    total = 0.0
+    for position in positions:
+        entry = float(position.get("price_open") or 0.0)
+        stop = float(position.get("stop") or 0.0)
+        volume = float(position.get("volume") or 0.0)
+        spec = specifications.get(str(position.get("symbol") or "")) or {}
+        tick = float(spec.get("tick_size") or 0.0)
+        value = float(spec.get("tick_value") or 0.0)
+        if not stop or tick <= 0 or value <= 0:
+            return None
+        total += abs(entry - stop) / tick * value * volume
+    return total
+
+
+def _prop_guard(
+    session: Session,
+    rules: Any,
+    account: Any,
+    published: dict[str, Any],
+    positions: list[dict[str, Any]],
+    specifications: dict[str, dict[str, Any]],
+    headroom_r: float | None,
+    moment: datetime,
+) -> tuple[bool, str, float | None]:
+    """The limits a challenge is really lost on, counted across the whole book."""
+    from app.services import equity as equity_series
+
+    start = float(getattr(account, "starting_balance", 0.0) or 0.0)
+    daily = getattr(rules, "max_daily_drawdown_pct", None)
+    if not isinstance(daily, (int, float)) or isinstance(daily, bool) or start <= 0:
+        return True, "", headroom_r
+    allowance = float(daily) * start
+    equity = float(published.get("equity") or 0.0)
+    login = str(published.get("login") or "")
+
+    open_risk = _open_stop_risk(positions, specifications)
+    if open_risk is None:
+        return False, (
+            "prop guard: an open position has no stop or its symbol no tick "
+            "value, so the day's worst case cannot be priced"
+        ), None
+    if open_risk > OPEN_RISK_SHARE * allowance:
+        return False, (
+            f"prop guard: open stops risk {open_risk:,.0f}, above "
+            f"{OPEN_RISK_SHARE:.0%} of the {allowance:,.0f} daily allowance"
+        ), None
+
+    day_open = _day_open(session, published, moment)
+    if day_open is not None and day_open - equity >= DAILY_STOP_SHARE * allowance:
+        return False, (
+            f"prop guard: down {day_open - equity:,.0f} today, past "
+            f"{DAILY_STOP_SHARE:.0%} of the {allowance:,.0f} daily allowance"
+        ), None
+
+    target = getattr(rules, "profit_target_pct", None)
+    since = getattr(account, "created_at", None)
+    if (
+        isinstance(target, (int, float))
+        and not isinstance(target, bool)
+        and equity >= start * (1 + float(target))
+        and since is not None
+        and login
+    ):
+        days = equity_series.trading_days(session, login, since=since)
+        need = getattr(rules, "min_trading_days", None)
+        if not isinstance(need, int) or isinstance(need, bool) or days >= need:
+            return False, (
+                f"prop guard: the target is reached ({equity:,.0f}) on {days} "
+                "trading days, so nothing new opens"
+            ), None
+
+    per_r = getattr(account, "currency_per_r", None)
+    if per_r:
+        budget = _risk_budget(
+            rules, start=start, equity=equity, day_open=day_open,
+            allowance=allowance, open_risk=open_risk,
+        )
+        room_r = max(0.0, budget / float(per_r))
+        headroom_r = room_r if headroom_r is None else min(headroom_r, room_r)
+        if headroom_r <= 0:
+            return False, "prop guard: no room is left for another trade today", 0.0
+    return True, "", headroom_r
+
+
+def _risk_budget(
+    rules: Any,
+    *,
+    start: float,
+    equity: float,
+    day_open: float | None,
+    allowance: float,
+    open_risk: float,
+) -> float:
+    """The most the next trade may risk, in account currency.
+
+    A fixed percentage is blind to where the challenge stands: the same size
+    on the first morning and one loss from the floor, and the same size a
+    thousand dollars short of the target as ten thousand. Here every limit
+    that can end or waste the phase takes its share, and the smallest wins.
+    """
+    daily_floor = (day_open if day_open is not None else equity) - allowance
+    candidates = [
+        OPEN_RISK_SHARE * allowance - open_risk,
+        DAILY_ROOM_SHARE * (equity - open_risk - daily_floor),
+    ]
+    total = getattr(rules, "max_total_drawdown_pct", None)
+    if isinstance(total, (int, float)) and not isinstance(total, bool):
+        candidates.append(TOTAL_ROOM_SHARE * (equity - open_risk - start * (1 - float(total))))
+    target = getattr(rules, "profit_target_pct", None)
+    if isinstance(target, (int, float)) and not isinstance(target, bool):
+        gap = start * (1 + float(target)) - equity
+        if gap > 0:
+            from app.workers.forward import TARGET_MULTIPLE
+
+            candidates.append(TARGET_GAP_SHARE * gap / max(TARGET_MULTIPLE, 1.0))
+    return max(0.0, min(candidates))
 
 
 def _account_state(
@@ -1041,14 +1257,19 @@ def _maybe_number(value: Any) -> float | None:
         return None
 
 
-#: How many resolved decisions a timeframe needs before its own measurement
-#: is allowed to set the ceiling. Below this the fixed ceiling stands: a
-#: handful of trades is not an edge, and letting six samples widen or narrow
-#: what may be paid is fitting the gate to noise.
-MIN_FOR_MEASURED_CEILING = 200
+#: How many resolved *positions* a timeframe needs, for this account's own
+#: brains, before its measurement may set the ceiling. Below this the fixed
+#: ceiling stands: a handful of trades is not an edge, and letting a few
+#: samples widen or narrow what may be paid is fitting the gate to noise.
+#:
+#: Positions, not rows. The recorder rewrites a held view every cycle, so the
+#: old threshold of 200 rows was met by a few dozen real trades.
+MIN_FOR_MEASURED_CEILING = 50
 
 
-def _measured_edge(session: Session) -> dict[str, float]:
+def _measured_edge(
+    session: Session, strategies: frozenset[str] | None = None
+) -> dict[str, float]:
     """Expectancy in R per timeframe, from this deployment's own journal.
 
     The fixed ceiling answered "how much may execution cost" without ever
@@ -1067,28 +1288,65 @@ def _measured_edge(session: Session) -> dict[str, float]:
     Gross of costs on purpose: the journal resolves decisions against the
     price series, so what it reports is what the signal is worth before
     paying for it. That is exactly the quantity a cost has to fit inside.
+
+    **Whose edge, counted how** (owner's decision, 14 September). This used
+    to average every rule row of every brain: 1,313 H1 rows at -0.200 R, so
+    one number from all eight brains - repeats of held positions, symbols
+    no account may trade, brains no account uses - set a zero ceiling on
+    every account and stopped their orders. It now reads only the brains
+    this account trades, only on the traded list, and counts each position
+    once. Below MIN_FOR_MEASURED_CEILING positions the standing ceiling
+    applies.
     """
-    rows = session.execute(
-        select(
-            JournalEntry.timeframe,
-            func.avg(JournalEntry.r_multiple),
-            func.count(JournalEntry.id),
-        )
-        .where(
-            JournalEntry.arm == ARM_RULE,
-            JournalEntry.closed_at.is_not(None),
-            JournalEntry.r_multiple.is_not(None),
-        )
-        .group_by(JournalEntry.timeframe)
-    ).all()
+    query = select(
+        JournalEntry.strategy,
+        JournalEntry.symbol,
+        JournalEntry.decision,
+        JournalEntry.price_source,
+        JournalEntry.timeframe,
+        JournalEntry.opened_at,
+        JournalEntry.closed_at,
+        JournalEntry.outcome,
+        JournalEntry.r_multiple,
+    ).where(JournalEntry.arm == ARM_RULE)
+    if strategies is not None:
+        query = query.where(JournalEntry.strategy.in_(sorted(strategies)))
+    rows = session.execute(query).all()
+
+    traded = traded_universe()
+    far_future = datetime.max.replace(tzinfo=UTC)
+
+    def aware(moment: datetime) -> datetime:
+        return moment if moment.tzinfo is not None else moment.replace(tzinfo=UTC)
+
+    grouped: dict[tuple[Any, ...], list[Any]] = {}
+    for row in rows:
+        if not row.timeframe or row.outcome == "excluded":
+            continue
+        if traded and _tradeable_symbol(row.symbol) not in traded:
+            continue
+        key = (row.strategy, row.symbol, row.decision, row.price_source, row.timeframe)
+        grouped.setdefault(key, []).append(row)
+
+    totals: dict[str, list[float]] = {}
+    for key, group in grouped.items():
+        group.sort(key=lambda r: aware(r.opened_at))
+        open_until: datetime | None = None
+        for row in group:
+            opened = aware(row.opened_at)
+            closed = aware(row.closed_at) if row.closed_at is not None else far_future
+            if open_until is None or opened > open_until:
+                if row.r_multiple is not None and row.closed_at is not None:
+                    totals.setdefault(str(key[4]), []).append(float(row.r_multiple))
+                open_until = closed
+            else:
+                open_until = max(open_until, closed)
 
     edges: dict[str, float] = {}
-    for timeframe, expectancy, count in rows:
-        if not timeframe or expectancy is None:
+    for timeframe, values in totals.items():
+        if len(values) < MIN_FOR_MEASURED_CEILING:
             continue
-        if int(count or 0) < MIN_FOR_MEASURED_CEILING:
-            continue
-        edges[str(timeframe)] = float(expectancy)
+        edges[timeframe] = sum(values) / len(values)
     return edges
 
 
@@ -1452,6 +1710,9 @@ def run_cycle(
     # brain does not: whether the challenge survives this trade losing. An
     # account with none registered passes - inventing limits it was never
     # given would be a rule nobody agreed to.
+    specifications = {
+        str(s.get("name")): s for s in (feed.symbols().get("symbols") or [])
+    }
     passes, why, headroom_r = _challenge_gate(
         session,
         published,
@@ -1463,6 +1724,8 @@ def run_cycle(
         # question is whether trading is restricted right now, not whether one
         # instrument happens to be exposed.
         in_news_window=_any_high_impact_now(moment, releases),
+        live_positions=live_positions,
+        specifications=specifications,
     )
     if not passes:
         return _report(mode=mode, refused=why)
@@ -1470,6 +1733,12 @@ def run_cycle(
         # The tighter of the two governs. Two limits consulted and the looser
         # obeyed is one limit consulted.
         verdict.permitted_risk_r = headroom_r
+
+    book_ok, book_why, book_room = _open_risk_room(live_positions, specifications, equity)
+    if not book_ok:
+        return _report(mode=mode, refused=book_why, open_positions=open_now)
+    if book_room < verdict.permitted_risk_r:
+        verdict.permitted_risk_r = book_room
 
     cap = _max_open_positions()
     room = cap - open_now
@@ -1526,8 +1795,9 @@ def run_cycle(
     sides_by_timeframe: dict[tuple[str, str], set[str]] = {}
     votes = _fresh_votes(session, moment, sides_by_timeframe)
     # Read once. It is one aggregate over the journal and it does not change
-    # inside a cycle.
-    edges = _measured_edge(session)
+    # inside a cycle - and it is this account's own brains' edge, not the
+    # fleet's.
+    edges = _measured_edge(session, strategies)
 
     # Why a decision was not traded, kept with the decision.
     #
@@ -2105,6 +2375,7 @@ def _fresh_votes(
         )
     ).all()
 
+    silenced = _silenced_brains(session, moment)
     votes: dict[tuple[str, str], set[str]] = {}
     # Filled for the caller when one is supplied: which sides exist on
     # each timeframe, which is a different question from how many brains
@@ -2116,11 +2387,48 @@ def _fresh_votes(
             minutes=MAX_DECISION_AGE_MINUTES + _bar_minutes(row)
         ):
             continue
-        votes.setdefault((row.symbol, row.decision), set()).add(row.strategy)
+        if row.strategy not in silenced:
+            votes.setdefault((row.symbol, row.decision), set()).add(row.strategy)
         by_timeframe.setdefault((row.symbol, row.timeframe), set()).add(
             row.decision
         )
     return votes
+
+#: Positions a brain needs before a losing record takes its vote away.
+MIN_POSITIONS_TO_SILENCE = 15
+
+_SILENCED_CACHE: dict[str, frozenset[str]] = {}
+
+
+def _silenced_brains(session: Session, moment: datetime) -> frozenset[str]:
+    """Brains that lose after cost and to their own coin flip: no vote.
+
+    A brain earning -0.53 R net and 0.33 R under its control was vetoing
+    orders from brains ahead of theirs (mt5d, 14 Sep 2026). Recording stays
+    - its decisions are still journalled and measured, and it gets the vote
+    back the day its record turns. Computed once per cycle hour.
+    """
+    key = moment.strftime("%Y-%m-%dT%H")
+    if key in _SILENCED_CACHE:
+        return _SILENCED_CACHE[key]
+    try:
+        from app.learning import brain_selection
+
+        silenced = frozenset(
+            s.strategy
+            for s in brain_selection.standings(session)
+            if s.positions >= MIN_POSITIONS_TO_SILENCE
+            and s.net_r is not None
+            and s.net_r < 0
+            and s.over_control is not None
+            and s.over_control < 0
+        )
+    except Exception:  # noqa: BLE001 - unmeasured takes no vote away
+        silenced = frozenset()
+    _SILENCED_CACHE.clear()
+    _SILENCED_CACHE[key] = silenced
+    return silenced
+
 
 #: Brains an unassigned account may be given, in a fixed order.
 #:

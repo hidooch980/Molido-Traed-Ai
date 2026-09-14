@@ -992,7 +992,7 @@ const en: Dictionary = {
   "home.live": "What is live",
   "home.notBuilt": "Not built yet",
   "home.notBuiltBody":
-    "The cognitive brain, AI council, risk brain, execution engine and position guardian are all built and tested. What is not built is a live broker connection: the only adapter is a simulator, execution is disabled, dry run is on and the kill switch defaults to engaged. Authentication is off because no endpoint changes state — and the application refuses to start if one is ever added without it.",
+    "The cognitive brain, AI council, risk brain, execution engine and position guardian are all built and tested. What is not proven is a profitable edge. Whether this deployment may send orders — execution, dry run, kill switch — is read live on the Execution page, and every account that can place an order must sign in with two-factor authentication.",
 
   "markets.title": "Instruments",
   "markets.subtitle":
@@ -2340,7 +2340,7 @@ const fa: Dictionary = {
   "home.live": "چه چیزی فعال است",
   "home.notBuilt": "هنوز ساخته نشده",
   "home.notBuiltBody":
-    "مغز شناختی، شورای هوش مصنوعی، مغز ریسک، موتور اجرا و نگهبان پوزیشن همگی ساخته و تست شده‌اند. آنچه ساخته نشده اتصال به بروکر واقعی است: تنها آداپتور موجود شبیه‌ساز است، اجرا خاموش است، dry-run روشن است و کلید قطع به‌صورت پیش‌فرض فعال. احراز هویت خاموش است چون هیچ endpointی state را تغییر نمی‌دهد — و اگر روزی یکی اضافه شود، اپلیکیشن بدون آن بالا نمی‌آید.",
+    "مغز شناختی، شورای هوش مصنوعی، مغز ریسک، موتور اجرا و نگهبان پوزیشن همگی ساخته و تست شده‌اند. آنچه اثبات نشده لبهٔ سودده است. اینکه این استقرار اجازهٔ فرستادن سفارش دارد یا نه — اجرا، dry-run، کلید قطع — زنده در صفحهٔ «اجرا» خوانده می‌شود، و هر حسابی که بتواند سفارش بفرستد باید با ورود دومرحله‌ای وارد شود.",
 
   "markets.title": "ابزارهای معاملاتی",
   "markets.subtitle":

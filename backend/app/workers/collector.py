@@ -888,6 +888,11 @@ async def collect(ctx: dict) -> dict[str, Any]:
         reason=forward.get("reason"),
         considered=forward.get("considered"),
         resolved=resolved.get("resolved", 0),
+        # Stops moved this cycle. Only the returned payload carried it, so
+        # whether trailing did anything was answerable only by reading the
+        # positions on every terminal.
+        trailing_moved=(payload.get("trailing") or {}).get("moved", 0),
+        trailing_reason=(payload.get("trailing") or {}).get("reason"),
     )
 
     # And the same for orders, for exactly the same reason.
@@ -1323,6 +1328,20 @@ async def weekly_scorecard_job(ctx: dict) -> dict[str, Any]:
     return report
 
 
+async def brain_selection_job(ctx: dict) -> dict[str, Any]:
+    """The daily brain proposal. Proposal mode: logged and sent, never applied."""
+    from app.learning import brain_selection
+
+    result = await asyncio.to_thread(brain_selection.run)
+    log.info(
+        "brain_selection.proposal",
+        proposals=result["proposals"],
+        standings=result["standings"],
+        sent=result["sent"],
+    )
+    return result
+
+
 def _cron_jobs() -> list:
     from arq import cron
 
@@ -1344,6 +1363,8 @@ def _cron_jobs() -> list:
         # Ten minutes after the day it folds has ended, so the decision it
         # produces is inside its freshness window rather than a day past it.
         cron(aggregate_daily_job, hour={AGGREGATE_HOUR}, minute={10}, max_tries=1),
+        # Daily, before London opens: which brain each account should trade.
+        cron(brain_selection_job, hour={6}, minute={20}, max_tries=1),
         # The chat channel is NOT here. It ran on this schedule and arrived
         # twenty-five minutes late, because one collection cycle takes
         # minutes and everything behind it waits - so an operator got

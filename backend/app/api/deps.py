@@ -121,6 +121,16 @@ class Principal:
     def can(self, permission: Permission) -> bool:
         return permission in self.permissions
 
+    @property
+    def actor(self) -> str:
+        """Who to record as having made a change.
+
+        The user id for a signed-in person or a key issued to one; the role
+        otherwise. Routes used to read a `subject` attribute this class never
+        had, so every "changed by" was written empty.
+        """
+        return str(self.user_id) if self.user_id else self.role.value
+
 
 # The principal used when authentication is switched off. It holds READ only —
 # so if a mutating route is ever added while auth is disabled, the route is

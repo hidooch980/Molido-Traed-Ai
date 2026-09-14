@@ -96,6 +96,31 @@ class TestTheDoorStaysOpen:
         assert locked.post("/api/v1/session/sign-out").status_code == 200
 
 
+class TestTheSessionCookie:
+    """Over HTTPS the cookie must be Secure; over plain HTTP it must not be,
+    or the browser drops it and sign-in silently does nothing."""
+
+    def _cookie(self, locked):
+        response = locked.post(
+            "/api/v1/session/sign-in", json={"email": EMAIL, "password": PASSWORD}
+        )
+        assert response.status_code == 200, response.text
+        return response.headers["set-cookie"].lower()
+
+    def test_secure_when_the_deployment_says_https(self, locked, owner, monkeypatch):
+        from app.core.config import get_settings
+
+        monkeypatch.setattr(get_settings(), "session_cookie_secure", True, raising=False)
+        cookie = self._cookie(locked)
+        assert "; secure" in cookie
+        assert "httponly" in cookie
+
+    def test_not_secure_by_default(self, locked, owner):
+        cookie = self._cookie(locked)
+        assert "; secure" not in cookie
+        assert "httponly" in cookie
+
+
 class TestEverythingElseIsRefused:
     @pytest.mark.parametrize(
         "path",

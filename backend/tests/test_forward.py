@@ -101,6 +101,89 @@ class TestTheSnapshotIsOneInstant:
         assert len(built) == 30
         assert all(len(v["closes"]) == forward.LOOKBACK for v in built.values())
 
+    def test_a_weekend_inside_the_lookback_still_fills_the_window(
+        self, session, provider
+    ):
+        """The window is bounded in wall-clock time, and markets shut. Eighty
+        hourly bars with a 64-hour weekend in the middle must still all be read,
+        or every Monday would rank fewer instruments than the rule needs."""
+        from app.brain.crosssection import RANKED_UNIVERSE
+        from app.core.enums import AssetClass
+
+        for n, symbol in enumerate(sorted(RANKED_UNIVERSE)[:30]):
+            instrument = Instrument(symbol=symbol, name=f"Gap {n}", asset_class=AssetClass.FOREX)
+            session.add(instrument)
+            session.flush()
+            for i in range(forward.LOOKBACK):
+                hours_back = forward.LOOKBACK - i + (64 if i < forward.LOOKBACK // 2 else 0)
+                close = 100.0 + (n if i == forward.LOOKBACK - 1 else 0)
+                session.add(
+                    Bar(
+                        instrument_id=instrument.id,
+                        timeframe=Timeframe.H1.value,
+                        provider_id=provider.id,
+                        event_time=NOW - timedelta(hours=hours_back),
+                        revision=1,
+                        ingested_at=NOW,
+                        open=close,
+                        high=close + 1,
+                        low=close - 1,
+                        close=close,
+                        volume=100,
+                        quality_score=1.0,
+                    )
+                )
+        session.flush()
+
+        built, latest = forward.snapshot(session, as_of=NOW)
+
+        assert latest is not None
+        assert len(built) == 30
+        assert all(len(v["closes"]) == forward.LOOKBACK for v in built.values())
+
+    def test_an_instrument_whose_history_outruns_the_window_is_still_read(
+        self, market, session, provider
+    ):
+        """The window only speeds the read up. An instrument whose newest
+        eighty bars began before it - a stock that trades seven hours a day,
+        a series that stopped a fortnight ago - must come back with exactly
+        the bars the unbounded read would have given it."""
+        from app.core.enums import AssetClass
+
+        slow = Instrument(symbol="EURSEK", name="Sparse", asset_class=AssetClass.FOREX)
+        session.add(slow)
+        session.flush()
+        for i in range(forward.LOOKBACK):
+            session.add(
+                Bar(
+                    instrument_id=slow.id,
+                    timeframe=Timeframe.H1.value,
+                    provider_id=provider.id,
+                    # One bar every seven hours: eighty of them span 23 days.
+                    event_time=NOW - timedelta(hours=7 * (forward.LOOKBACK - i)),
+                    revision=1,
+                    ingested_at=NOW,
+                    open=50.0 + i,
+                    high=51.0 + i,
+                    low=49.0 + i,
+                    close=50.0 + i,
+                    volume=1,
+                    quality_score=1.0,
+                )
+            )
+        session.flush()
+
+        built, _ = forward.snapshot(session, as_of=NOW)
+
+        assert "EURSEK" in built
+        assert built["EURSEK"]["closes"] == [50.0 + i for i in range(forward.LOOKBACK)]
+
+    def test_bars_older_than_the_window_are_not_read(self):
+        start = forward._window_start(NOW, Timeframe.H1, forward.LOOKBACK)
+        assert start == NOW - timedelta(days=14)
+        deep = forward._window_start(NOW, Timeframe.H1, 282)
+        assert deep == NOW - timedelta(hours=282 * forward.WINDOW_MARGIN)
+
     def test_an_instrument_without_enough_history_is_left_out(self, session):
         built, latest = forward.snapshot(session, as_of=NOW)
 
@@ -545,6 +628,46 @@ class TestEveryBrainRecords:
 
         assert first.new and second.new
         assert first.entry_id != second.entry_id
+
+
+class TestPicksLandOnlyWhereTheAccountsMayTrade:
+    """40 decisions on the first bar after the weekend and not one order: the
+    picks were symbols the order gate refuses. The ranking still needs the
+    whole cross-section; only the picks are held to the traded list."""
+
+    def test_every_rule_arm_decision_is_on_the_traded_list(
+        self, market, session, monkeypatch
+    ):
+        from app.brain.crosssection import RANKED_UNIVERSE
+        from app.workers import autotrade
+
+        universe = sorted(RANKED_UNIVERSE)[:30]
+        allowed = frozenset(universe[:3] + universe[-3:])
+        monkeypatch.setattr(autotrade, "traded_universe", lambda: allowed)
+
+        result = forward.record_cycle(session)
+
+        assert result["considered"] >= 20
+        rule_symbols = {
+            row.symbol
+            for row in session.query(JournalEntry).filter(JournalEntry.arm == ARM_RULE)
+        }
+        assert rule_symbols
+        assert rule_symbols <= allowed
+
+    def test_an_empty_list_still_means_no_limit(self, market, session, monkeypatch):
+        from app.workers import autotrade
+
+        monkeypatch.setattr(autotrade, "traded_universe", lambda: frozenset())
+
+        assert forward._pickable() is None
+
+    def test_gold_is_allowed_under_both_of_its_names(self, monkeypatch):
+        from app.workers import autotrade
+
+        monkeypatch.setattr(autotrade, "traded_universe", lambda: frozenset({"XAUUSD"}))
+
+        assert forward._pickable() == frozenset({"XAUUSD", "GCFUT"})
 
 
 class TestAnInstrumentTheMarketHasAnsweredIsNotDecidedOn:

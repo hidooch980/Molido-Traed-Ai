@@ -525,3 +525,54 @@ class TestARetractedVerdictSurvivesTheRescore:
 
         assert row.outcome == "abandoned"
         assert row.after["retracted"] == {"outcome": "loss"}
+
+
+class TestHowFarItWentFirst:
+    """Whether a tighter stop would have saved a loser is a question about
+    the path, and the verdict alone throws the path away."""
+
+    def test_a_loser_records_the_best_it_reached_before_the_stop(
+        self, session, provider, symbol
+    ):
+        row = entry(session)  # risk 2.5, target +2.5
+        bars(session, provider, symbol, [(99.5, 101.25), (98.0, 100.5), (97.0, 99.0)])
+
+        resolve.resolve_open(session, now=NOW + timedelta(hours=5))
+
+        assert row.outcome == "loss"
+        assert row.after["best_r_before_close"] == pytest.approx(0.5)
+
+    def test_the_closing_bar_is_not_counted(self, session, provider, symbol):
+        """The stop bar rose to +0.8R too, but inside one bar nobody knows
+        whether that came before the stop."""
+        row = entry(session)
+        bars(session, provider, symbol, [(99.5, 100.625), (97.0, 102.0)])
+
+        resolve.resolve_open(session, now=NOW + timedelta(hours=5))
+
+        assert row.outcome == "loss"
+        assert row.after["best_r_before_close"] == pytest.approx(0.25)
+
+
+class TestHowFarItWentAgainst:
+    """The other half of the path: how deep a trade went before it closed."""
+
+    def test_a_winner_records_the_worst_it_saw_before_the_target(
+        self, session, provider, symbol
+    ):
+        row = entry(session)  # risk 2.5, target +2.5
+        bars(session, provider, symbol, [(98.75, 100.5), (99.5, 101.0), (100.0, 103.0)])
+
+        resolve.resolve_open(session, now=NOW + timedelta(hours=5))
+
+        assert row.outcome == "win"
+        assert row.after["worst_r_before_close"] == pytest.approx(-0.5)
+
+    def test_the_closing_bar_is_not_counted_against_it(self, session, provider, symbol):
+        row = entry(session)
+        bars(session, provider, symbol, [(99.5, 100.5), (97.0, 99.0)])
+
+        resolve.resolve_open(session, now=NOW + timedelta(hours=5))
+
+        assert row.outcome == "loss"
+        assert row.after["worst_r_before_close"] == pytest.approx(-0.2)

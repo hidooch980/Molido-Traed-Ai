@@ -29,7 +29,7 @@ import pathlib
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
@@ -61,6 +61,16 @@ PROVIDER_CODE = "metatrader"
 #: in summer - so a constant is right for six months and silently wrong for the
 #: other six, which is the same failure it would be replacing.
 STAMP_FORMAT = "%Y.%m.%d %H:%M:%S"
+
+#: How many of the newest stored bars are still rewritten each cycle. The bar
+#: that has just closed can be restated by the broker; bars five back cannot
+#: in practice, and rewriting all 500 every pass was most of the cycle.
+REWRITE_BARS = 5
+
+#: How far back to look for what is already stored. A time constant lets the
+#: planner skip old chunks; an instrument silent longer than this is simply
+#: written in full, as it always was.
+STORED_LOOKBACK = timedelta(days=30)
 
 
 def _provider(session: Session) -> Provider:
@@ -132,7 +142,14 @@ def _measure_offset(
             None, 0, None, None, f"the reference file is unreadable: {problem}"
         )
 
-    return broker_offset.align(broker_offset.public_closes(session), published)
+    if not published:
+        return broker_offset.align({}, published)
+    # Widest lag either way, so every pairing align() could try is still read.
+    reach = timedelta(hours=max(abs(lag) for lag in broker_offset.CANDIDATES) + 1)
+    since = min(published) - reach
+    return broker_offset.align(
+        broker_offset.public_closes(session, since=since), published
+    )
 
 
 def ingest(
@@ -199,7 +216,34 @@ def ingest(
         }
     shift = timedelta(hours=offset.hours or 0)
 
+    # What is already stored, so settled bars are not rewritten every cycle.
+    #
+    # The bridge republishes its whole window - 500 hourly bars, 240 faster
+    # ones - every twenty seconds, and each cycle upserted all of it: ~38,000
+    # rows a pass, nearly every one identical to what was there, 88 s of a
+    # 211 s cycle on production. Only the newest few bars can still be moving,
+    # so rows older than the stored newest minus REWRITE_BARS are skipped.
+    # Bounded to the recent past because a time constant is what lets the
+    # planner skip old chunks; an instrument with nothing that recent is
+    # written in full, as before.
+    stored_newest: dict[Any, datetime] = {}
+    for instrument_id, newest in session.execute(
+        select(Bar.instrument_id, func.max(Bar.event_time))
+        .where(
+            Bar.provider_id == provider.id,
+            Bar.timeframe == timeframe.value,
+            Bar.event_time >= moment - STORED_LOOKBACK,
+        )
+        .group_by(Bar.instrument_id)
+    ).all():
+        if newest is not None:
+            stored_newest[instrument_id] = (
+                newest if newest.tzinfo is not None else newest.replace(tzinfo=UTC)
+            )
+    keep_back = timeframe.delta * REWRITE_BARS
+
     written = 0
+    skipped_settled = 0
     files = 0
     failures: list[str] = []
     #: Half-written lines skipped. Counted rather than silent: a file that is
@@ -214,7 +258,7 @@ def ingest(
 
         try:
             instrument = _instrument(session, symbol)
-            rows = []
+            rows: list[dict[str, Any]] = []
             with path.open(newline="", encoding="utf-8") as handle:
                 for row in csv.DictReader(handle):
                     # Read in the terminal's clock, then moved to UTC by the
@@ -263,10 +307,23 @@ def ingest(
             failures.append(f"{symbol}: {type(problem).__name__}")
             continue
 
+        newest_stored = stored_newest.get(instrument.id)
+        if newest_stored is not None:
+            floor = newest_stored - keep_back
+            fresh = [row for row in rows if row["event_time"] >= floor]
+            skipped_settled += len(rows) - len(fresh)
+            rows = fresh
+
         if not rows:
             continue
 
-        statement = pg_insert(Bar).values(rows)
+        # The rows go as parameters, not baked into the statement. `.values(rows)`
+        # built a fresh INSERT with ~13 bind parameters per bar - half a million
+        # across a cycle - and compiled each one from scratch: profiled on
+        # production at 133 s of a 227 s ingest, against 50 s actually
+        # executing. One statement compiled once, rows sent in batches, writes
+        # the same rows under the same conflict rule.
+        statement = pg_insert(Bar)
         statement = statement.on_conflict_do_update(
             index_elements=[
                 Bar.instrument_id,
@@ -284,12 +341,13 @@ def ingest(
                 "ingested_at": statement.excluded.ingested_at,
             },
         )
-        session.execute(statement)
+        session.execute(statement, rows)
         written += len(rows)
 
     session.commit()
     return {
         "ingested": written,
+        "skipped_settled": skipped_settled,
         "files": files,
         "torn_rows": torn,
         "provider": PROVIDER_CODE,

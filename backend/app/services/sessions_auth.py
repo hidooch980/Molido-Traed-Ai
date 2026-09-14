@@ -29,6 +29,7 @@ until something happens" is not an expiry.
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import secrets
 import uuid
@@ -40,8 +41,15 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import AuthenticationError
 from app.core.enums import UserRole
-from app.core.security import verify_password
+from app.core.security import hash_password, verify_password
 from app.models.tenancy import ApiKey, User
+
+
+@functools.cache
+def _absent_hash() -> str:
+    """A real hash of a password nobody holds, made once per process."""
+    return hash_password(secrets.token_urlsafe(32))
+
 
 #: How long a signed-in browser stays signed in. Twelve hours covers a working
 #: day without covering the night somebody left the tab open in a café.
@@ -93,7 +101,13 @@ def sign_in(
     moment = now or datetime.now(UTC)
     user = session.scalar(select(User).where(User.email == email.strip().lower()))
 
-    if user is None or not verify_password(password, user.password_hash):
+    # An unknown email still pays for one hash check. Skipping it answered in a
+    # third of the time, so the response time said which emails have accounts
+    # even though the message never did (virtual-tester pilot, 2026-09-14).
+    if user is None:
+        verify_password(password, _absent_hash())
+        raise AuthenticationError("Those details do not match an account.")
+    if not verify_password(password, user.password_hash):
         raise AuthenticationError("Those details do not match an account.")
     if not user.is_active:
         raise AuthenticationError("Those details do not match an account.")

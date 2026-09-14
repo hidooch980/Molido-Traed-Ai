@@ -75,7 +75,26 @@ input int IntradayBarCount = 240;
 //--- `molido_available.json` says this broker actually offers. Read from the
 //--- file, not guessed - the last round of guessing cost three silent
 //--- failures.
-input string ExtraSymbols = "XAUUSD,XAGUSD,XAUEUR,BRENT,WTI,.US30Cash,.US500Cash,.USTECHCash,.DE40Cash,.JP225Cash,AUDCAD,AUDCHF,AUDJPY,AUDNZD,CADCHF,CADJPY,CHFJPY,EURAUD,EURCAD,EURCHF,EURGBP,EURJPY,EURNZD,GBPAUD,GBPCAD,GBPCHF,GBPJPY,GBPNZD,NZDCAD,NZDCHF,NZDJPY";
+//---
+//--- Narrowed on 13 September 2026 to the twenty traded instruments
+//--- (docs/TRADED-UNIVERSE.md) plus four crosses. Every symbol in Market Watch
+//--- costs the terminal a history thread that polls at about 1% of a core
+//--- under Wine even with the market shut; at forty-one symbols five terminals
+//--- held the host's run queue near sixty on eight cores, and the collector
+//--- took 260 seconds to write two bars.
+//---
+//--- The four crosses are the margin, not decoration. `record_cycle` narrows
+//--- the public snapshot to what the terminals publish only when at least
+//--- twenty remain, and gold is ranked there as GCFUT rather than XAUUSD - so
+//--- the twenty traded alone would leave nineteen, and the narrowing would
+//--- quietly switch itself off.
+input string ExtraSymbols = "XAUUSD,EURUSD,GBPUSD,USDJPY,GBPJPY,AUDUSD,USDCAD,USDCHF,NZDUSD,EURJPY,AUDJPY,EURGBP,CADJPY,CHFJPY,EURCHF,EURAUD,EURCAD,GBPCHF,GBPAUD,AUDNZD,NZDJPY,EURNZD,GBPCAD,AUDCAD";
+
+//--- Hide Market Watch symbols that are not in ExtraSymbols. Selecting only
+//--- ever adds, so without this a running terminal keeps every symbol it was
+//--- ever given. The terminal refuses to hide a symbol with an open position
+//--- or a chart, and that refusal is logged and left alone.
+input bool HideUnlistedSymbols = true;
 
 string TimeframeName(ENUM_TIMEFRAMES period)
   {
@@ -368,6 +387,25 @@ void SelectExtraSymbols()
          Print("MolidoBridge: added ", name, " to Market Watch");
       else
          Print("MolidoBridge: ", name, " not offered by this broker (", GetLastError(), ")");
+      names[i] = name;
+     }
+
+   if(!HideUnlistedSymbols)
+      return;
+
+   //--- Backwards: hiding a symbol shifts every index after it.
+   for(int j = SymbolsTotal(true) - 1; j >= 0; j--)
+     {
+      string shown = SymbolName(j, true);
+      bool listed = false;
+      for(int k = 0; k < count && !listed; k++)
+         listed = (names[k] == shown);
+      if(listed)
+         continue;
+      if(SymbolSelect(shown, false))
+         Print("MolidoBridge: hid ", shown, " from Market Watch");
+      else
+         Print("MolidoBridge: kept ", shown, " - the terminal refused to hide it (", GetLastError(), ")");
      }
   }
 
@@ -454,7 +492,14 @@ input bool   AllowTrading    = true;
 //--- the equity-and-stop calculation in the backend, and this only catches the
 //--- case where that calculation has gone wrong. Both are behind the account
 //--- gate, which reads the terminal's own trade_mode and refuses real money.
-input double MaxLots         = 5.00;
+//---
+//--- Raised from 5.00 on 14 September 2026 (owner's decision). At 8% fleet
+//--- risk the backend sized USDCAD at 8.2-8.9 lots and EURCAD at 6.0 - about
+//--- 1.9% of balance each, correctly - and this cap refused all nine: CAD is
+//--- worth ~0.72 per tick, so the same dollars at risk need more lots than a
+//--- USD-quoted pair. Ten still catches a sizing error an order of magnitude
+//--- out, which is what this line exists for.
+input double MaxLots         = 10.00;
 input int    MaxSlippagePts  = 30;
 
 //--- Where requests arrive and results are written. Common folder, same as
