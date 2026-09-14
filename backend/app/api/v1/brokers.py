@@ -591,7 +591,7 @@ def write_terminal_name(
         row = TerminalName(terminal=terminal)
         session.add(row)
     row.label = label
-    row.changed_by = str(getattr(principal, "subject", "") or "")[:120]
+    row.changed_by = principal.actor[:120]
     session.commit()
 
     # Otherwise the operator saves, sees the old name for twenty seconds, and

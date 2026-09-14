@@ -386,7 +386,7 @@ def create_custom_rulebook(
         name=payload.name,
         rules=payload.rules,
         notes=payload.notes,
-        changed_by=getattr(principal, "subject", "") or "",
+        changed_by=principal.actor[:120],
     )
     session.commit()
     return {
@@ -414,7 +414,7 @@ def edit_custom_rulebook(
         key=key,
         rules=payload.rules,
         notes=payload.notes,
-        changed_by=getattr(principal, "subject", "") or "",
+        changed_by=principal.actor[:120],
     )
     session.commit()
     return {"updated": True, "rulebook": _custom_body(row)}
