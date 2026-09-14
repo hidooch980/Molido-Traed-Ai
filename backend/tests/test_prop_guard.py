@@ -87,7 +87,9 @@ def test_a_position_without_a_stop_refuses(session):
 def test_room_shrinks_by_what_is_already_open(session):
     allowed, _, room = guard(session, [position(2_700)], headroom=5.0)
     assert allowed is True
-    assert room == pytest.approx((4_200 - 2_700) / 1_500)
+    # A quarter of the room left before the daily floor, open stops counted:
+    # 0.25 * (200,000 - 2,700 - 194,000) = 825, at 1,500 per R.
+    assert room == pytest.approx(825 / 1_500)
 
 
 def test_the_day_stops_after_half_the_allowance_is_lost(session):
@@ -122,3 +124,34 @@ def test_the_day_open_is_the_first_sample_at_the_boundary(session):
     sample(session, BOUNDARY + timedelta(minutes=2), balance=199_000.0)
     sample(session, BOUNDARY + timedelta(hours=2), balance=205_000.0)
     assert equity_series.day_open_balance(session, LOGIN, at=NOW) == 199_000.0
+
+
+class TestRiskBudget:
+    """Size from where the challenge stands, not a fixed percentage."""
+
+    def budget(self, **over):
+        base = dict(start=200_000.0, equity=200_000.0, day_open=200_000.0, allowance=6_000.0, open_risk=0.0)
+        base.update(over)
+        return autotrade._risk_budget(RULES, **base)
+
+    def test_a_fresh_day_takes_a_quarter_of_the_daily_room(self):
+        assert self.budget() == pytest.approx(1_500.0)
+
+    def test_open_stops_shrink_the_next_trade(self):
+        assert self.budget(open_risk=2_000.0) == pytest.approx(1_000.0)
+
+    def test_a_losing_day_shrinks_the_next_trade(self):
+        assert self.budget(equity=197_000.0) == pytest.approx(750.0)
+
+    def test_near_the_target_it_risks_only_half_of_what_is_missing(self):
+        # 1,000 short of 210,000: half of it at a 1.5 R target is 333.
+        assert self.budget(equity=209_000.0, day_open=209_000.0) == pytest.approx(1_000 * 0.5 / 1.5)
+
+    def test_near_the_total_floor_the_total_room_governs(self):
+        # 181,000 against a 180,000 floor: an eighth of 1,000.
+        assert self.budget(equity=181_000.0, day_open=181_000.0) == pytest.approx(125.0)
+
+
+def test_a_sample_fifteen_minutes_after_the_boundary_is_still_the_day_open(session):
+    sample(session, BOUNDARY + timedelta(minutes=15), balance=198_500.0)
+    assert equity_series.day_open_balance(session, LOGIN, at=NOW) == 198_500.0

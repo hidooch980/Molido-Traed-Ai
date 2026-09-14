@@ -721,6 +721,16 @@ OPEN_RISK_SHARE = 0.7
 #: Share of the daily allowance lost today after which nothing new opens.
 DAILY_STOP_SHARE = 0.5
 
+#: The next trade may risk at most this share of the room left before the
+#: daily floor (open stops counted), so four losses in a row still leave the
+#: day alive...
+DAILY_ROOM_SHARE = 0.25
+#: ...eight before the total floor...
+TOTAL_ROOM_SHARE = 0.125
+#: ...and, near the target, no more than half of what is still missing,
+#: counted at the 1.5 R target, so one loss cannot undo a nearly-passed phase.
+TARGET_GAP_SHARE = 0.5
+
 
 def _day_open(session: Session, published: dict[str, Any], moment: datetime) -> float | None:
     from app.services import equity as equity_series
@@ -811,11 +821,49 @@ def _prop_guard(
 
     per_r = getattr(account, "currency_per_r", None)
     if per_r:
-        room_r = max(0.0, (OPEN_RISK_SHARE * allowance - open_risk) / float(per_r))
+        budget = _risk_budget(
+            rules, start=start, equity=equity, day_open=day_open,
+            allowance=allowance, open_risk=open_risk,
+        )
+        room_r = max(0.0, budget / float(per_r))
         headroom_r = room_r if headroom_r is None else min(headroom_r, room_r)
         if headroom_r <= 0:
-            return False, "prop guard: no daily room is left beside the open stops", 0.0
+            return False, "prop guard: no room is left for another trade today", 0.0
     return True, "", headroom_r
+
+
+def _risk_budget(
+    rules: Any,
+    *,
+    start: float,
+    equity: float,
+    day_open: float | None,
+    allowance: float,
+    open_risk: float,
+) -> float:
+    """The most the next trade may risk, in account currency.
+
+    A fixed percentage is blind to where the challenge stands: the same size
+    on the first morning and one loss from the floor, and the same size a
+    thousand dollars short of the target as ten thousand. Here every limit
+    that can end or waste the phase takes its share, and the smallest wins.
+    """
+    daily_floor = (day_open if day_open is not None else equity) - allowance
+    candidates = [
+        OPEN_RISK_SHARE * allowance - open_risk,
+        DAILY_ROOM_SHARE * (equity - open_risk - daily_floor),
+    ]
+    total = getattr(rules, "max_total_drawdown_pct", None)
+    if isinstance(total, (int, float)) and not isinstance(total, bool):
+        candidates.append(TOTAL_ROOM_SHARE * (equity - open_risk - start * (1 - float(total))))
+    target = getattr(rules, "profit_target_pct", None)
+    if isinstance(target, (int, float)) and not isinstance(target, bool):
+        gap = start * (1 + float(target)) - equity
+        if gap > 0:
+            from app.workers.forward import TARGET_MULTIPLE
+
+            candidates.append(TARGET_GAP_SHARE * gap / max(TARGET_MULTIPLE, 1.0))
+    return max(0.0, min(candidates))
 
 
 def _account_state(

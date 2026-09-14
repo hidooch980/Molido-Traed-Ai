@@ -42,7 +42,7 @@ DAY_BOUNDARY_OFFSET = timedelta(hours=2)
 #: bridge publishes every twenty seconds, so anything inside a few minutes is
 #: the same snapshot for this purpose - and requiring an exact 00:00:00 match
 #: would mean no day ever has an open.
-DAY_OPEN_WINDOW = timedelta(minutes=10)
+DAY_OPEN_WINDOW = timedelta(minutes=20)
 
 
 @dataclass(frozen=True)
