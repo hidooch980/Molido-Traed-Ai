@@ -71,9 +71,10 @@ export function AnalogClock({
   const centre = size / 2;
   const point = (angle: number, length: number) => {
     const radians = (angle - 90) * (Math.PI / 180);
+    // Rounded for the same hydration reason as the ticks below.
     return {
-      x: centre + Math.cos(radians) * length,
-      y: centre + Math.sin(radians) * length,
+      x: Math.round((centre + Math.cos(radians) * length) * 1000) / 1000,
+      y: Math.round((centre + Math.sin(radians) * length) * 1000) / 1000,
     };
   };
 
@@ -194,13 +195,16 @@ export function AnalogClock({
           const outer = centre - 12;
           const major = i % 3 === 0;
           const inner = outer - (major ? 8 : 4);
+          // Rounded: Node and the browser disagree in the 15th decimal of
+          // sin/cos, and React reports that as a hydration mismatch.
+          const at = (v: number) => Math.round(v * 1000) / 1000;
           return (
             <line
               key={i}
-              x1={centre + Math.cos(radians) * inner}
-              y1={centre + Math.sin(radians) * inner}
-              x2={centre + Math.cos(radians) * outer}
-              y2={centre + Math.sin(radians) * outer}
+              x1={at(centre + Math.cos(radians) * inner)}
+              y1={at(centre + Math.sin(radians) * inner)}
+              x2={at(centre + Math.cos(radians) * outer)}
+              y2={at(centre + Math.sin(radians) * outer)}
               stroke={major ? "var(--ink-2)" : "var(--ink-3)"}
               strokeWidth={major ? 2.25 : 1}
               strokeLinecap="round"
