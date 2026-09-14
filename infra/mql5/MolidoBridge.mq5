@@ -492,7 +492,14 @@ input bool   AllowTrading    = true;
 //--- the equity-and-stop calculation in the backend, and this only catches the
 //--- case where that calculation has gone wrong. Both are behind the account
 //--- gate, which reads the terminal's own trade_mode and refuses real money.
-input double MaxLots         = 5.00;
+//---
+//--- Raised from 5.00 on 14 September 2026 (owner's decision). At 8% fleet
+//--- risk the backend sized USDCAD at 8.2-8.9 lots and EURCAD at 6.0 - about
+//--- 1.9% of balance each, correctly - and this cap refused all nine: CAD is
+//--- worth ~0.72 per tick, so the same dollars at risk need more lots than a
+//--- USD-quoted pair. Ten still catches a sizing error an order of magnitude
+//--- out, which is what this line exists for.
+input double MaxLots         = 10.00;
 input int    MaxSlippagePts  = 30;
 
 //--- Where requests arrive and results are written. Common folder, same as
