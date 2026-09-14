@@ -75,3 +75,8 @@ def test_a_losing_brain_loses_its_vote_but_keeps_recording(session, monkeypatch)
 
     assert votes[("EURUSD", "long")] == {"thin-loser", "winner"}
     autotrade._SILENCED_CACHE.clear()
+
+
+def test_one_order_is_capped_at_two_percent_whatever_the_setting():
+    assert autotrade.MAX_ORDER_RISK_FRACTION == 0.02
+    assert autotrade.MAX_ORDER_RISK_FRACTION * 3 <= autotrade.MAX_OPEN_RISK_FRACTION

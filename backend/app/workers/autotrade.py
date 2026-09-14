@@ -735,6 +735,13 @@ def _r_as_equity_fraction(room_r: float | None, account: Any, equity: float) -> 
 #: $27,099 (13.5%) behind stops on 14 Sep 2026 with nothing counting the sum.
 MAX_OPEN_RISK_FRACTION = 0.06
 
+#: The most one order may put behind its stop, as a share of equity, whatever
+#: the risk setting. At the 19% setting mt5d sized a single order at 15.41
+#: lots - about $10,000 behind one stop - and only the bridge's MaxLots 10
+#: refused it (14 Sep 2026). With the 6% book cap this means at least three
+#: positions before the book is full.
+MAX_ORDER_RISK_FRACTION = 0.02
+
 
 def _open_risk_room(
     positions: list[dict[str, Any]],
@@ -1739,6 +1746,8 @@ def run_cycle(
         return _report(mode=mode, refused=book_why, open_positions=open_now)
     if book_room < verdict.permitted_risk_r:
         verdict.permitted_risk_r = book_room
+    if verdict.permitted_risk_r > MAX_ORDER_RISK_FRACTION:
+        verdict.permitted_risk_r = MAX_ORDER_RISK_FRACTION
 
     cap = _max_open_positions()
     room = cap - open_now
