@@ -119,10 +119,8 @@ def _journal(session: Session) -> dict[str, Any]:
 
 def _autopilot(session: Session) -> dict[str, Any]:
     from app.execution import autopilot
-    from app.providers.metatrader import MetaTraderBridge
-
     mode, reason, override = autopilot.mode_now()
-    account_ok, account_why = autopilot.account_gate(MetaTraderBridge().account())
+    account_ok, account_why = autopilot.fleet_account_gate(session)
     return {
         "mode": mode,
         "reason": reason,

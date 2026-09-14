@@ -468,11 +468,8 @@ def read_autopilot(
     """
     from app.execution import autopilot, context
     from app.learning import edge as edge_registry
-    from app.providers.metatrader import MetaTraderBridge
-
     mode, reason, override = autopilot.mode_now()
-    published = MetaTraderBridge().account()
-    account_ok, account_why = autopilot.account_gate(published)
+    account_ok, account_why = autopilot.fleet_account_gate(session)
     edge_ok, edge_why = edge_registry.live_trading_allowed()
     built = context.build(session)
 

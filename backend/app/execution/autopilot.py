@@ -152,6 +152,29 @@ def mode_now() -> tuple[str, str, bool]:
     return LIVE, why, False
 
 
+def fleet_account_gate(session: Any = None) -> tuple[bool, str]:
+    """`account_gate` for every configured terminal, for read-only views.
+
+    Views used to ask the default bridge directory only, so on a fleet every
+    account read as undescribable while the trading cycle - which reads each
+    terminal's own feed - traded them. Open when at least one terminal passes;
+    the detail names each terminal and its own answer.
+    """
+    from app.providers.metatrader import MetaTraderBridge, bridge_dirs
+
+    answers = [
+        (key, *account_gate(MetaTraderBridge(directory=path).account()))
+        for key, path in sorted(bridge_dirs(session=session).items())
+    ]
+    if not answers:
+        return account_gate(None)
+    if len(answers) == 1:
+        return answers[0][1], answers[0][2]
+    return any(ok for _, ok, _ in answers), "; ".join(
+        f"{key}: {why}" for key, _, why in answers
+    )
+
+
 def account_gate(account: dict[str, Any] | None) -> tuple[bool, str]:
     """Whether live orders may reach *this* account, whatever the mode says.
 
