@@ -1353,6 +1353,19 @@ async def brain_selection_job(ctx: dict) -> dict[str, Any]:
     return result
 
 
+async def exit_evidence_job(ctx: dict) -> dict[str, Any]:
+    """Weekly: what closed trades' recorded paths say about stop management.
+
+    Proposal only - logged and sent, no setting is changed. Read from the
+    journal rather than replayed from bars, so it is cheap enough for this box.
+    """
+    from app.learning import exit_evidence
+
+    result = await asyncio.to_thread(exit_evidence.run)
+    log.info("exit_evidence.weekly", brains=result["brains"], sent=result["sent"])
+    return result
+
+
 def _cron_jobs() -> list:
     from arq import cron
 
@@ -1383,6 +1396,8 @@ def _cron_jobs() -> list:
         # now: app.workers.chat.
         # Sunday, before the week opens: the standing answer to "which brain
         # is earning its vote", from the journal the week just filled.
+        # Fifteen minutes after the scorecard, from the same week's journal.
+        cron(exit_evidence_job, weekday={6}, hour={9}, minute={45}, max_tries=1),
         cron(
             weekly_scorecard_job,
             weekday={6},
