@@ -2863,6 +2863,46 @@ class TestATradeMayNotCostMoreThanItEarns:
 
         assert edges["M15"] == pytest.approx(0.25)
 
+    def test_a_held_position_rewritten_every_hour_counts_once(self, session):
+        """The recorder rewrites a held view every cycle. Sixty hourly rows of
+        one open-then-stopped position are one trade, not sixty, and one
+        trade cannot set a ceiling."""
+        for i in range(60):
+            row = decide(
+                session,
+                symbol="EURUSD",
+                timeframe="M15",
+                strategy="trend-following",
+                at=NOW - timedelta(hours=70 - i),
+            )
+            row.closed_at = NOW - timedelta(hours=1)
+            row.r_multiple = -1.0
+        session.flush()
+
+        assert "M15" not in autotrade._measured_edge(
+            session, frozenset({"trend-following"})
+        )
+
+    def test_another_brains_losses_do_not_set_this_accounts_ceiling(self, session):
+        """One fleet-wide average of every brain set a zero ceiling on every
+        account. An account is judged on the brains it trades."""
+        for i in range(autotrade.MIN_FOR_MEASURED_CEILING):
+            loser = decide(
+                session,
+                symbol=f"LOSE{i}",
+                timeframe="M15",
+                strategy="stochastic-reversion",
+                at=NOW - timedelta(minutes=10 + i),
+            )
+            loser.closed_at = NOW
+            loser.r_multiple = -1.0
+        session.flush()
+
+        assert "M15" in autotrade._measured_edge(session)
+        assert "M15" not in autotrade._measured_edge(
+            session, frozenset({"trend-following"})
+        )
+
 
 class TestAnUnassignedAccountStillGetsABrainSomebodyChose:
     """An account is registered on a web page by somebody who should not have

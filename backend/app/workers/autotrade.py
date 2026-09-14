@@ -48,7 +48,7 @@ import uuid
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.core.errors import ValidationFailedError
@@ -1041,14 +1041,19 @@ def _maybe_number(value: Any) -> float | None:
         return None
 
 
-#: How many resolved decisions a timeframe needs before its own measurement
-#: is allowed to set the ceiling. Below this the fixed ceiling stands: a
-#: handful of trades is not an edge, and letting six samples widen or narrow
-#: what may be paid is fitting the gate to noise.
-MIN_FOR_MEASURED_CEILING = 200
+#: How many resolved *positions* a timeframe needs, for this account's own
+#: brains, before its measurement may set the ceiling. Below this the fixed
+#: ceiling stands: a handful of trades is not an edge, and letting a few
+#: samples widen or narrow what may be paid is fitting the gate to noise.
+#:
+#: Positions, not rows. The recorder rewrites a held view every cycle, so the
+#: old threshold of 200 rows was met by a few dozen real trades.
+MIN_FOR_MEASURED_CEILING = 50
 
 
-def _measured_edge(session: Session) -> dict[str, float]:
+def _measured_edge(
+    session: Session, strategies: frozenset[str] | None = None
+) -> dict[str, float]:
     """Expectancy in R per timeframe, from this deployment's own journal.
 
     The fixed ceiling answered "how much may execution cost" without ever
@@ -1067,28 +1072,65 @@ def _measured_edge(session: Session) -> dict[str, float]:
     Gross of costs on purpose: the journal resolves decisions against the
     price series, so what it reports is what the signal is worth before
     paying for it. That is exactly the quantity a cost has to fit inside.
+
+    **Whose edge, counted how** (owner's decision, 14 September). This used
+    to average every rule row of every brain: 1,313 H1 rows at -0.200 R, so
+    one number from all eight brains - repeats of held positions, symbols
+    no account may trade, brains no account uses - set a zero ceiling on
+    every account and stopped their orders. It now reads only the brains
+    this account trades, only on the traded list, and counts each position
+    once. Below MIN_FOR_MEASURED_CEILING positions the standing ceiling
+    applies.
     """
-    rows = session.execute(
-        select(
-            JournalEntry.timeframe,
-            func.avg(JournalEntry.r_multiple),
-            func.count(JournalEntry.id),
-        )
-        .where(
-            JournalEntry.arm == ARM_RULE,
-            JournalEntry.closed_at.is_not(None),
-            JournalEntry.r_multiple.is_not(None),
-        )
-        .group_by(JournalEntry.timeframe)
-    ).all()
+    query = select(
+        JournalEntry.strategy,
+        JournalEntry.symbol,
+        JournalEntry.decision,
+        JournalEntry.price_source,
+        JournalEntry.timeframe,
+        JournalEntry.opened_at,
+        JournalEntry.closed_at,
+        JournalEntry.outcome,
+        JournalEntry.r_multiple,
+    ).where(JournalEntry.arm == ARM_RULE)
+    if strategies is not None:
+        query = query.where(JournalEntry.strategy.in_(sorted(strategies)))
+    rows = session.execute(query).all()
+
+    traded = traded_universe()
+    far_future = datetime.max.replace(tzinfo=UTC)
+
+    def aware(moment: datetime) -> datetime:
+        return moment if moment.tzinfo is not None else moment.replace(tzinfo=UTC)
+
+    grouped: dict[tuple[Any, ...], list[Any]] = {}
+    for row in rows:
+        if not row.timeframe or row.outcome == "excluded":
+            continue
+        if traded and _tradeable_symbol(row.symbol) not in traded:
+            continue
+        key = (row.strategy, row.symbol, row.decision, row.price_source, row.timeframe)
+        grouped.setdefault(key, []).append(row)
+
+    totals: dict[str, list[float]] = {}
+    for key, group in grouped.items():
+        group.sort(key=lambda r: aware(r.opened_at))
+        open_until: datetime | None = None
+        for row in group:
+            opened = aware(row.opened_at)
+            closed = aware(row.closed_at) if row.closed_at is not None else far_future
+            if open_until is None or opened > open_until:
+                if row.r_multiple is not None and row.closed_at is not None:
+                    totals.setdefault(str(key[4]), []).append(float(row.r_multiple))
+                open_until = closed
+            else:
+                open_until = max(open_until, closed)
 
     edges: dict[str, float] = {}
-    for timeframe, expectancy, count in rows:
-        if not timeframe or expectancy is None:
+    for timeframe, values in totals.items():
+        if len(values) < MIN_FOR_MEASURED_CEILING:
             continue
-        if int(count or 0) < MIN_FOR_MEASURED_CEILING:
-            continue
-        edges[str(timeframe)] = float(expectancy)
+        edges[timeframe] = sum(values) / len(values)
     return edges
 
 
@@ -1526,8 +1568,9 @@ def run_cycle(
     sides_by_timeframe: dict[tuple[str, str], set[str]] = {}
     votes = _fresh_votes(session, moment, sides_by_timeframe)
     # Read once. It is one aggregate over the journal and it does not change
-    # inside a cycle.
-    edges = _measured_edge(session)
+    # inside a cycle - and it is this account's own brains' edge, not the
+    # fleet's.
+    edges = _measured_edge(session, strategies)
 
     # Why a decision was not traded, kept with the decision.
     #
