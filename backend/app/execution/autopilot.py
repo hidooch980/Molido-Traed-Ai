@@ -201,6 +201,60 @@ def account_gate(account: dict[str, Any] | None) -> tuple[bool, str]:
 _MODE_WORDS = {0: "a demo", 1: "a contest", 2: "real money"}
 
 
+def fleet_accounts(session: Session | None = None) -> dict[str, dict[str, Any]]:
+    """Every configured terminal's own account, keyed by terminal.
+
+    Read from `bridge_dirs`, never from the one default directory. On a fleet
+    that directory belongs to no terminal, and reading it reported a working
+    demo account as "the bridge cannot describe the account".
+    """
+    from app.providers.metatrader import MetaTraderBridge, bridge_dirs
+
+    return {
+        key: MetaTraderBridge(directory=directory).account()
+        for key, directory in sorted(bridge_dirs(session=session).items())
+    }
+
+
+def first_connected(
+    session: Session | None = None,
+) -> tuple[str, Any, dict[str, Any]] | None:
+    """The first terminal, by key, whose account is available: its key, its
+    bridge and the account. None when no terminal is connected.
+
+    For views that show one account. Reading the default directory instead
+    shows no account at all on a fleet.
+    """
+    from app.providers.metatrader import MetaTraderBridge, bridge_dirs
+
+    for key, directory in sorted(bridge_dirs(session=session).items()):
+        bridge = MetaTraderBridge(directory=directory)
+        account = bridge.account()
+        if account.get("available"):
+            return key, bridge, account
+    return None
+
+
+def fleet_account_gates(
+    accounts: dict[str, dict[str, Any]],
+) -> tuple[bool, str, dict[str, dict[str, Any]]]:
+    """The account gate per terminal, and whether any terminal passes it.
+
+    Open when at least one terminal's account passes: that is the one an
+    order could reach. The detail names every terminal so a shut one is not
+    hidden behind an open one.
+    """
+    terminals: dict[str, dict[str, Any]] = {}
+    for key, account in accounts.items():
+        ok, why = account_gate(account)
+        terminals[key] = {"open": ok, "detail": why}
+    if not terminals:
+        return False, "no terminal is configured", terminals
+    any_open = any(t["open"] for t in terminals.values())
+    detail = "; ".join(f"{key}: {t['detail']}" for key, t in terminals.items())
+    return any_open, detail, terminals
+
+
 def run_once(
     session: Session,
     *,
