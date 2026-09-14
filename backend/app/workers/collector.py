@@ -557,6 +557,16 @@ def tighten_stops() -> dict[str, Any]:
 
     raw = os.environ.get("MOLIDO_TRAILING_LOGINS", "").strip()
     logins = {part.strip() for part in raw.split(",") if part.strip()}
+
+    # Prop accounts before the weekend: winners' stops go to entry even where
+    # trailing is off, so a Monday gap cannot turn a winner into a loss.
+    from datetime import UTC, datetime
+
+    from app.workers import autotrade
+
+    weekend = autotrade._weekend_ahead(datetime.now(UTC))
+    locked = autotrade.weekend_lock_logins() if weekend else set()
+    logins = logins | locked
     if not logins:
         return {"moved": 0, "reason": "no account has trailing switched on"}
 
@@ -570,6 +580,7 @@ def tighten_stops() -> dict[str, Any]:
                 MetaTraderBroker(directory=path),
                 logins=logins,
                 dry_run=False,
+                lock_at_r=autotrade.WEEKEND_LOCK_AT_R if locked else None,
             )
         except Exception as problem:  # noqa: BLE001 - one terminal is not the sweep
             per_terminal[key] = f"{type(problem).__name__}: {problem}"

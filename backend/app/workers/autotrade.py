@@ -227,6 +227,23 @@ WEEKEND_WARNING_HOUR_UTC = 16
 #: Friday, as `weekday()` counts.
 _FRIDAY = 4
 
+#: How far ahead, in R, a prop position must be before the weekend lock moves
+#: its stop to entry.
+WEEKEND_LOCK_AT_R = 0.3
+
+
+def weekend_lock_logins() -> set[str]:
+    """Accounts the weekend lock applies to: `MOLIDO_WEEKEND_LOCK_LOGINS`.
+
+    A setting rather than read from the challenge registry, because a
+    registration and a login are matched by label and a wrong guess here would
+    stop a non-prop account trading every Friday afternoon.
+    """
+    import os
+
+    raw = os.environ.get("MOLIDO_WEEKEND_LOCK_LOGINS", "")
+    return {part.strip() for part in raw.split(",") if part.strip()}
+
 
 def _weekend_ahead(moment: datetime) -> bool:
     """Whether this is the last session before the break.
@@ -1740,6 +1757,14 @@ def run_cycle(
         # The tighter of the two governs. Two limits consulted and the looser
         # obeyed is one limit consulted.
         verdict.permitted_risk_r = headroom_r
+
+    if login in weekend_lock_logins() and _weekend_ahead(moment):
+        # A prop challenge is lost on a Monday gap as surely as on a bad trade.
+        return _report(
+            mode=mode,
+            refused="weekend lock: no new position after Friday 16:00 UTC on a prop account",
+            open_positions=open_now,
+        )
 
     book_ok, book_why, book_room = _open_risk_room(live_positions, specifications, equity)
     if not book_ok:
