@@ -888,6 +888,11 @@ async def collect(ctx: dict) -> dict[str, Any]:
         reason=forward.get("reason"),
         considered=forward.get("considered"),
         resolved=resolved.get("resolved", 0),
+        # Stops moved this cycle. Only the returned payload carried it, so
+        # whether trailing did anything was answerable only by reading the
+        # positions on every terminal.
+        trailing_moved=(payload.get("trailing") or {}).get("moved", 0),
+        trailing_reason=(payload.get("trailing") or {}).get("reason"),
     )
 
     # And the same for orders, for exactly the same reason.
