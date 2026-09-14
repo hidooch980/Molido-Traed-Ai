@@ -62,17 +62,18 @@ class Tool:
 
 
 def _account(session: Session) -> dict[str, Any]:
-    from app.providers.metatrader import MetaTraderBridge
+    from app.execution import autopilot
 
-    bridge = MetaTraderBridge()
-    published = bridge.account()
-    if not published.get("available"):
+    found = autopilot.first_connected(session)
+    if found is None:
         # The reason, not an empty object. An agent that receives {} will
         # summarise it as "no data" and move on; one that receives "no account
         # is logged in" tells the person the actual problem.
-        return {"available": False, "reason": published.get("reason")}
+        return {"available": False, "reason": "no terminal has an account logged in"}
+    terminal, _, published = found
     return {
         "available": True,
+        "terminal": terminal,
         "login": published.get("login"),
         "server": published.get("server"),
         "currency": published.get("currency"),
@@ -86,9 +87,19 @@ def _account(session: Session) -> dict[str, Any]:
 
 
 def _positions(session: Session) -> dict[str, Any]:
-    from app.providers.metatrader import MetaTraderBridge
+    from app.providers.metatrader import MetaTraderBridge, bridge_dirs
 
-    return MetaTraderBridge().positions()
+    positions: list[dict[str, Any]] = []
+    reasons: list[str] = []
+    for key, directory in sorted(bridge_dirs(session=session).items()):
+        published = MetaTraderBridge(directory=directory).positions()
+        if published.get("available"):
+            positions.extend({**p, "terminal": key} for p in published.get("positions", []))
+        else:
+            reasons.append(f"{key}: {published.get('reason')}")
+    if positions or len(reasons) < len(bridge_dirs(session=session)):
+        return {"available": True, "positions": positions, "unreadable": reasons}
+    return {"available": False, "reason": "; ".join(reasons), "positions": []}
 
 
 def _edge(session: Session) -> dict[str, Any]:
@@ -119,28 +130,32 @@ def _journal(session: Session) -> dict[str, Any]:
 
 def _autopilot(session: Session) -> dict[str, Any]:
     from app.execution import autopilot
-    from app.providers.metatrader import MetaTraderBridge
 
     mode, reason, override = autopilot.mode_now()
-    account_ok, account_why = autopilot.account_gate(MetaTraderBridge().account())
+    account_ok, account_why, terminals = autopilot.fleet_account_gates(
+        autopilot.fleet_accounts(session)
+    )
     return {
         "mode": mode,
         "reason": reason,
         "would_send_live_orders": mode == autopilot.LIVE and account_ok,
-        "account_gate": {"open": account_ok, "detail": account_why},
+        "account_gate": {"open": account_ok, "detail": account_why, "terminals": terminals},
         "edge_override_in_use": override,
     }
 
 
 def _equity(session: Session) -> dict[str, Any]:
-    from app.providers.metatrader import MetaTraderBridge
+    from app.execution import autopilot
     from app.services import equity as equity_series
 
-    published = MetaTraderBridge().account()
-    login = str(published.get("login") or "")
-    if not login:
+    series: dict[str, Any] = {}
+    for key, published in autopilot.fleet_accounts(session).items():
+        login = str(published.get("login") or "") if published.get("available") else ""
+        if login:
+            series[key] = {"login": login, **equity_series.series(session, login).as_dict()}
+    if not series:
         return {"available": False, "reason": "no account is connected"}
-    return equity_series.series(session, login).as_dict()
+    return {"available": True, "terminals": series}
 
 
 TOOLS: tuple[Tool, ...] = (
