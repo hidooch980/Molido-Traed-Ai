@@ -44,6 +44,7 @@ from app.core.enums import UserRole
 from app.core.security import hash_password, verify_password
 from app.models.tenancy import ApiKey, User
 
+
 @functools.cache
 def _absent_hash() -> str:
     """A real hash of a password nobody holds, made once per process."""

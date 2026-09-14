@@ -1333,7 +1333,12 @@ async def brain_selection_job(ctx: dict) -> dict[str, Any]:
     from app.learning import brain_selection
 
     result = await asyncio.to_thread(brain_selection.run)
-    log.info("brain_selection.proposal", proposals=result["proposals"], standings=result["standings"], sent=result["sent"])
+    log.info(
+        "brain_selection.proposal",
+        proposals=result["proposals"],
+        standings=result["standings"],
+        sent=result["sent"],
+    )
     return result
 
 
