@@ -187,6 +187,49 @@ def peak_day_open_balance(
     return best
 
 
+def _utc(moment: datetime) -> datetime:
+    return moment if moment.tzinfo is not None else moment.replace(tzinfo=UTC)
+
+
+def day_open_balance(
+    session: Session, account_key: str, *, at: datetime | None = None
+) -> float | None:
+    """This day's opening balance at the 00:00 CE(S)T boundary, or None.
+
+    What FTMO's daily floor is written against. None when nobody was watching
+    at the boundary: a mid-morning balance is not the day's open, and using it
+    would move the floor to a number the rule never looked at.
+    """
+    moment = _utc(at or datetime.now(UTC))
+    local_day = (moment + DAY_BOUNDARY_OFFSET).date()
+    boundary = datetime.combine(local_day, datetime.min.time(), tzinfo=UTC) - DAY_BOUNDARY_OFFSET
+    row = session.execute(
+        select(EquitySample.recorded_at, EquitySample.balance)
+        .where(
+            EquitySample.account_key == account_key,
+            EquitySample.recorded_at >= boundary,
+            EquitySample.recorded_at <= moment,
+        )
+        .order_by(EquitySample.recorded_at)
+        .limit(1)
+    ).first()
+    if row is None or _utc(row[0]) - boundary > DAY_OPEN_WINDOW:
+        return None
+    return float(row[1])
+
+
+def trading_days(session: Session, account_key: str, *, since: datetime) -> int:
+    """CE(S)T days since `since` on which the account held a position."""
+    stamps = session.scalars(
+        select(EquitySample.recorded_at).where(
+            EquitySample.account_key == account_key,
+            EquitySample.recorded_at >= _utc(since),
+            EquitySample.open_positions > 0,
+        )
+    ).all()
+    return len({(_utc(s) + DAY_BOUNDARY_OFFSET).date() for s in stamps})
+
+
 def series(session: Session, account_key: str) -> Series:
     """Everything known about one account's recorded history."""
     row = session.execute(

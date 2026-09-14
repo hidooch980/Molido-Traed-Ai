@@ -524,6 +524,8 @@ def _challenge_gate(
     today: date,
     moment: datetime,
     in_news_window: bool | None = None,
+    live_positions: list[dict[str, Any]] | None = None,
+    specifications: dict[str, dict[str, Any]] | None = None,
 ) -> tuple[bool, str, float | None]:
     """Check the account against its prop rulebook, if it has one.
 
@@ -635,7 +637,10 @@ def _challenge_gate(
         starting_balance=float(account.starting_balance or 0.0),
         current_equity=equity,
         peak_equity=max(equity, float(account.starting_balance or 0.0)),
-        daily_starting_equity=equity,
+        # The day's opening balance, as FTMO writes the daily floor. This
+        # was the live equity, which re-anchored the floor every cycle so the
+        # daily rule could never be reached (found 14 Sep 2026).
+        daily_starting_equity=_day_open(session, published, moment) or equity,
         days_traded=0,
         open_positions=open_positions,
         # `getattr` because a stand-in account in a test predates the field,
@@ -694,7 +699,123 @@ def _challenge_gate(
             f"against it: {unverified or 'unspecified'}",
             None,
         )
+    if live_positions is not None:
+        return _prop_guard(
+            session,
+            book.rules,
+            account,
+            published,
+            live_positions,
+            specifications or {},
+            verdict.max_additional_risk_r,
+            moment,
+        )
     return True, "", verdict.max_additional_risk_r
+
+
+#: Share of the daily allowance that open stops may hold together. Each order
+#: used to be checked alone, so seven orders that each fitted added up to
+#: $11,077 behind stops against a $6,000 daily limit on 14 Sep 2026.
+OPEN_RISK_SHARE = 0.7
+
+#: Share of the daily allowance lost today after which nothing new opens.
+DAILY_STOP_SHARE = 0.5
+
+
+def _day_open(session: Session, published: dict[str, Any], moment: datetime) -> float | None:
+    from app.services import equity as equity_series
+
+    login = str(published.get("login") or "")
+    if not login:
+        return None
+    try:
+        return equity_series.day_open_balance(session, login, at=moment)
+    except Exception:  # noqa: BLE001 - unknown falls back to the old anchor
+        return None
+
+
+def _open_stop_risk(
+    positions: list[dict[str, Any]], specifications: dict[str, dict[str, Any]]
+) -> float | None:
+    """Account currency lost if every open stop fills, or None if unpriceable."""
+    total = 0.0
+    for position in positions:
+        entry = float(position.get("price_open") or 0.0)
+        stop = float(position.get("stop") or 0.0)
+        volume = float(position.get("volume") or 0.0)
+        spec = specifications.get(str(position.get("symbol") or "")) or {}
+        tick = float(spec.get("tick_size") or 0.0)
+        value = float(spec.get("tick_value") or 0.0)
+        if not stop or tick <= 0 or value <= 0:
+            return None
+        total += abs(entry - stop) / tick * value * volume
+    return total
+
+
+def _prop_guard(
+    session: Session,
+    rules: Any,
+    account: Any,
+    published: dict[str, Any],
+    positions: list[dict[str, Any]],
+    specifications: dict[str, dict[str, Any]],
+    headroom_r: float | None,
+    moment: datetime,
+) -> tuple[bool, str, float | None]:
+    """The limits a challenge is really lost on, counted across the whole book."""
+    from app.services import equity as equity_series
+
+    start = float(getattr(account, "starting_balance", 0.0) or 0.0)
+    daily = getattr(rules, "max_daily_drawdown_pct", None)
+    if not isinstance(daily, (int, float)) or isinstance(daily, bool) or start <= 0:
+        return True, "", headroom_r
+    allowance = float(daily) * start
+    equity = float(published.get("equity") or 0.0)
+    login = str(published.get("login") or "")
+
+    open_risk = _open_stop_risk(positions, specifications)
+    if open_risk is None:
+        return False, (
+            "prop guard: an open position has no stop or its symbol no tick "
+            "value, so the day's worst case cannot be priced"
+        ), None
+    if open_risk > OPEN_RISK_SHARE * allowance:
+        return False, (
+            f"prop guard: open stops risk {open_risk:,.0f}, above "
+            f"{OPEN_RISK_SHARE:.0%} of the {allowance:,.0f} daily allowance"
+        ), None
+
+    day_open = _day_open(session, published, moment)
+    if day_open is not None and day_open - equity >= DAILY_STOP_SHARE * allowance:
+        return False, (
+            f"prop guard: down {day_open - equity:,.0f} today, past "
+            f"{DAILY_STOP_SHARE:.0%} of the {allowance:,.0f} daily allowance"
+        ), None
+
+    target = getattr(rules, "profit_target_pct", None)
+    since = getattr(account, "created_at", None)
+    if (
+        isinstance(target, (int, float))
+        and not isinstance(target, bool)
+        and equity >= start * (1 + float(target))
+        and since is not None
+        and login
+    ):
+        days = equity_series.trading_days(session, login, since=since)
+        need = getattr(rules, "min_trading_days", None)
+        if not isinstance(need, int) or isinstance(need, bool) or days >= need:
+            return False, (
+                f"prop guard: the target is reached ({equity:,.0f}) on {days} "
+                "trading days, so nothing new opens"
+            ), None
+
+    per_r = getattr(account, "currency_per_r", None)
+    if per_r:
+        room_r = max(0.0, (OPEN_RISK_SHARE * allowance - open_risk) / float(per_r))
+        headroom_r = room_r if headroom_r is None else min(headroom_r, room_r)
+        if headroom_r <= 0:
+            return False, "prop guard: no daily room is left beside the open stops", 0.0
+    return True, "", headroom_r
 
 
 def _account_state(
@@ -1505,6 +1626,10 @@ def run_cycle(
         # question is whether trading is restricted right now, not whether one
         # instrument happens to be exposed.
         in_news_window=_any_high_impact_now(moment, releases),
+        live_positions=live_positions,
+        specifications={
+            str(s.get("name")): s for s in (feed.symbols().get("symbols") or [])
+        },
     )
     if not passes:
         return _report(mode=mode, refused=why)
