@@ -83,3 +83,21 @@ def test_the_grid_carries_what_is_already_running():
     labels = {p.label for p in exits.POLICIES}
     assert exits.NONE.label in labels
     assert exits.DEPLOYED.label in labels
+
+
+def test_measure_manages_both_arms_with_the_same_policy(monkeypatch):
+    """The coin flip is walked under the policy too, or the comparison is of management."""
+    from app.learning import measure
+
+    seen = []
+    real = exits.walk
+
+    def spy(window, **kwargs):
+        seen.append(kwargs.get("policy"))
+        return real(window, **kwargs)
+
+    monkeypatch.setattr(exits, "walk", spy)
+    series = bars((99.5, 100.5), (100.2, 101.6))
+    measure._resolve(series, -1, side=1, entry=100.0, stop=99.0, target=101.5, policy=exits.DEPLOYED)
+    assert seen == [exits.DEPLOYED]
+    assert measure._resolve(series, -1, side=1, entry=100.0, stop=99.0, target=101.5) == 1.5
