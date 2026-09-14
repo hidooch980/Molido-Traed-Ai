@@ -262,10 +262,9 @@ def read_accounts(_: Principal = READ) -> dict[str, Any]:
     If it does not, the response says nothing is connected rather than implying
     nothing can be.
     """
+    from app.execution import autopilot
     from app.execution.metatrader_broker import MetaTraderBroker
     from app.providers.metatrader import MetaTraderBridge
-
-    from app.execution import autopilot
 
     book = routing_module.AccountBook()
     found = autopilot.first_connected()
