@@ -630,6 +630,46 @@ class TestEveryBrainRecords:
         assert first.entry_id != second.entry_id
 
 
+class TestPicksLandOnlyWhereTheAccountsMayTrade:
+    """40 decisions on the first bar after the weekend and not one order: the
+    picks were symbols the order gate refuses. The ranking still needs the
+    whole cross-section; only the picks are held to the traded list."""
+
+    def test_every_rule_arm_decision_is_on_the_traded_list(
+        self, market, session, monkeypatch
+    ):
+        from app.brain.crosssection import RANKED_UNIVERSE
+        from app.workers import autotrade
+
+        universe = sorted(RANKED_UNIVERSE)[:30]
+        allowed = frozenset(universe[:3] + universe[-3:])
+        monkeypatch.setattr(autotrade, "traded_universe", lambda: allowed)
+
+        result = forward.record_cycle(session)
+
+        assert result["considered"] >= 20
+        rule_symbols = {
+            row.symbol
+            for row in session.query(JournalEntry).filter(JournalEntry.arm == ARM_RULE)
+        }
+        assert rule_symbols
+        assert rule_symbols <= allowed
+
+    def test_an_empty_list_still_means_no_limit(self, market, session, monkeypatch):
+        from app.workers import autotrade
+
+        monkeypatch.setattr(autotrade, "traded_universe", lambda: frozenset())
+
+        assert forward._pickable() is None
+
+    def test_gold_is_allowed_under_both_of_its_names(self, monkeypatch):
+        from app.workers import autotrade
+
+        monkeypatch.setattr(autotrade, "traded_universe", lambda: frozenset({"XAUUSD"}))
+
+        assert forward._pickable() == frozenset({"XAUUSD", "GCFUT"})
+
+
 class TestAnInstrumentTheMarketHasAnsweredIsNotDecidedOn:
     """Eight WTI and BRENT decisions were journalled on 7 September against a
     cross-section that had settled on Friday 19:00 while a 20:00 bar was

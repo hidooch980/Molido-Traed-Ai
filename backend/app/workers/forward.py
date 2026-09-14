@@ -328,6 +328,23 @@ def _window_start(cutoff: datetime, timeframe: Timeframe, lookback: int) -> date
     return cutoff - max(timeframe.delta * lookback * WINDOW_MARGIN, MIN_WINDOW)
 
 
+def _pickable() -> frozenset[str] | None:
+    """The analysis symbols a decision may be recorded on, or None for any.
+
+    The traded list is written in the names orders are sent as; the ranking
+    works in analysis names. Gold is ranked as GCFUT and filled as XAUUSD,
+    so both spellings of an allowed instrument are allowed here - the same
+    mapping the order gate uses, so the two can never disagree.
+    """
+    from app.workers.autotrade import EXECUTION_SYMBOL, traded_universe
+
+    traded = traded_universe()
+    if not traded:
+        return None
+    analysis = {name for name, sent_as in EXECUTION_SYMBOL.items() if sent_as in traded}
+    return frozenset(traded | analysis)
+
+
 def _provider_id(session: Session, code: str) -> uuid.UUID | None:
     return session.scalar(select(Provider.id).where(Provider.code == code))
 
@@ -381,7 +398,10 @@ def _record_candidates(
             continue  # the incumbent is already recorded, with richer fields
         needs = int(getattr(rule, "lookback", 0)) + 1
         view = deep if deep is not None and needs > LOOKBACK else built
-        picks = rule(view, universe=None)
+        # Scored only on what the accounts may trade. These brains judge each
+        # instrument on its own history, so narrowing their eligible set
+        # changes where their picks land, never how an instrument is scored.
+        picks = rule(view, universe=_pickable())
         if picks.empty:
             continue
         for symbols, side in ((picks.longs, "long"), (picks.shorts, "short")):
@@ -606,11 +626,25 @@ def record_cycle(
     if not ranked.available:
         return {"recorded": 0, "reason": ranked.reason, "considered": ranked.considered}
 
+    # Picks only where the accounts may trade (owner's decision, 13 September).
+    #
+    # On the first bar after the weekend 40 decisions were recorded and not
+    # one became an order: the picks were NVDA, MSFT, WTI, XAUEUR - symbols
+    # the order gate refuses because they are not on the traded list. The
+    # ranking still runs across the whole cross-section, because it needs
+    # twenty instruments to be a ranking; only what is picked from it is
+    # held to the list. An empty list still means no limit.
+    allowed = _pickable()
+    dropped_off_list = 0
+
     written = 0
     duplicates = 0
     for picks, side in ((ranked.longs, "long"), (ranked.shorts, "short")):
         side_sign = 1 if side == "long" else -1
         for pick in picks:
+            if allowed is not None and pick.symbol not in allowed:
+                dropped_off_list += 1
+                continue
             result = journal_log.record_with_control(
                 session,
                 symbol=pick.symbol,
@@ -702,6 +736,7 @@ def record_cycle(
         "already_answered": len(answered),
         "already_answered_names": answered[:20],
         "candidates_recorded": candidate_written,
+        "picks_off_traded_list": dropped_off_list,
         "recorded": written,
         # Published rather than swallowed. A cycle that writes nothing because
         # everything was already recorded and one that writes nothing because
