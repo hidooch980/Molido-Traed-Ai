@@ -1340,16 +1340,27 @@ async def weekly_scorecard_job(ctx: dict) -> dict[str, Any]:
 
 
 async def brain_selection_job(ctx: dict) -> dict[str, Any]:
-    """The daily brain proposal. Proposal mode: logged and sent, never applied."""
+    """The daily brain selection: logged, sent, and at most one move a week applied."""
     from app.learning import brain_selection
 
     result = await asyncio.to_thread(brain_selection.run)
     log.info(
         "brain_selection.proposal",
         proposals=result["proposals"],
+        applied=result["applied"],
         standings=result["standings"],
         sent=result["sent"],
     )
+    return result
+
+
+async def health_alert_job(ctx: dict) -> dict[str, Any]:
+    """Every quarter hour: a stale cycle reaches Telegram, not just a log."""
+    from app.workers import health_report
+
+    result = await asyncio.to_thread(health_report.alert)
+    if not result["healthy"]:
+        log.warning("health.stale", sent=result["sent"], reason=result["reason"])
     return result
 
 
@@ -1389,6 +1400,8 @@ def _cron_jobs() -> list:
         cron(aggregate_daily_job, hour={AGGREGATE_HOUR}, minute={10}, max_tries=1),
         # Daily, before London opens: which brain each account should trade.
         cron(brain_selection_job, hour={6}, minute={20}, max_tries=1),
+        # Off the collection marks, so a slow cycle does not delay its own alarm.
+        cron(health_alert_job, minute={7, 22, 37, 52}, max_tries=1),
         # The chat channel is NOT here. It ran on this schedule and arrived
         # twenty-five minutes late, because one collection cycle takes
         # minutes and everything behind it waits - so an operator got
