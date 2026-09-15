@@ -35,12 +35,16 @@ for unit in molido-digest molido-weekly molido-disk-hygiene molido-updater-guard
   echo "   $unit.timer: $(systemctl is-active "$unit.timer")"
 done
 
-echo "-> MetaTrader units come back after a reboot"
+echo "-> running MetaTrader units come back after a reboot"
+# Only units that are running now. A disabled, stopped terminal was taken out
+# on purpose (term-h on 13 September); enabling it would bring a retired
+# account back at the next reboot.
 for unit in $(systemctl list-unit-files --type=service --no-legend 'molido-*' | awk '{print $1}'); do
   case "$unit" in
     molido-digest.service|molido-weekly.service|molido-disk-hygiene.service|molido-updater-guard.service|molido-autoheal.service) continue ;;
   esac
-  if [ "$(systemctl is-enabled "$unit" 2>/dev/null)" = "disabled" ]; then
+  if [ "$(systemctl is-enabled "$unit" 2>/dev/null)" = "disabled" ] \
+      && [ "$(systemctl is-active "$unit" 2>/dev/null)" = "active" ]; then
     systemctl enable "$unit" >/dev/null 2>&1 && echo "   enabled $unit"
   fi
 done
