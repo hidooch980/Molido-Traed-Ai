@@ -1,0 +1,12 @@
+[Unit]
+Description=Run the updater guard every five minutes
+
+[Timer]
+# The guard's own comments assume five minutes; its start grace (900 s) is
+# sized against exactly this cadence.
+OnBootSec=15min
+OnUnitActiveSec=5min
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,6 @@
+[Unit]
+Description=Keep the MetaTrader updater from taking a terminal down
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/molido-updater-guard

@@ -1,0 +1,7 @@
+[Unit]
+Description=Restart an unhealthy MolidoTrade container, once an hour at most
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/molido-autoheal

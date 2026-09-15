@@ -421,6 +421,42 @@ def report(session: Session, *, now: datetime | None = None) -> tuple[bool, str]
     return not stale, "\n".join(lines)
 
 
+def alert(
+    *, session: Session | None = None, now: datetime | None = None
+) -> dict[str, Any]:
+    """Send the report to Telegram when something is stale; silent when healthy.
+
+    The fingerprint names the stale jobs, so the same outage alerts once per
+    cooldown while a different job going stale alerts at once.
+    """
+    from app.integrations import notify, telegram
+
+    def _run(s: Session) -> dict[str, Any]:
+        healthy, text_out = report(s, now=now)
+        if healthy:
+            return {"healthy": True, "sent": False, "reason": None}
+        stale_line = text_out.splitlines()[-1]
+        delivery = telegram.send(
+            notify.Message(
+                urgency=notify.Urgency.WARNING,
+                title="MolidoTrade — چرخهٔ متوقف",
+                body=text_out,
+                at=(now or datetime.now(UTC)),
+            ),
+            session=s,
+            fingerprint=f"health:{stale_line}",
+            now=now,
+        )
+        return {"healthy": False, "sent": delivery.sent, "reason": delivery.reason}
+
+    if session is not None:
+        return _run(session)
+    from app.db.session import session_scope
+
+    with session_scope() as owned:
+        return _run(owned)
+
+
 def main() -> int:
     """Print the report; exit non-zero when something is stale.
 

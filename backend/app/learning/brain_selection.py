@@ -1,13 +1,15 @@
-"""Which brain each account should trade, decided from the journal - proposed, not applied.
+"""Which brain each account should trade, decided from the journal - applied at most weekly.
 
 On 14 September the owner moved four accounts by hand after a table showed
 three brains beating their coin-flip control by more than half an R and two
 losing to it by as much. That decision has an arithmetic, and an arithmetic
 can run every day without anybody asking for it. This is it.
 
-**Proposal mode only.** It says what it would change and why, in the log and
-on Telegram, and changes nothing. A selector that rewrites the fleet from two
-weeks of data should earn that right by being read first.
+**Applies with guards (owner's decision, 15 September).** It says what it
+would change and why, in the log and on Telegram, and writes at most one move
+per week to `account_policy` (`MOLIDO_BRAIN_SELECTION_APPLY=false` returns it
+to proposal mode). The account's risk is never touched, and the message
+carries the brains it replaced so the move can be undone from the site.
 
 The rules, all of which the owner's decision already used:
 
@@ -27,13 +29,18 @@ The rules, all of which the owner's decision already used:
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.core.logging import get_logger
 from app.learning import weekly
+from app.models.account_policy import AccountPolicy
 from app.models.journal import ARM_CONTROL, ARM_RULE, JournalEntry
+
+log = get_logger(__name__)
 
 #: Round-trip cost per position in R, charged before a brain may qualify.
 #: The spread alone measured about 0.06 R at H1; across 28 live fills a 1 R
@@ -42,7 +49,7 @@ from app.models.journal import ARM_CONTROL, ARM_RULE, JournalEntry
 COST_R = 0.15
 
 #: Resolved positions a brain needs before it is judged either way.
-MIN_POSITIONS = 50
+MIN_POSITIONS = 100
 
 #: The broker's own series. The public feed prices a different market.
 SOURCE = "metatrader"
@@ -171,8 +178,60 @@ def propose(
     return changes
 
 
-def compose(ranked: list[Standing], changes: list[dict[str, Any]]) -> str:
-    lines = ["انتخاب مغز — پیشنهاد روزانه (هیچ تغییری اعمال نشد)", ""]
+#: The name written to `account_policy.changed_by` when the selector moves an account.
+APPLIER = "brain-selection"
+
+#: At most one automatic move inside this window, fleet-wide. One move a week
+#: keeps each change readable against the accounts that did not move.
+APPLY_EVERY = timedelta(days=7)
+
+
+def last_applied(session: Session) -> datetime | None:
+    """When the selector last moved an account, from the policy table itself."""
+    stamp = session.scalar(
+        select(func.max(AccountPolicy.updated_at)).where(AccountPolicy.changed_by == APPLIER)
+    )
+    if stamp is not None and stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=UTC)
+    return stamp
+
+
+def apply(
+    session: Session, changes: list[dict[str, Any]], *, now: datetime
+) -> dict[str, Any] | None:
+    """Write the first proposal to `account_policy`, at most once per `APPLY_EVERY`.
+
+    The account's own risk stays as it was; only its brains change. Returns
+    the applied change with the previous row, or None when nothing was written.
+    """
+    if not changes:
+        return None
+    previous = last_applied(session)
+    if previous is not None and now - previous < APPLY_EVERY:
+        return None
+
+    change = changes[0]
+    row = session.scalar(select(AccountPolicy).where(AccountPolicy.login == change["account"]))
+    before = row.as_dict() if row is not None else None
+    if row is None:
+        row = AccountPolicy(login=change["account"])
+        session.add(row)
+    row.strategies = [change["to"]]
+    row.changed_by = APPLIER
+    row.updated_at = now
+    session.flush()
+    return {**change, "before": before}
+
+
+def compose(
+    ranked: list[Standing],
+    changes: list[dict[str, Any]],
+    applied: dict[str, Any] | None = None,
+) -> str:
+    header = (
+        "انتخاب مغز — روزانه" if applied else "انتخاب مغز — پیشنهاد روزانه (هیچ تغییری اعمال نشد)"
+    )
+    lines = [header, ""]
     for s in ranked:
         mark = "✓" if s.qualifies else "✗"
         net = "—" if s.net_r is None else f"{s.net_r:+.2f}"
@@ -183,17 +242,23 @@ def compose(ranked: list[Standing], changes: list[dict[str, Any]]) -> str:
         lines.append("پیشنهاد تغییری نیست.")
     for change in changes:
         lines.append(f"• {change['account']}: {'+'.join(change['from']) or '—'} → {change['to']}")
+    if applied:
+        lines.append("")
+        lines.append(
+            f"اعمال شد: {applied['account']} → {applied['to']} "
+            f"(قبلی: {'+'.join(applied['from']) or '—'}؛ ریسک دست‌نخورده)"
+        )
     return "\n".join(lines)
 
 
 def run(*, send: bool = True) -> dict[str, Any]:
     """Read the fleet, rank the brains, log and send the proposal."""
     import os
-    from datetime import UTC, datetime
 
     from app.db.session import session_scope
     from app.integrations import notify, telegram
     from app.providers.metatrader import MetaTraderBridge, bridge_dirs
+    from app.services import account_policy
     from app.workers import autotrade
 
     keep = frozenset(
@@ -205,10 +270,19 @@ def run(*, send: bool = True) -> dict[str, Any]:
         if login:
             accounts[login] = autotrade._strategy_for(login)[0]
 
+    flag = os.environ.get("MOLIDO_BRAIN_SELECTION_APPLY", "true").strip().lower()
+    enabled = flag in {"1", "true", "yes"}
+    applied = None
     with session_scope() as session:
         ranked = standings(session)
         changes = propose(ranked, accounts, keep=keep)
-        text = compose(ranked, changes)
+        if enabled and send:
+            applied = apply(session, changes, now=datetime.now(UTC))
+            session.commit()
+            if applied:
+                account_policy.invalidate()
+                log.warning("brain_selection.applied", **applied)
+        text = compose(ranked, changes, applied)
         delivery = None
         if send:
             delivery = telegram.send(
@@ -222,7 +296,7 @@ def run(*, send: bool = True) -> dict[str, Any]:
             )
 
     return {
-        "applied": False,
+        "applied": applied,
         "standings": [s.as_dict() for s in ranked],
         "proposals": changes,
         "kept": sorted(keep),
