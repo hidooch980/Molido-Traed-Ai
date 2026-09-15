@@ -70,6 +70,10 @@ jobs:
         # are mostly about the boundary - that it prunes build cache and
         # nothing else - so they matter more than most.
         run: bash infra/host/test-disk-hygiene.sh
+      - name: The autoheal job's own tests
+        # Stubbed docker; it restarts containers unattended, so the cooldown
+        # that stops a restart loop is the thing tested.
+        run: bash infra/host/test-molido-autoheal.sh
       - name: Every host script parses
         run: |
           set -e
