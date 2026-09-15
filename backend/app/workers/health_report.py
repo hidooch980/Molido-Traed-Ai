@@ -385,9 +385,25 @@ def report(session: Session, *, now: datetime | None = None) -> tuple[bool, str]
         f"{TARGET_MULTIPLE}R; risk "
         f"{getattr(settings, 'autotrade_risk_percent', '?')}% per trade"
     )
+    # Each account as the order gate sees it: the page's stored policy first,
+    # then the environment. Printing the environment alone showed brains the
+    # page had already replaced, so the report disagreed with the trades.
     strategies = str(getattr(settings, "account_strategies", "") or "")
-    for piece in [p for p in strategies.split(",") if p.strip()]:
-        lines.append(f"  ---   {piece.strip()}")
+    logins = [p.partition("=")[0].strip() for p in strategies.split(",") if "=" in p]
+    try:
+        from app.services import account_policy
+        from app.workers import autotrade
+
+        logins += [x for x in account_policy.all_policies() if x not in logins]
+        for login in logins:
+            brains, refusal = autotrade._strategy_for(login)
+            named = "+".join(sorted(brains)) if brains else f"REFUSED ({refusal})"
+            lines.append(
+                f"  ---   {login}={named}, risk {autotrade._risk_percent(login)}%"
+            )
+    except Exception:  # noqa: BLE001 - a health report never fails on a detail
+        for piece in [p for p in strategies.split(",") if p.strip()]:
+            lines.append(f"  ---   {piece.strip()}")
 
     # Whether an alert would reach anybody, printed beside the cycles.
     #

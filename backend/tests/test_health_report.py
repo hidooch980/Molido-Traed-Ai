@@ -193,6 +193,27 @@ class TestTheReportRefusesToLookHealthyWhenItIsNot:
         assert "geometry stop" in text
         assert "risk" in text
 
+    def test_an_account_shows_the_brain_the_page_stored(self, monkeypatch):
+        """The environment said one brain and the page another; the report
+        printed the environment while the orders used the page."""
+        from app.core.config import get_settings
+        from app.services import account_policy
+
+        monkeypatch.setattr(
+            get_settings(), "account_strategies", "111=trend-following", raising=False
+        )
+        monkeypatch.setattr(
+            account_policy,
+            "all_policies",
+            lambda **_: {"111": {"strategies": ["donchian-breakout"], "risk_percent": 1.0}},
+        )
+        session = self.FakeSession(self.rows_for(NOW - timedelta(minutes=1)))
+
+        _, text = health_report.report(session, now=NOW)
+
+        assert "111=donchian-breakout, risk 1.0%" in text
+        assert "trend-following" not in text
+
 
 class TestFreshnessIsReadFromAWriteTime:
     """The bar's own timestamp is not evidence that a job ran.
