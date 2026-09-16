@@ -874,6 +874,22 @@ class TestOneSymbolIsOnePosition:
         assert report["orders"] == 0
         assert any("already holds a position" in n for n in report["skipped"])
 
+    def test_an_unreadable_book_sends_nothing(self, session, live):
+        """Read as empty, it passed every limit that counts the book."""
+
+        class Unreadable(FakeBridge):
+            def positions(self):
+                return {"available": False, "reason": "unreadable", "positions": []}
+
+        decide(session)
+        broker = FakeBroker()
+
+        report = autotrade.run_cycle(session, now=NOW, broker=broker, bridge=Unreadable())
+
+        assert report["orders"] == 0
+        assert broker.submitted == []
+        assert "could not be read" in report["refused"]
+
     def test_two_decisions_on_one_symbol_in_one_cycle_send_once(
         self, session, live
     ):
