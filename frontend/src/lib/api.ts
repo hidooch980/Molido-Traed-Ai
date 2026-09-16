@@ -1296,6 +1296,24 @@ export const api = {
       allowed_commands?: string[];
       why_read_only?: string;
     }>("/api/v1/integrations/telegram"),
+  tradingview: () =>
+    request<{
+      configured: boolean;
+      enabled: boolean;
+      secret_hint: string;
+      webhook_path: string;
+      total: number;
+      trades_from_alerts: false;
+      alerts: Array<{
+        id: string;
+        received_at: string | null;
+        symbol: string;
+        action: string;
+        price: number | null;
+        timeframe: string;
+        message: string;
+      }>;
+    }>("/api/v1/tradingview"),
   systemSettings: () => request<SystemSettings>("/api/v1/system/settings"),
   riskLimits: () => request<RiskLimits>("/api/v1/risk/limits"),
   challenge: (params: Record<string, string | number>) =>

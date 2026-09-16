@@ -103,6 +103,7 @@ class TestTheExemptionStaysNarrow:
             "/api/v1/users/claim",
             "/api/v1/users/register",
             "/api/v1/users/verify",
+            "/api/v1/tradingview/webhook",
         }
 
     def test_every_claim_carries_a_reason(self, client):
