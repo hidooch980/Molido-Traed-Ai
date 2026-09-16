@@ -781,3 +781,47 @@ class TestTheOrdersLineIsReadable:
 
         assert note["skipped"] == 10
         assert len(note["mostly"]) == collector.TOP_REASONS
+
+
+class TestEquitySamplesCountTheOpenBook:
+    """Every sample was written with zero open positions, so the prop guard's
+    trading-day count never moved off zero on a challenge account."""
+
+    def _run(self, monkeypatch, positions):
+        from contextlib import contextmanager
+
+        from app.providers import metatrader
+        from app.services import equity
+
+        class Bridge:
+            def __init__(self, directory):
+                self.directory = directory
+
+            def account(self):
+                return {"available": True, "login": 1514533027, "equity": 1.0, "balance": 1.0}
+
+            def positions(self):
+                return positions
+
+        written = {}
+
+        @contextmanager
+        def scope():
+            yield None
+
+        monkeypatch.setattr(metatrader, "bridge_dirs", lambda: {"term-j": "/bridges/j"})
+        monkeypatch.setattr(metatrader, "MetaTraderBridge", Bridge)
+        monkeypatch.setattr(collector, "session_scope", scope)
+        monkeypatch.setattr(equity, "record", lambda _s, **kw: written.update(kw) or True)
+        collector.sample_equity()
+        return written
+
+    def test_the_open_positions_are_counted(self, monkeypatch):
+        book = {"available": True, "positions": [{"ticket": 1}, {"ticket": 2}]}
+
+        assert self._run(monkeypatch, book)["open_positions"] == 2
+
+    def test_an_unreadable_book_counts_as_none(self, monkeypatch):
+        book = {"available": False, "reason": "stale", "positions": []}
+
+        assert self._run(monkeypatch, book)["open_positions"] == 0
