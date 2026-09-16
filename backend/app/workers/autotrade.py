@@ -45,6 +45,7 @@ from __future__ import annotations
 
 import re
 import uuid
+from collections import Counter
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
@@ -758,6 +759,28 @@ MAX_OPEN_RISK_FRACTION = 0.06
 #: refused it (14 Sep 2026). With the 6% book cap this means at least three
 #: positions before the book is full.
 MAX_ORDER_RISK_FRACTION = 0.02
+
+#: How many accounts may hold one symbol in one direction at once. The accounts
+#: run different brains but picked the same instrument together, so four
+#: accounts were one bet four times: CHFJPY stopped out on four at 08:09 UTC on
+#: 15 Sep 2026 for -5,217, and EURUSD on two on 16 Sep for -2,882.
+FLEET_SYMBOL_CAP = 2
+
+
+def _fleet_holdings(directories: dict[str, Any]) -> Counter[tuple[str, str]]:
+    """(symbol, side) -> how many accounts hold it, from every readable book."""
+    from app.providers.metatrader import MetaTraderBridge
+
+    counts: Counter[tuple[str, str]] = Counter()
+    for directory in directories.values():
+        book = MetaTraderBridge(directory=directory).positions()
+        pairs = {
+            (str(p.get("symbol")), str(p.get("side")))
+            for p in book.get("positions") or []
+            if p.get("symbol")
+        }
+        counts.update(pairs)
+    return counts
 
 
 def _open_risk_room(
@@ -1564,6 +1587,7 @@ def run_all_accounts(
 
     reports: dict[str, Any] = {}
     sent = 0
+    fleet = _fleet_holdings(accounts)
     for key, directory in sorted(accounts.items()):
         allowed, why = account_switch.state(key)
         if not allowed:
@@ -1579,6 +1603,7 @@ def run_all_accounts(
                 broker=MetaTraderBroker(directory=directory),
                 bridge=MetaTraderBridge(directory=directory),
                 kill_switch=kill_switch,
+                fleet_held=fleet,
             )
         except Exception as problem:  # noqa: BLE001 - one account, not the fleet
             reports[key] = {
@@ -1620,6 +1645,7 @@ def run_cycle(
     broker: BrokerAdapter | None = None,
     bridge: Any = None,
     kill_switch: Any = None,
+    fleet_held: Counter[tuple[str, str]] | None = None,
 ) -> dict[str, Any]:
     """Send an order for every fresh rule decision that has not had one.
 
@@ -1894,6 +1920,12 @@ def run_cycle(
         if traded_as in held:
             refuse(entry, "the account already holds a position in it, "
                 "and a second one doubles an exposure that was sized for one")
+            continue
+
+        fleet_side = "buy" if entry.decision == "long" else "sell"
+        if fleet_held is not None and fleet_held[(traded_as, fleet_side)] >= FLEET_SYMBOL_CAP:
+            refuse(entry, f"{fleet_held[(traded_as, fleet_side)]} accounts already hold "
+                f"{traded_as} {fleet_side}, the fleet cap is {FLEET_SYMBOL_CAP}")
             continue
 
         if len(sent) >= room:
@@ -2293,6 +2325,8 @@ def run_cycle(
                 now=moment,
             )
             continue
+        if fleet_held is not None:
+            fleet_held[(traded_as, "buy" if entry.decision == "long" else "sell")] += 1
         sent.append(
             {
                 "symbol": entry.symbol,

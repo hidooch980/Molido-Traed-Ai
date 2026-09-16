@@ -874,6 +874,34 @@ class TestOneSymbolIsOnePosition:
         assert report["orders"] == 0
         assert any("already holds a position" in n for n in report["skipped"])
 
+    def test_the_fleet_cap_refuses_a_third_account_on_one_side(self, session, live):
+        """CHFJPY stopped out on four accounts at once on 15 Sep 2026."""
+        from collections import Counter
+
+        decide(session, symbol="EURUSD", decision="long")
+        broker = FakeBroker()
+        fleet = Counter({("EURUSD", "buy"): autotrade.FLEET_SYMBOL_CAP})
+
+        report = autotrade.run_cycle(
+            session, now=NOW, broker=broker, bridge=FakeBridge(), fleet_held=fleet
+        )
+
+        assert report["orders"] == 0
+        assert any("fleet cap" in n for n in report["skipped"])
+
+    def test_the_fleet_cap_counts_what_this_cycle_sends(self, session, live):
+        from collections import Counter
+
+        decide(session, symbol="EURUSD", decision="long")
+        fleet = Counter({("EURUSD", "buy"): autotrade.FLEET_SYMBOL_CAP - 1})
+
+        report = autotrade.run_cycle(
+            session, now=NOW, broker=FakeBroker(), bridge=FakeBridge(), fleet_held=fleet
+        )
+
+        assert report["orders"] == 1
+        assert fleet[("EURUSD", "buy")] == autotrade.FLEET_SYMBOL_CAP
+
     def test_an_unreadable_book_sends_nothing(self, session, live):
         """Read as empty, it passed every limit that counts the book."""
 
