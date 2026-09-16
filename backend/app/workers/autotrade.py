@@ -1674,7 +1674,17 @@ def run_cycle(
     # Counted from the terminal, never from this system's own record. They
     # disagree exactly when it matters, and the broker's answer is the one the
     # account is judged on.
-    live_positions = feed.positions().get("positions") or []
+    book = feed.positions()
+    if book.get("available") is False:
+        # An unread book is not an empty one. Read as empty, it passed the
+        # count cap, the one-symbol rule and the open-risk cap at once, and
+        # one account reached 18 positions against a cap of 12 with five
+        # symbols held twice (16 Sep 2026).
+        return _report(
+            mode=mode,
+            refused=f"open positions could not be read: {book.get('reason')}",
+        )
+    live_positions = book.get("positions") or []
 
     open_now = len(live_positions)
     # Which symbols the account already carries. The cap on count alone let
