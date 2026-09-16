@@ -31,7 +31,8 @@ class TestEveryRefusalIsRecorded:
         # onto one line to make room for the incident it now raises. The count
         # is a tripwire for a refusal that stops being recorded, so it moves
         # when a call is added or rewritten and never when one disappears.
-        assert source.count("refuse(entry,") == 18
+        # 19 from 16 Sep 2026: the fleet symbol cap.
+        assert source.count("refuse(entry,") == 19
 
     def test_the_one_remaining_append_is_the_recorder_itself(self):
         source = inspect.getsource(autotrade.run_cycle)
