@@ -33,6 +33,7 @@ from app.models.telegram_config import TelegramConfig
 from app.models.tenancy import ApiKey, Tenant, User
 from app.models.terminal_name import TerminalName
 from app.models.terminals import Terminal
+from app.models.tradingview import TradingViewAlert, TradingViewConfig
 
 __all__ = [
     "AccountPolicy",
@@ -43,6 +44,8 @@ __all__ = [
     "LoginAttempt",
     "PolicyRateObservation",
     "TelegramConfig",
+    "TradingViewAlert",
+    "TradingViewConfig",
     "RecoveryCode",
     "ChallengeAccount",
     "CustomRulebook",

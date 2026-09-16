@@ -25,6 +25,7 @@ from app.api.v1 import (
     symbol_dna,
     system,
     terminals,
+    tradingview,
     users,
     world_state,
 )
@@ -53,6 +54,7 @@ api_router.include_router(fundamentals.router)
 api_router.include_router(learning.router)
 api_router.include_router(execution.router)
 api_router.include_router(integrations.router)
+api_router.include_router(tradingview.router)
 api_router.include_router(bridge_ingest.router)
 api_router.include_router(terminals.router)
 api_router.include_router(users.router)

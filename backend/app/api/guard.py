@@ -222,6 +222,8 @@ BOOTSTRAP_PATHS = frozenset({
     "/api/v1/users/claim",
     "/api/v1/users/register",
     "/api/v1/users/verify",
+    # Proves itself with a secret in the body: TradingView holds no session.
+    "/api/v1/tradingview/webhook",
 })
 
 
