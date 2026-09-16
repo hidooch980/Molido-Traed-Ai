@@ -380,18 +380,24 @@ def sample_equity() -> dict[str, Any]:
     recorded: dict[str, Any] = {}
     with session_scope() as session:
         for _key, directory in sorted(bridge_dirs().items()):
-            published = MetaTraderBridge(directory=directory).account()
+            bridge = MetaTraderBridge(directory=directory)
+            published = bridge.account()
             if not published.get("available"):
                 continue
             login = str(published.get("login") or "")
             if not login:
                 continue
+            # The prop guard counts trading days from this column, so leaving
+            # it at its default made every challenge account look idle forever
+            # and the target lock waited on days that could never accrue.
+            book = bridge.positions()
             recorded[login] = equity_series.record(
                 session,
                 account_key=login,
                 equity=float(published.get("equity") or 0.0),
                 balance=float(published.get("balance") or 0.0),
                 margin=float(published.get("margin") or 0.0),
+                open_positions=len(book.get("positions") or []),
                 currency=str(published.get("currency") or "USD"),
             )
     if not recorded:
