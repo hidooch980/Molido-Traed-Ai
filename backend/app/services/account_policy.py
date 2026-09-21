@@ -118,10 +118,25 @@ def strategies(login: str) -> list[str] | None:
     return names or None
 
 
+def symbols(login: str) -> list[str] | None:
+    """This account's own instrument list, or None to use the deployment's.
+
+    An empty list reads as "not set here" rather than "trade nothing", the
+    same reading `strategies` gives its own empty list - a settings field is
+    never how an account is stopped.
+    """
+    row = all_policies().get(str(login))
+    if not row:
+        return None
+    names = [str(name).strip().upper() for name in (row.get("symbols") or []) if str(name).strip()]
+    return names or None
+
+
 __all__ = [
     "CACHE_SECONDS",
     "all_policies",
     "invalidate",
     "risk_percent",
     "strategies",
+    "symbols",
 ]

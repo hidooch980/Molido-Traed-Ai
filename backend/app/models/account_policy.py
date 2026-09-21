@@ -47,6 +47,13 @@ class AccountPolicy(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     #: nothing", which is a decision and belongs to the kill switch.
     strategies: Mapped[list[Any]] = mapped_column(JSONType, default=list, nullable=False)
 
+    #: Which instruments this account may trade. Empty means "not set here"
+    #: and the deployment's own list (`MOLIDO_TRADED_SYMBOLS`, or no list)
+    #: applies. Not a way to stop an account trading anything - the kill
+    #: switch is where that decision lives, and a settings field that quietly
+    #: did the same would be a second halt nobody can find.
+    symbols: Mapped[list[Any]] = mapped_column(JSONType, default=list, nullable=False)
+
     #: Percent of equity behind one stop. None means not set here.
     #:
     #: Nullable rather than defaulted to the fleet figure: a stored copy of
@@ -63,6 +70,7 @@ class AccountPolicy(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         return {
             "login": self.login,
             "strategies": list(self.strategies or []),
+            "symbols": list(self.symbols or []),
             "risk_percent": self.risk_percent,
             "changed_by": self.changed_by or None,
             "changed_at": self.updated_at.isoformat() if self.updated_at else None,

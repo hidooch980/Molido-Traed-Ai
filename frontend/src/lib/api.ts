@@ -804,6 +804,7 @@ export interface AccountPolicyView {
   stored: {
     login: string;
     strategies: string[];
+    symbols: string[];
     risk_percent: number | null;
     changed_by: string | null;
     changed_at: string | null;
@@ -811,6 +812,7 @@ export interface AccountPolicyView {
   in_force: {
     risk_percent: number | null;
     strategies: string[];
+    symbols: string[];
     /** Why this account may not trade at all, when that is the case. */
     refused: string | null;
   };

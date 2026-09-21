@@ -2483,6 +2483,70 @@ class TestTheTradedUniverse:
         assert "GCFUT" not in universe
 
 
+class TestAnAccountCanBeConfinedToItsOwnList:
+    """`account_policy.symbols` overrides the deployment's traded universe
+    for one login, the same way it already overrides the deployment's
+    brains and risk - confining one account to gold and EURUSD must not
+    touch what the other six may trade."""
+
+    @pytest.fixture(autouse=True)
+    def _clean_cache(self):
+        from app.services import account_policy
+
+        account_policy.invalidate()
+        yield
+        account_policy.invalidate()
+
+    def _store(self, monkeypatch, symbols):
+        from app.services import account_policy
+
+        monkeypatch.setattr(
+            account_policy,
+            "_load",
+            lambda: {"68345601": {"login": "68345601", "strategies": [], "symbols": symbols}},
+        )
+        account_policy.invalidate()
+
+    def test_a_symbol_outside_the_stored_list_is_refused(self, session, live, monkeypatch):
+        self._store(monkeypatch, ["XAUUSD", "EURUSD"])
+        decide(session, symbol="GBPUSD", decision="long")
+
+        report = autotrade.run_cycle(
+            session, now=NOW, broker=FakeBroker(), bridge=FakeBridge()
+        )
+
+        assert report["orders"] == 0
+        assert any("is not in the instruments this account is set to trade" in n
+            for n in report["skipped"])
+
+    def test_a_symbol_inside_the_stored_list_still_trades(self, session, live, monkeypatch):
+        self._store(monkeypatch, ["XAUUSD", "EURUSD"])
+        decide(session, symbol="EURUSD", decision="long")
+
+        report = autotrade.run_cycle(
+            session, now=NOW, broker=FakeBroker(), bridge=FakeBridge()
+        )
+
+        assert report["orders"] == 1
+
+    def test_an_account_with_no_stored_list_falls_back_to_the_deployment(
+        self, session, live, monkeypatch
+    ):
+        """No row for this login - the deployment's own universe, which is
+        empty (no limit) in these tests - still applies."""
+        from app.services import account_policy
+
+        monkeypatch.setattr(account_policy, "_load", lambda: {})
+        account_policy.invalidate()
+        decide(session, symbol="GBPUSD", decision="long")
+
+        report = autotrade.run_cycle(
+            session, now=NOW, broker=FakeBroker(), bridge=FakeBridge()
+        )
+
+        assert report["orders"] == 1
+
+
 class TestTheCouncil:
     """The agreement gate. One brain moving alone is a hypothesis, not a
     trade - and a brain that only records still gets a vote, because

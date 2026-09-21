@@ -731,6 +731,10 @@ class AccountPolicyPayload(BaseModel):
     #: settings field that quietly did the same would be a second halt
     #: nobody can find.
     strategies: list[str] = Field(default_factory=list, max_length=12)
+    #: Empty means "not set here" and the deployment's own list (or no list)
+    #: applies. Never a way to stop an account trading - the kill switch is
+    #: where that belongs.
+    symbols: list[str] = Field(default_factory=list, max_length=20)
     risk_percent: float | None = Field(default=None, gt=0, le=5.0)
 
 
@@ -743,16 +747,18 @@ def read_account_policy(login: str, _: Principal = READ) -> dict[str, Any]:
     render an empty form for an account that is very much trading.
     """
     from app.services import account_policy
-    from app.workers.autotrade import _risk_percent, _strategy_for
+    from app.workers.autotrade import _risk_percent, _strategy_for, traded_universe
 
     stored = account_policy.all_policies().get(str(login))
     names, refusal = _strategy_for(str(login))
+    own_symbols = account_policy.symbols(str(login))
     return {
         "login": login,
         "stored": stored,
         "in_force": {
             "risk_percent": _risk_percent(str(login)),
             "strategies": sorted(names) if names else [],
+            "symbols": sorted(own_symbols) if own_symbols else sorted(traded_universe()),
             "refused": None if names else refusal,
         },
         "available_strategies": _available_strategies(),
@@ -797,6 +803,7 @@ def write_account_policy(
         row = AccountPolicy(login=str(login))
         session.add(row)
     row.strategies = list(payload.strategies)
+    row.symbols = sorted({s.strip().upper() for s in payload.symbols if s.strip()})
     row.risk_percent = payload.risk_percent
     row.changed_by = principal.actor[:120]
     session.commit()
@@ -805,13 +812,15 @@ def write_account_policy(
     # and reasonably concludes it did not save.
     account_policy.invalidate()
 
-    from app.workers.autotrade import _risk_percent, _strategy_for
+    from app.workers.autotrade import _risk_percent, _strategy_for, traded_universe
 
     names, refusal = _strategy_for(str(login))
+    own_symbols = account_policy.symbols(str(login))
     return {
         "login": login,
         "stored": row.as_dict(),
         "in_force": {
+            "symbols": sorted(own_symbols) if own_symbols else sorted(traded_universe()),
             "risk_percent": _risk_percent(str(login)),
             "strategies": sorted(names) if names else [],
             "refused": None if names else refusal,

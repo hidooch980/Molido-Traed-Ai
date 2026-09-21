@@ -24,6 +24,8 @@ export type PolicyLabels = {
   riskHint: string;
   brains: string;
   brainsHint: string;
+  symbols: string;
+  symbolsHint: string;
   inForce: string;
   usingFleetDefault: string;
   save: string;
@@ -34,8 +36,13 @@ export type PolicyLabels = {
 };
 
 export type PolicyState = {
-  stored: { risk_percent: number | null; strategies: string[] } | null;
-  in_force: { risk_percent: number | null; strategies: string[]; refused: string | null };
+  stored: { risk_percent: number | null; strategies: string[]; symbols: string[] } | null;
+  in_force: {
+    risk_percent: number | null;
+    strategies: string[];
+    symbols: string[];
+    refused: string | null;
+  };
   available_strategies: string[];
   max_risk_percent: number;
 };
@@ -53,6 +60,9 @@ export function AccountPolicyForm({
     initial.stored?.risk_percent != null ? String(initial.stored.risk_percent) : "",
   );
   const [chosen, setChosen] = useState<string[]>(initial.stored?.strategies ?? []);
+  const [symbols, setSymbols] = useState<string>(
+    initial.stored?.symbols?.length ? initial.stored.symbols.join(", ") : "",
+  );
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -82,6 +92,10 @@ export function AccountPolicyForm({
             // zero would make R undefined and stop the account by a route
             // that is not the kill switch.
             risk_percent: trimmed === "" ? null : Number(trimmed),
+            symbols: symbols
+              .split(",")
+              .map((piece) => piece.trim())
+              .filter(Boolean),
           }),
         },
       );
@@ -104,6 +118,7 @@ export function AccountPolicyForm({
 
   const forceRisk = initial.in_force.risk_percent;
   const forceBrains = initial.in_force.strategies;
+  const forceSymbols = initial.in_force.symbols;
 
   return (
     <div className="space-y-4">
@@ -114,6 +129,8 @@ export function AccountPolicyForm({
         </span>
         {" · "}
         <span dir="ltr">{forceBrains.length ? forceBrains.join(", ") : "—"}</span>
+        {" · "}
+        <span dir="ltr">{forceSymbols.length ? forceSymbols.join(", ") : "—"}</span>
         {initial.stored === null && <> · {labels.usingFleetDefault}</>}
       </div>
 
@@ -156,6 +173,19 @@ export function AccountPolicyForm({
         </div>
         <span className="block text-xs ink-3">{labels.brainsHint}</span>
       </div>
+
+      <label className="block space-y-1">
+        <span className="text-xs font-semibold">{labels.symbols}</span>
+        <input
+          type="text"
+          value={symbols}
+          onChange={(event) => setSymbols(event.target.value)}
+          dir="ltr"
+          className="field"
+          placeholder="XAUUSD, EURUSD"
+        />
+        <span className="block text-xs ink-3">{labels.symbolsHint}</span>
+      </label>
 
       <div className="flex items-center gap-3">
         <button type="button" onClick={save} disabled={busy} className="btn">

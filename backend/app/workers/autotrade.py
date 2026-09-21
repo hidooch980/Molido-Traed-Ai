@@ -1240,6 +1240,23 @@ def traded_universe() -> frozenset[str]:
     return frozenset(piece.strip().upper() for piece in raw.split(",") if piece.strip())
 
 
+def _account_universe(login: str) -> frozenset[str]:
+    """The instruments this account may trade, or empty for no limit.
+
+    `account_policy` overrides the deployment's list the same way it already
+    overrides the deployment's brains and risk - an account with its own row
+    set runs on its own list entirely rather than a narrowing of the fleet's,
+    so confining one account to gold and EURUSD does not require touching
+    what the other six may trade.
+    """
+    from app.services import account_policy
+
+    own = account_policy.symbols(login)
+    if own:
+        return frozenset(own)
+    return traded_universe()
+
+
 def _tradeable_symbol(symbol: str) -> str:
     """The instrument an order for this analysis symbol is placed in."""
     return EXECUTION_SYMBOL.get(symbol, symbol)
@@ -1999,19 +2016,22 @@ def run_cycle(
         # an XAUUSD position are the same exposure under two names.
         traded_as = _tradeable_symbol(entry.symbol)
 
-        # The owner's list of what the accounts may carry, checked on the
+        # The owner's list of what this account may carry, checked on the
         # symbol the order is sent as. Empty means no list, which is every
-        # deployment before one was written.
+        # deployment before one was written. An account with its own row in
+        # `account_policy` runs on its own list instead of the deployment's -
+        # confining one account to gold and EURUSD must not narrow what the
+        # other six may trade.
         #
         # Here rather than in the ranking: the cross-section stops being a
         # ranking below twenty instruments, so narrowing the universe there
         # would either break the measurement or - because the narrowing is
         # discarded when too little survives - silently do nothing at all,
         # which is the worse of the two.
-        universe = traded_universe()
+        universe = _account_universe(login)
         if universe and traded_as not in universe:
             refuse(entry, f"{traded_as} is not in the instruments this "
-                "deployment is set to trade")
+                "account is set to trade")
             continue
 
         if traded_as in held:
