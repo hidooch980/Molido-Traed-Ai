@@ -97,6 +97,36 @@ class FakeBridge:
         }
 
 
+#: A contract specification for a symbol FakeBridge does not carry by
+#: default, for tests that need a JPY-quoted instrument sizable. Priced on
+#: the same scale as `decide()`'s fixed entry/stop/target so the spread
+#: guard sees the same cost ratio it does for EURUSD - only the name is
+#: what these tests are about.
+USDJPY_SPEC = {
+    "name": "USDJPY",
+    "tick_value": 1.0,
+    "tick_size": 0.00001,
+    "volume_min": 0.01,
+    "volume_step": 0.01,
+    "bid": 1.15890,
+    "ask": 1.15904,
+}
+
+#: Same purpose as USDJPY_SPEC, for the measured-correlation tests: a symbol
+#: sharing no currency letter with the fleet position it is tested against,
+#: so only the correlation path - not the currency-letter cap - can be what
+#: refuses.
+GBPJPY_SPEC = {
+    "name": "GBPJPY",
+    "tick_value": 1.0,
+    "tick_size": 0.00001,
+    "volume_min": 0.01,
+    "volume_step": 0.01,
+    "bid": 1.15890,
+    "ask": 1.15904,
+}
+
+
 @pytest.fixture(autouse=True)
 def switch_released(monkeypatch):
     """Every test below predates the kill switch and is about something else.
@@ -901,6 +931,144 @@ class TestOneSymbolIsOnePosition:
 
         assert report["orders"] == 1
         assert fleet[("EURUSD", "buy")] == autotrade.FLEET_SYMBOL_CAP
+
+    def _register_prop(self, session, login):
+        """Register the login FakeBridge publishes as a prop challenge account,
+        with what `_challenge_gate` needs entered to clear its own checks so
+        the test is about the fleet currency cap and nothing upstream of it."""
+        from decimal import Decimal
+
+        from app.services import challenge_accounts
+
+        return challenge_accounts.create(
+            session,
+            tenant_id=challenge_accounts.default_tenant(session),
+            label=login,
+            rulebook_key="ftmo-challenge-2step-phase1",
+            starting_balance=Decimal("10000"),
+            currency_per_r=Decimal("50"),
+            rules_confirmed=True,
+        )
+
+    def test_prop_currency_cap_refuses_a_correlated_symbol_under_the_exact_cap(
+        self, session, live
+    ):
+        """CHFJPY and USDJPY are two symbols and one JPY bet - the exact-symbol
+        cap above cannot see that, so a prop account needs its own, narrower
+        cap counted on the shared currency instead."""
+        from collections import Counter
+
+        self._register_prop(session, "68345601")
+        decide(session, symbol="USDJPY", decision="long")
+        fleet_currency = Counter({("JPY", "buy"): autotrade.FLEET_CURRENCY_CAP_PROP})
+
+        report = autotrade.run_cycle(
+            session,
+            now=NOW,
+            broker=FakeBroker(),
+            bridge=FakeBridge(symbols=[USDJPY_SPEC]),
+            fleet_currency_held=fleet_currency,
+        )
+
+        assert report["orders"] == 0
+        assert any("prop currency cap" in n for n in report["skipped"])
+
+    def test_prop_currency_cap_does_not_bind_a_demo_account(self, session, live):
+        """The same currency count must not touch an account measuring a
+        brain: the cap is prop-only, and it must not change what a demo
+        deployment's forward record is measuring."""
+        from collections import Counter
+
+        decide(session, symbol="USDJPY", decision="long")
+        fleet_currency = Counter({("JPY", "buy"): autotrade.FLEET_CURRENCY_CAP_PROP})
+
+        report = autotrade.run_cycle(
+            session,
+            now=NOW,
+            broker=FakeBroker(),
+            bridge=FakeBridge(symbols=[USDJPY_SPEC]),
+            fleet_currency_held=fleet_currency,
+        )
+
+        assert report["orders"] == 1
+
+    def _store_correlation(self, session, symbol, pairs):
+        """A stored DNA snapshot, the way the collector's daily
+        `refresh_dna_job` writes one (`app/services/symbol_dna.py`)."""
+        from datetime import timedelta
+
+        from app.core.enums import AssetClass
+        from app.models.instruments import Instrument
+        from app.services.symbol_dna import SymbolProfile
+
+        instrument = Instrument(
+            symbol=symbol,
+            name=symbol,
+            asset_class=AssetClass.FOREX,
+            base_currency=symbol[:3],
+            quote_currency=symbol[3:6],
+        )
+        session.add(instrument)
+        session.flush()
+        session.add(
+            SymbolProfile(
+                instrument_id=instrument.id,
+                timeframe=autotrade.DNA_TIMEFRAME,
+                kind="correlation",
+                as_of=NOW - timedelta(hours=1),
+                computed_at=NOW - timedelta(hours=1),
+                coverage_start=NOW - timedelta(days=60),
+                coverage_end=NOW - timedelta(hours=1),
+                sample_size=1000,
+                profile_version=1,
+                data={"pairs": pairs},
+            )
+        )
+        session.flush()
+
+    def test_prop_correlation_cap_refuses_a_symbol_sharing_no_letter(
+        self, session, live
+    ):
+        """AUDNZD and GBPJPY share no currency letter, so the letter cap
+        cannot see them as one bet - only the collector's measured
+        correlation can."""
+        from collections import Counter
+
+        self._register_prop(session, "68345601")
+        self._store_correlation(session, "GBPJPY", {"AUDNZD": {"correlation": 0.85}})
+        decide(session, symbol="GBPJPY", decision="long")
+        fleet = Counter({("AUDNZD", "buy"): autotrade.FLEET_CURRENCY_CAP_PROP})
+
+        report = autotrade.run_cycle(
+            session,
+            now=NOW,
+            broker=FakeBroker(),
+            bridge=FakeBridge(symbols=[GBPJPY_SPEC]),
+            fleet_held=fleet,
+        )
+
+        assert report["orders"] == 0
+        assert any("prop correlation cap" in n for n in report["skipped"])
+
+    def test_prop_correlation_cap_is_skipped_when_unmeasured(self, session, live):
+        """No stored snapshot is not treated as "uncorrelated" or as
+        "correlated" - it is skipped, and the order proceeds on whatever
+        the currency-letter cap alone decides."""
+        from collections import Counter
+
+        self._register_prop(session, "68345601")
+        decide(session, symbol="GBPJPY", decision="long")
+        fleet = Counter({("AUDNZD", "buy"): autotrade.FLEET_CURRENCY_CAP_PROP})
+
+        report = autotrade.run_cycle(
+            session,
+            now=NOW,
+            broker=FakeBroker(),
+            bridge=FakeBridge(symbols=[GBPJPY_SPEC]),
+            fleet_held=fleet,
+        )
+
+        assert report["orders"] == 1
 
     def test_an_unreadable_book_sends_nothing(self, session, live):
         """Read as empty, it passed every limit that counts the book."""
@@ -2313,6 +2481,116 @@ class TestTheTradedUniverse:
 
         assert autotrade._tradeable_symbol("GCFUT") in universe
         assert "GCFUT" not in universe
+
+
+class TestAnAccountCanBeConfinedToItsOwnList:
+    """`account_policy.symbols` overrides the deployment's traded universe
+    for one login, the same way it already overrides the deployment's
+    brains and risk - confining one account to gold and EURUSD must not
+    touch what the other six may trade."""
+
+    @pytest.fixture(autouse=True)
+    def _clean_cache(self):
+        from app.services import account_policy
+
+        account_policy.invalidate()
+        yield
+        account_policy.invalidate()
+
+    def _store(self, monkeypatch, symbols):
+        from app.services import account_policy
+
+        monkeypatch.setattr(
+            account_policy,
+            "_load",
+            lambda: {"68345601": {"login": "68345601", "strategies": [], "symbols": symbols}},
+        )
+        account_policy.invalidate()
+
+    def test_a_symbol_outside_the_stored_list_is_refused(self, session, live, monkeypatch):
+        self._store(monkeypatch, ["XAUUSD", "EURUSD"])
+        decide(session, symbol="GBPUSD", decision="long")
+
+        report = autotrade.run_cycle(
+            session, now=NOW, broker=FakeBroker(), bridge=FakeBridge()
+        )
+
+        assert report["orders"] == 0
+        assert any("is not in the instruments this account is set to trade" in n
+            for n in report["skipped"])
+
+    def test_a_symbol_inside_the_stored_list_still_trades(self, session, live, monkeypatch):
+        self._store(monkeypatch, ["XAUUSD", "EURUSD"])
+        decide(session, symbol="EURUSD", decision="long")
+
+        report = autotrade.run_cycle(
+            session, now=NOW, broker=FakeBroker(), bridge=FakeBridge()
+        )
+
+        assert report["orders"] == 1
+
+    def test_an_account_with_no_stored_list_falls_back_to_the_deployment(
+        self, session, live, monkeypatch
+    ):
+        """No row for this login - the deployment's own universe, which is
+        empty (no limit) in these tests - still applies."""
+        from app.services import account_policy
+
+        monkeypatch.setattr(account_policy, "_load", lambda: {})
+        account_policy.invalidate()
+        decide(session, symbol="GBPUSD", decision="long")
+
+        report = autotrade.run_cycle(
+            session, now=NOW, broker=FakeBroker(), bridge=FakeBridge()
+        )
+
+        assert report["orders"] == 1
+
+
+class TestAPropRegisteredAccountIsWeekendLockedWithoutTheEnvVar:
+    """`_is_prop_account` reaches the challenge registry directly, so a
+    registered account is weekend-locked from the moment it is registered -
+    no `MOLIDO_WEEKEND_LOCK_LOGINS` edit, no restart."""
+
+    FRIDAY_EVENING = datetime(2026, 9, 18, 17, 0, tzinfo=UTC)
+
+    def _register_prop(self, session, login):
+        from decimal import Decimal
+
+        from app.services import challenge_accounts
+
+        return challenge_accounts.create(
+            session,
+            tenant_id=challenge_accounts.default_tenant(session),
+            label=login,
+            rulebook_key="ftmo-challenge-2step-phase1",
+            starting_balance=Decimal("10000"),
+            currency_per_r=Decimal("50"),
+            rules_confirmed=True,
+        )
+
+    def test_a_registered_account_is_locked_with_no_env_var_set(self, session, live):
+        self._register_prop(session, "68345601")
+        decide(session, at=self.FRIDAY_EVENING - timedelta(minutes=5))
+
+        report = autotrade.run_cycle(
+            session, now=self.FRIDAY_EVENING, broker=FakeBroker(), bridge=FakeBridge()
+        )
+
+        assert report["orders"] == 0
+        assert "weekend lock" in (report.get("refused") or "")
+
+    def test_an_unregistered_account_still_trades_the_same_friday(self, session, live):
+        """The env var and the registry are both absent here - a demo
+        account must not be locked by a registration that names some other
+        login."""
+        decide(session, at=self.FRIDAY_EVENING - timedelta(minutes=5))
+
+        report = autotrade.run_cycle(
+            session, now=self.FRIDAY_EVENING, broker=FakeBroker(), bridge=FakeBridge()
+        )
+
+        assert report["orders"] == 1
 
 
 class TestTheCouncil:

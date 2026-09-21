@@ -233,6 +233,7 @@ def run(
     logins: set[str] | None = None,
     dry_run: bool = True,
     lock_at_r: float | None = None,
+    locked_logins: set[str] | None = None,
 ) -> Report:
     """Walk this terminal's open positions and tighten what has earned it.
 
@@ -240,6 +241,15 @@ def run(
     `EVERY_LOGIN` for the whole fleet. None means none: the default is off,
     because the measurement in flight is of a fixed geometry and this
     changes it.
+
+    `lock_at_r` and `locked_logins` are a pair: the first is the threshold,
+    the second is which accounts it applies to. Passing `lock_at_r` alone
+    used to apply it to every account this call's `logins` covered, so one
+    terminal's weekend-locked prop account set a flag that pulled a
+    trailing-only account's stop to entry too, on any account swept in the
+    same call it happened to share a run with. `locked_logins=None` keeps
+    that old, fleet-wide reading for a caller that has not been updated -
+    passing it, even as an empty set, means "only these logins, by name".
     """
     report = Report()
     if not logins:
@@ -257,6 +267,9 @@ def run(
     if not account.get("available") or not (everywhere or login in logins):
         report.skip("not an account trailing is enabled for")
         return report
+
+    if locked_logins is not None and login not in locked_logins:
+        lock_at_r = None
 
     try:
         positions = bridge.positions().get("positions") or []

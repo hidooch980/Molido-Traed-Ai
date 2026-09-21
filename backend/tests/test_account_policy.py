@@ -69,6 +69,47 @@ class TestAbsentIsNotZero:
 
         assert account_policy.strategies("111") is None
 
+    def test_an_empty_symbol_list_means_not_set_rather_than_trade_nothing(self, stored):
+        """Same reading as an empty strategy list, for the same reason."""
+        stored({"111": {"login": "111", "strategies": [], "symbols": [], "risk_percent": 2.0}})
+
+        assert account_policy.symbols("111") is None
+
+    def test_a_row_with_no_symbols_key_at_all_is_also_not_set(self, stored):
+        """A row saved before this column existed has no key for it, not an
+        empty one - both must read the same way."""
+        stored({"111": {"login": "111", "strategies": [], "risk_percent": 2.0}})
+
+        assert account_policy.symbols("111") is None
+
+
+class TestSymbols:
+    def test_a_stored_list_is_normalised_to_upper_case(self, stored):
+        stored({"111": {"login": "111", "strategies": [], "symbols": ["xauusd", "eurusd"]}})
+
+        assert account_policy.symbols("111") == ["XAUUSD", "EURUSD"]
+
+    def test_blank_entries_are_dropped(self, stored):
+        stored({"111": {"login": "111", "strategies": [], "symbols": ["XAUUSD", "  ", ""]}})
+
+        assert account_policy.symbols("111") == ["XAUUSD"]
+
+
+class TestTrailingLogins:
+    def test_only_accounts_with_trailing_on_are_returned(self, stored):
+        stored({
+            "111": {"login": "111", "strategies": [], "trailing": True},
+            "222": {"login": "222", "strategies": [], "trailing": False},
+            "333": {"login": "333", "strategies": []},
+        })
+
+        assert account_policy.trailing_logins() == {"111"}
+
+    def test_an_empty_table_locks_nobody(self, stored):
+        stored({})
+
+        assert account_policy.trailing_logins() == set()
+
 
 class TestPrecedence:
     def test_the_stored_policy_beats_the_environment(self, stored, monkeypatch):

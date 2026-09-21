@@ -269,6 +269,85 @@ class TestTheSweep:
         assert where == pytest.approx(1.1090)
 
 
+class TestTheWeekendLockIsPerLogin:
+    """`lock_at_r` alone used to apply to every account a sweep's `logins`
+    covered - one terminal's weekend-locked prop account set a flag that
+    pulled a trailing-only account's stop to entry too, on any account swept
+    in the same call it happened to share a run with. `locked_logins` is
+    what a caller passes to name which logins the threshold actually binds."""
+
+    def below_start(self, **over):
+        # 0.4 R ahead (risk 0.0100, so entry + 0.4 * 0.0100): below
+        # START_AT_R (1.0), so ordinary trailing leaves it alone and only a
+        # weekend lock could move anything here.
+        row = winner(price_current=1.1040)
+        row.update(over)
+        return row
+
+    def test_a_locked_login_is_pulled_to_entry(self):
+        broker = Broker()
+
+        report = trailing.run(
+            Bridge(login="111", positions=[self.below_start()]),
+            broker,
+            logins={"111"},
+            dry_run=False,
+            lock_at_r=0.3,
+            locked_logins={"111"},
+        )
+
+        assert broker.calls == [("1", pytest.approx(1.1000), None)]
+        assert report.moves[0].sent is True
+
+    def test_a_login_not_in_locked_logins_is_left_alone(self):
+        """The bug this class exists to catch: naming *some* login as
+        locked must not lock every login the same call happens to sweep."""
+        broker = Broker()
+
+        trailing.run(
+            Bridge(login="111", positions=[self.below_start()]),
+            broker,
+            logins={"111"},
+            dry_run=False,
+            lock_at_r=0.3,
+            locked_logins={"999"},
+        )
+
+        assert broker.calls == []
+
+    def test_locked_logins_omitted_keeps_the_old_fleet_wide_reading(self):
+        """A caller that has not been updated still gets the behaviour it
+        always had: `lock_at_r` alone, applied to whatever `logins` covers."""
+        broker = Broker()
+
+        report = trailing.run(
+            Bridge(login="111", positions=[self.below_start()]),
+            broker,
+            logins={"111"},
+            dry_run=False,
+            lock_at_r=0.3,
+        )
+
+        assert broker.calls == [("1", pytest.approx(1.1000), None)]
+        assert report.moves[0].sent is True
+
+    def test_an_empty_locked_logins_locks_nobody(self):
+        """Distinct from omitting it entirely - passing `set()` is "lock no
+        one by name", not "the caller forgot to say"."""
+        broker = Broker()
+
+        trailing.run(
+            Bridge(login="111", positions=[self.below_start()]),
+            broker,
+            logins={"111"},
+            dry_run=False,
+            lock_at_r=0.3,
+            locked_logins=set(),
+        )
+
+        assert broker.calls == []
+
+
 class TestTheRiskThatWasSizedAgainst:
     def test_the_target_carries_it_after_the_stop_has_moved(self):
         """The target is the one level that never moves, and it sits at a

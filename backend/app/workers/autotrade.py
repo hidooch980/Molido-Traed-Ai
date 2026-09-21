@@ -52,6 +52,7 @@ from typing import Any
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
+from app.core.enums import Timeframe
 from app.core.errors import ValidationFailedError
 from app.core.logging import get_logger
 from app.execution.broker import BrokerAdapter
@@ -234,16 +235,50 @@ WEEKEND_LOCK_AT_R = 0.3
 
 
 def weekend_lock_logins() -> set[str]:
-    """Accounts the weekend lock applies to: `MOLIDO_WEEKEND_LOCK_LOGINS`.
+    """Accounts the weekend lock applies to, from `MOLIDO_WEEKEND_LOCK_LOGINS`.
 
-    A setting rather than read from the challenge registry, because a
-    registration and a login are matched by label and a wrong guess here would
-    stop a non-prop account trading every Friday afternoon.
+    A manual add-on now rather than the only source: `_is_prop_account` and
+    `_prop_registered_logins` below read the challenge registry directly and
+    cover the ordinary case - an account registered with a rulebook - without
+    an engineer naming its login here first. This env var still works,
+    additively, for whatever that reading does not cover.
     """
     import os
 
     raw = os.environ.get("MOLIDO_WEEKEND_LOCK_LOGINS", "")
     return {part.strip() for part in raw.split(",") if part.strip()}
+
+
+def _prop_registered_logins(session: Session) -> set[str]:
+    """Every login an active challenge registration names explicitly.
+
+    The fleet-wide counterpart to `_is_prop_account`, for a caller - the
+    weekend stop-tightening sweep - that has to decide for every terminal at
+    once rather than one login it already has in hand.
+
+    Deliberately narrower than `_is_prop_account`: a registration whose label
+    names no login at all applies by a fallback that only resolves against
+    one specific login being asked about (`_challenge_gate`'s "not claimed by
+    a named one"), and guessing that here, fleet-wide, with no login to check
+    it against, is exactly the wrong guess that stops a non-prop account
+    trading every Friday afternoon. Only the unambiguous case is read.
+    """
+    from app.services import challenge_accounts
+
+    try:
+        registered = [
+            view
+            for view in challenge_accounts.listing(
+                session, tenant_id=challenge_accounts.default_tenant(session)
+            )
+            if view.account.is_active
+        ]
+    except Exception:  # noqa: BLE001 - an unreadable registry names nobody
+        return set()
+    logins: set[str] = set()
+    for view in registered:
+        logins.update(_LOGIN_IN_LABEL.findall((view.account.label or "").strip()))
+    return logins
 
 
 def _weekend_ahead(moment: datetime) -> bool:
@@ -766,21 +801,106 @@ MAX_ORDER_RISK_FRACTION = 0.02
 #: 15 Sep 2026 for -5,217, and EURUSD on two on 16 Sep for -2,882.
 FLEET_SYMBOL_CAP = 2
 
+#: How many accounts may hold one *currency*, in one direction, at once - a
+#: prop account only. CHFJPY and USDJPY are two symbols but one bet on JPY,
+#: and the exact-symbol cap above does not see that. A demo account measuring
+#: a brain can afford to; a challenge with real money behind it cannot, so
+#: this only binds accounts registered with `brain/challenge.py`. Tighter
+#: than FLEET_SYMBOL_CAP because a currency is held by more symbols than a
+#: symbol is held by accounts.
+FLEET_CURRENCY_CAP_PROP = 3
 
-def _fleet_holdings(directories: dict[str, Any]) -> Counter[tuple[str, str]]:
-    """(symbol, side) -> how many accounts hold it, from every readable book."""
+
+def _is_prop_account(session: Session, login: str) -> bool:
+    """Whether `login` is registered against a prop challenge rulebook.
+
+    Mirrors the login-matching `_challenge_gate` does when resolving which
+    registration governs an account's money, kept separate so the fleet
+    currency cap can ask the question without threading a new return value
+    through every `_challenge_gate` caller and test.
+    """
+    from app.services import challenge_accounts
+
+    if not login:
+        return False
+    try:
+        registered = [
+            view
+            for view in challenge_accounts.listing(
+                session, tenant_id=challenge_accounts.default_tenant(session)
+            )
+            if view.account.is_active
+        ]
+    except Exception:  # noqa: BLE001 - an unreadable registry is not "is prop"
+        return False
+    return any(_label_names(view.account.label, login) for view in registered)
+
+
+#: The timeframe the fleet correlation check reads its daily snapshot on.
+#: Matches the market map's own default (`app/api/v1/market_map.py`) rather
+#: than introducing a second convention for the same measurement.
+DNA_TIMEFRAME = Timeframe.H1
+
+
+def _measured_correlated_symbols(
+    session: Session, symbol: str, moment: datetime
+) -> dict[str, float] | None:
+    """Peer symbol -> correlation, from the collector's daily symbol-DNA
+    snapshot (`refresh_dna_job`, 02:00 UTC).
+
+    None means unmeasured - no instrument row, no stored profile, or the
+    computation for this symbol skipped it for want of history - and the
+    caller falls back to the currency-letter grouping rather than either
+    trusting a stale number or blocking a trade on an absence. Measurement
+    is asked for; it is never invented when missing.
+    """
+    from app.services import symbol_dna
+    from app.services.instruments import get_instrument_by_symbol
+
+    instrument = get_instrument_by_symbol(session, symbol)
+    if instrument is None:
+        return None
+    profiles = symbol_dna.latest_dna(session, instrument.id, DNA_TIMEFRAME, moment)
+    profile = profiles.get("correlation")
+    if profile is None:
+        return None
+    pairs = (profile.data or {}).get("pairs") or {}
+    return {
+        str(peer): float(info.get("correlation", 0.0))
+        for peer, info in pairs.items()
+        if isinstance(info, dict) and info.get("correlation") is not None
+    }
+
+
+def _fleet_holdings(
+    directories: dict[str, Any],
+) -> tuple[Counter[tuple[str, str]], Counter[tuple[str, str]]]:
+    """(symbol, side) and (currency, side) counts, from every readable book.
+
+    Both are built from the same single pass over each account's book, so
+    adding the currency count costs no extra bridge reads. The currency count
+    is what lets a prop account's cap see CHFJPY and USDJPY as the same bet on
+    JPY, rather than as two unrelated symbols each under its own cap.
+    """
     from app.providers.metatrader import MetaTraderBridge
 
-    counts: Counter[tuple[str, str]] = Counter()
+    symbol_counts: Counter[tuple[str, str]] = Counter()
+    currency_counts: Counter[tuple[str, str]] = Counter()
     for directory in directories.values():
         book = MetaTraderBridge(directory=directory).positions()
-        pairs = {
-            (str(p.get("symbol")), str(p.get("side")))
-            for p in book.get("positions") or []
-            if p.get("symbol")
-        }
-        counts.update(pairs)
-    return counts
+        symbol_sides: set[tuple[str, str]] = set()
+        currency_sides: set[tuple[str, str]] = set()
+        for position in book.get("positions") or []:
+            symbol = position.get("symbol")
+            if not symbol:
+                continue
+            side = str(position.get("side"))
+            symbol_sides.add((str(symbol), side))
+            for currency in _currencies_of(str(symbol)):
+                currency_sides.add((currency, side))
+        symbol_counts.update(symbol_sides)
+        currency_counts.update(currency_sides)
+    return symbol_counts, currency_counts
 
 
 def _open_risk_room(
@@ -1152,6 +1272,23 @@ def traded_universe() -> frozenset[str]:
 
     raw = str(getattr(get_settings(), "traded_symbols", "") or "")
     return frozenset(piece.strip().upper() for piece in raw.split(",") if piece.strip())
+
+
+def _account_universe(login: str) -> frozenset[str]:
+    """The instruments this account may trade, or empty for no limit.
+
+    `account_policy` overrides the deployment's list the same way it already
+    overrides the deployment's brains and risk - an account with its own row
+    set runs on its own list entirely rather than a narrowing of the fleet's,
+    so confining one account to gold and EURUSD does not require touching
+    what the other six may trade.
+    """
+    from app.services import account_policy
+
+    own = account_policy.symbols(login)
+    if own:
+        return frozenset(own)
+    return traded_universe()
 
 
 def _tradeable_symbol(symbol: str) -> str:
@@ -1587,7 +1724,7 @@ def run_all_accounts(
 
     reports: dict[str, Any] = {}
     sent = 0
-    fleet = _fleet_holdings(accounts)
+    fleet, fleet_currency = _fleet_holdings(accounts)
     for key, directory in sorted(accounts.items()):
         allowed, why = account_switch.state(key)
         if not allowed:
@@ -1604,6 +1741,7 @@ def run_all_accounts(
                 bridge=MetaTraderBridge(directory=directory),
                 kill_switch=kill_switch,
                 fleet_held=fleet,
+                fleet_currency_held=fleet_currency,
             )
         except Exception as problem:  # noqa: BLE001 - one account, not the fleet
             reports[key] = {
@@ -1646,6 +1784,7 @@ def run_cycle(
     bridge: Any = None,
     kill_switch: Any = None,
     fleet_held: Counter[tuple[str, str]] | None = None,
+    fleet_currency_held: Counter[tuple[str, str]] | None = None,
 ) -> dict[str, Any]:
     """Send an order for every fresh rule decision that has not had one.
 
@@ -1696,6 +1835,10 @@ def run_cycle(
     equity = float(published.get("equity") or 0.0)
     if not login or equity <= 0:
         return _report(mode=mode, refused="the terminal published no usable account")
+
+    # Asked once per cycle, not per candidate: it is a fact about the account,
+    # not about the symbol under consideration.
+    is_prop = _is_prop_account(session, login)
 
     # Counted from the terminal, never from this system's own record. They
     # disagree exactly when it matters, and the broker's answer is the one the
@@ -1794,7 +1937,7 @@ def run_cycle(
         # obeyed is one limit consulted.
         verdict.permitted_risk_r = headroom_r
 
-    if login in weekend_lock_logins() and _weekend_ahead(moment):
+    if (is_prop or login in weekend_lock_logins()) and _weekend_ahead(moment):
         # A prop challenge is lost on a Monday gap as surely as on a bad trade.
         return _report(
             mode=mode,
@@ -1896,25 +2039,33 @@ def run_cycle(
         # first is what makes the record answer "which gate stopped this".
         refusals.setdefault(candidate, reason)
 
+    # Only reached, below, on a prop account weighing a candidate against
+    # what the fleet already holds - imported once here rather than once per
+    # candidate.
+    from app.brain import portfolio as portfolio_brain
+
     for entry in candidates:
         # Resolved before the per-symbol cap, because the cap is about the
         # instrument the account will actually carry: a GCFUT decision and
         # an XAUUSD position are the same exposure under two names.
         traded_as = _tradeable_symbol(entry.symbol)
 
-        # The owner's list of what the accounts may carry, checked on the
+        # The owner's list of what this account may carry, checked on the
         # symbol the order is sent as. Empty means no list, which is every
-        # deployment before one was written.
+        # deployment before one was written. An account with its own row in
+        # `account_policy` runs on its own list instead of the deployment's -
+        # confining one account to gold and EURUSD must not narrow what the
+        # other six may trade.
         #
         # Here rather than in the ranking: the cross-section stops being a
         # ranking below twenty instruments, so narrowing the universe there
         # would either break the measurement or - because the narrowing is
         # discarded when too little survives - silently do nothing at all,
         # which is the worse of the two.
-        universe = traded_universe()
+        universe = _account_universe(login)
         if universe and traded_as not in universe:
             refuse(entry, f"{traded_as} is not in the instruments this "
-                "deployment is set to trade")
+                "account is set to trade")
             continue
 
         if traded_as in held:
@@ -1927,6 +2078,51 @@ def run_cycle(
             refuse(entry, f"{fleet_held[(traded_as, fleet_side)]} accounts already hold "
                 f"{traded_as} {fleet_side}, the fleet cap is {FLEET_SYMBOL_CAP}")
             continue
+
+        # Prop money only: a challenge account is refused on a *currency* the
+        # fleet is already leaning on in the same direction, even through a
+        # symbol under the exact-symbol cap above - CHFJPY and USDJPY are two
+        # symbols and one JPY bet. A demo account is not asked this; it exists
+        # to measure a brain, and this would change what is being measured.
+        if is_prop and fleet_currency_held is not None:
+            blocked = next(
+                (
+                    (currency, fleet_currency_held[(currency, fleet_side)])
+                    for currency in sorted(_currencies_of(traded_as))
+                    if fleet_currency_held[(currency, fleet_side)] >= FLEET_CURRENCY_CAP_PROP
+                ),
+                None,
+            )
+            if blocked is not None:
+                currency, currency_accounts = blocked
+                refuse(entry, f"{currency_accounts} accounts already hold {currency} "
+                    f"{fleet_side} between them, the prop currency cap is "
+                    f"{FLEET_CURRENCY_CAP_PROP}")
+                continue
+
+        # Prop money only, and on top of the currency-letter cap rather than
+        # instead of it: the letters are a free, always-available floor and
+        # the collector's daily measurement (`refresh_dna_job`) is a second,
+        # sharper net for the pairs sharing no letter at all - AUDUSD and
+        # NZDUSD both lean on risk appetite, GBPCHF and EURCHF both lean on
+        # the franc leg the letters would only catch on one side. Unmeasured
+        # is not asked to stand in for "uncorrelated": it is skipped, and the
+        # currency-letter cap above is what still binds.
+        if is_prop and fleet_held is not None:
+            correlated = _measured_correlated_symbols(session, traded_as, moment)
+            if correlated:
+                held_correlated = sum(
+                    count
+                    for (held_symbol, held_side), count in fleet_held.items()
+                    if held_side == fleet_side
+                    and held_symbol != traded_as
+                    and abs(correlated.get(held_symbol, 0.0)) >= portfolio_brain.CORRELATION_CLUSTER
+                )
+                if held_correlated >= FLEET_CURRENCY_CAP_PROP:
+                    refuse(entry, f"{held_correlated} accounts already hold a symbol "
+                        f"measured correlated with {traded_as} {fleet_side}, the prop "
+                        f"correlation cap is {FLEET_CURRENCY_CAP_PROP}")
+                    continue
 
         if len(sent) >= room:
             refuse(entry, "the open-position cap was reached in this cycle")
@@ -2327,6 +2523,10 @@ def run_cycle(
             continue
         if fleet_held is not None:
             fleet_held[(traded_as, "buy" if entry.decision == "long" else "sell")] += 1
+        if fleet_currency_held is not None:
+            side = "buy" if entry.decision == "long" else "sell"
+            for currency in _currencies_of(traded_as):
+                fleet_currency_held[(currency, side)] += 1
         sent.append(
             {
                 "symbol": entry.symbol,

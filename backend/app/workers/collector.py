@@ -551,27 +551,43 @@ def tighten_stops() -> dict[str, Any]:
 
     Off unless an account asks for it. The forward record is measuring a
     fixed geometry, and a trailing stop produces a different distribution of
-    outcomes - so this runs on the accounts named in
-    `MOLIDO_TRAILING_LOGINS` and on no others, which is what lets the two be
-    compared instead of one quietly replacing the other.
+    outcomes - so this runs only on an account that asked, which lets the
+    accounts that did be compared against the ones that did not rather than
+    one quietly replacing the other.
+
+    Two ways to ask, unioned rather than either replacing the other: the
+    `MOLIDO_TRAILING_LOGINS` env var (an engineer, at deploy time) and
+    `account_policy.trailing` (the account page, no restart) - so an
+    existing env-var deployment keeps working exactly as it did while a new
+    account can turn trailing on for itself without anyone touching the env
+    file.
     """
     import os
 
     from app.execution.metatrader_broker import MetaTraderBroker
     from app.providers.metatrader import MetaTraderBridge, bridge_dirs
+    from app.services import account_policy
     from app.workers import trailing
 
     raw = os.environ.get("MOLIDO_TRAILING_LOGINS", "").strip()
     logins = {part.strip() for part in raw.split(",") if part.strip()}
+    logins = logins | account_policy.trailing_logins()
 
     # Prop accounts before the weekend: winners' stops go to entry even where
-    # trailing is off, so a Monday gap cannot turn a winner into a loss.
+    # trailing is off, so a Monday gap cannot turn a winner into a loss. Read
+    # by login, not as one flag for the whole sweep - `locked_logins` below
+    # is what keeps this from also pulling a trailing-only account's stop to
+    # entry just because some other terminal in the same sweep is prop.
     from datetime import UTC, datetime
 
     from app.workers import autotrade
 
     weekend = autotrade._weekend_ahead(datetime.now(UTC))
-    locked = autotrade.weekend_lock_logins() if weekend else set()
+    locked: set[str] = set()
+    if weekend:
+        locked = autotrade.weekend_lock_logins()
+        with session_scope() as session:
+            locked = locked | autotrade._prop_registered_logins(session)
     logins = logins | locked
     if not logins:
         return {"moved": 0, "reason": "no account has trailing switched on"}
@@ -586,7 +602,8 @@ def tighten_stops() -> dict[str, Any]:
                 MetaTraderBroker(directory=path),
                 logins=logins,
                 dry_run=False,
-                lock_at_r=autotrade.WEEKEND_LOCK_AT_R if locked else None,
+                lock_at_r=autotrade.WEEKEND_LOCK_AT_R,
+                locked_logins=locked,
             )
         except Exception as problem:  # noqa: BLE001 - one terminal is not the sweep
             per_terminal[key] = f"{type(problem).__name__}: {problem}"

@@ -118,10 +118,38 @@ def strategies(login: str) -> list[str] | None:
     return names or None
 
 
+def symbols(login: str) -> list[str] | None:
+    """This account's own instrument list, or None to use the deployment's.
+
+    An empty list reads as "not set here" rather than "trade nothing", the
+    same reading `strategies` gives its own empty list - a settings field is
+    never how an account is stopped.
+    """
+    row = all_policies().get(str(login))
+    if not row:
+        return None
+    names = [str(name).strip().upper() for name in (row.get("symbols") or []) if str(name).strip()]
+    return names or None
+
+
+def trailing_logins() -> set[str]:
+    """Every login with trailing switched on for its own account.
+
+    Read as a set rather than a per-login question, because the one caller
+    (`tighten_stops`) already sweeps every terminal in one pass and wants
+    the whole list once, the same shape `MOLIDO_TRAILING_LOGINS` gave it -
+    so the env var and this table can be unioned rather than one replacing
+    the other.
+    """
+    return {login for login, row in all_policies().items() if row.get("trailing")}
+
+
 __all__ = [
     "CACHE_SECONDS",
     "all_policies",
     "invalidate",
     "risk_percent",
     "strategies",
+    "symbols",
+    "trailing_logins",
 ]
