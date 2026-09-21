@@ -112,6 +112,20 @@ USDJPY_SPEC = {
     "ask": 1.15904,
 }
 
+#: Same purpose as USDJPY_SPEC, for the measured-correlation tests: a symbol
+#: sharing no currency letter with the fleet position it is tested against,
+#: so only the correlation path - not the currency-letter cap - can be what
+#: refuses.
+GBPJPY_SPEC = {
+    "name": "GBPJPY",
+    "tick_value": 1.0,
+    "tick_size": 0.00001,
+    "volume_min": 0.01,
+    "volume_step": 0.01,
+    "bid": 1.15890,
+    "ask": 1.15904,
+}
+
 
 @pytest.fixture(autouse=True)
 def switch_released(monkeypatch):
@@ -974,6 +988,84 @@ class TestOneSymbolIsOnePosition:
             broker=FakeBroker(),
             bridge=FakeBridge(symbols=[USDJPY_SPEC]),
             fleet_currency_held=fleet_currency,
+        )
+
+        assert report["orders"] == 1
+
+    def _store_correlation(self, session, symbol, pairs):
+        """A stored DNA snapshot, the way the collector's daily
+        `refresh_dna_job` writes one (`app/services/symbol_dna.py`)."""
+        from datetime import timedelta
+
+        from app.core.enums import AssetClass
+        from app.models.instruments import Instrument
+        from app.services.symbol_dna import SymbolProfile
+
+        instrument = Instrument(
+            symbol=symbol,
+            name=symbol,
+            asset_class=AssetClass.FOREX,
+            base_currency=symbol[:3],
+            quote_currency=symbol[3:6],
+        )
+        session.add(instrument)
+        session.flush()
+        session.add(
+            SymbolProfile(
+                instrument_id=instrument.id,
+                timeframe=autotrade.DNA_TIMEFRAME,
+                kind="correlation",
+                as_of=NOW - timedelta(hours=1),
+                computed_at=NOW - timedelta(hours=1),
+                coverage_start=NOW - timedelta(days=60),
+                coverage_end=NOW - timedelta(hours=1),
+                sample_size=1000,
+                profile_version=1,
+                data={"pairs": pairs},
+            )
+        )
+        session.flush()
+
+    def test_prop_correlation_cap_refuses_a_symbol_sharing_no_letter(
+        self, session, live
+    ):
+        """AUDNZD and GBPJPY share no currency letter, so the letter cap
+        cannot see them as one bet - only the collector's measured
+        correlation can."""
+        from collections import Counter
+
+        self._register_prop(session, "68345601")
+        self._store_correlation(session, "GBPJPY", {"AUDNZD": {"correlation": 0.85}})
+        decide(session, symbol="GBPJPY", decision="long")
+        fleet = Counter({("AUDNZD", "buy"): autotrade.FLEET_CURRENCY_CAP_PROP})
+
+        report = autotrade.run_cycle(
+            session,
+            now=NOW,
+            broker=FakeBroker(),
+            bridge=FakeBridge(symbols=[GBPJPY_SPEC]),
+            fleet_held=fleet,
+        )
+
+        assert report["orders"] == 0
+        assert any("prop correlation cap" in n for n in report["skipped"])
+
+    def test_prop_correlation_cap_is_skipped_when_unmeasured(self, session, live):
+        """No stored snapshot is not treated as "uncorrelated" or as
+        "correlated" - it is skipped, and the order proceeds on whatever
+        the currency-letter cap alone decides."""
+        from collections import Counter
+
+        self._register_prop(session, "68345601")
+        decide(session, symbol="GBPJPY", decision="long")
+        fleet = Counter({("AUDNZD", "buy"): autotrade.FLEET_CURRENCY_CAP_PROP})
+
+        report = autotrade.run_cycle(
+            session,
+            now=NOW,
+            broker=FakeBroker(),
+            bridge=FakeBridge(symbols=[GBPJPY_SPEC]),
+            fleet_held=fleet,
         )
 
         assert report["orders"] == 1

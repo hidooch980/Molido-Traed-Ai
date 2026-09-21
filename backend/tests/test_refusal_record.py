@@ -33,7 +33,8 @@ class TestEveryRefusalIsRecorded:
         # when a call is added or rewritten and never when one disappears.
         # 19 from 16 Sep 2026: the fleet symbol cap.
         # 20 from 21 Sep 2026: the prop-only fleet currency cap.
-        assert source.count("refuse(entry,") == 20
+        # 21 from 21 Sep 2026: the prop-only measured fleet correlation cap.
+        assert source.count("refuse(entry,") == 21
 
     def test_the_one_remaining_append_is_the_recorder_itself(self):
         source = inspect.getsource(autotrade.run_cycle)

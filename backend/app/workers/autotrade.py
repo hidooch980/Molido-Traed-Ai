@@ -52,6 +52,7 @@ from typing import Any
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
+from app.core.enums import Timeframe
 from app.core.errors import ValidationFailedError
 from app.core.logging import get_logger
 from app.execution.broker import BrokerAdapter
@@ -799,6 +800,42 @@ def _is_prop_account(session: Session, login: str) -> bool:
     except Exception:  # noqa: BLE001 - an unreadable registry is not "is prop"
         return False
     return any(_label_names(view.account.label, login) for view in registered)
+
+
+#: The timeframe the fleet correlation check reads its daily snapshot on.
+#: Matches the market map's own default (`app/api/v1/market_map.py`) rather
+#: than introducing a second convention for the same measurement.
+DNA_TIMEFRAME = Timeframe.H1
+
+
+def _measured_correlated_symbols(
+    session: Session, symbol: str, moment: datetime
+) -> dict[str, float] | None:
+    """Peer symbol -> correlation, from the collector's daily symbol-DNA
+    snapshot (`refresh_dna_job`, 02:00 UTC).
+
+    None means unmeasured - no instrument row, no stored profile, or the
+    computation for this symbol skipped it for want of history - and the
+    caller falls back to the currency-letter grouping rather than either
+    trusting a stale number or blocking a trade on an absence. Measurement
+    is asked for; it is never invented when missing.
+    """
+    from app.services import symbol_dna
+    from app.services.instruments import get_instrument_by_symbol
+
+    instrument = get_instrument_by_symbol(session, symbol)
+    if instrument is None:
+        return None
+    profiles = symbol_dna.latest_dna(session, instrument.id, DNA_TIMEFRAME, moment)
+    profile = profiles.get("correlation")
+    if profile is None:
+        return None
+    pairs = (profile.data or {}).get("pairs") or {}
+    return {
+        str(peer): float(info.get("correlation", 0.0))
+        for peer, info in pairs.items()
+        if isinstance(info, dict) and info.get("correlation") is not None
+    }
 
 
 def _fleet_holdings(
@@ -1951,6 +1988,11 @@ def run_cycle(
         # first is what makes the record answer "which gate stopped this".
         refusals.setdefault(candidate, reason)
 
+    # Only reached, below, on a prop account weighing a candidate against
+    # what the fleet already holds - imported once here rather than once per
+    # candidate.
+    from app.brain import portfolio as portfolio_brain
+
     for entry in candidates:
         # Resolved before the per-symbol cap, because the cap is about the
         # instrument the account will actually carry: a GCFUT decision and
@@ -2002,6 +2044,30 @@ def run_cycle(
                 refuse(entry, f"{held} accounts already hold {currency} {fleet_side} "
                     f"between them, the prop currency cap is {FLEET_CURRENCY_CAP_PROP}")
                 continue
+
+        # Prop money only, and on top of the currency-letter cap rather than
+        # instead of it: the letters are a free, always-available floor and
+        # the collector's daily measurement (`refresh_dna_job`) is a second,
+        # sharper net for the pairs sharing no letter at all - AUDUSD and
+        # NZDUSD both lean on risk appetite, GBPCHF and EURCHF both lean on
+        # the franc leg the letters would only catch on one side. Unmeasured
+        # is not asked to stand in for "uncorrelated": it is skipped, and the
+        # currency-letter cap above is what still binds.
+        if is_prop and fleet_held is not None:
+            correlated = _measured_correlated_symbols(session, traded_as, moment)
+            if correlated:
+                held_correlated = sum(
+                    count
+                    for (held_symbol, held_side), count in fleet_held.items()
+                    if held_side == fleet_side
+                    and held_symbol != traded_as
+                    and abs(correlated.get(held_symbol, 0.0)) >= portfolio_brain.CORRELATION_CLUSTER
+                )
+                if held_correlated >= FLEET_CURRENCY_CAP_PROP:
+                    refuse(entry, f"{held_correlated} accounts already hold a symbol "
+                        f"measured correlated with {traded_as} {fleet_side}, the prop "
+                        f"correlation cap is {FLEET_CURRENCY_CAP_PROP}")
+                    continue
 
         if len(sent) >= room:
             refuse(entry, "the open-position cap was reached in this cycle")

@@ -18,6 +18,7 @@
 | #19 | صفحهٔ `/tradingview`: نمودار Lightweight Charts با خط ورود/استاپ/هدف پوزیشن‌های باز، و webhook ثبت هشدار (رمز در بدنه، فقط hash ذخیره، ۳۰ در دقیقه، هرگز معامله نمی‌کند). مهاجرت `0026_tradingview` | رمز اشتباه 401؛ رمز درست ثبت با `traded: false`؛ ردیف و رمز آزمایشی پاک شدند |
 | #20 | `FLEET_SYMBOL_CAP = 2`: هر (نماد، جهت) حداکثر روی ۲ حساب | اولین چرخه: «4 accounts already hold NZDUSD sell, the fleet cap is 2» |
 | #21 | `FLEET_CURRENCY_CAP_PROP = 3`: فقط حساب پراپ (term-j، ثبت‌شده در `challenge_accounts`)، سقف اضافه روی *ارز مشترک* نه نماد دقیق — CHFJPY و USDJPY یک شرط روی ین‌اند و سقف نمادی این را نمی‌بیند؛ حساب‌های دمو (اندازه‌گیری مغزها) دست‌نخورده ماندند | تست‌ها: `test_prop_currency_cap_refuses_a_correlated_symbol_under_the_exact_cap`، `test_prop_currency_cap_does_not_bind_a_demo_account`، ۲۰۷ تست موجود سبز |
+| #22 | سقف پراپ روی *همبستگی سنجیده‌شدهٔ* روزانه (`refresh_dna_job`، ۰۲:۰۰ UTC، همان `CORRELATION_CLUSTER=0.7` مغز پورتفولیو) اضافه شد — روی سقف حرف ارز، نه به‌جای آن؛ جفت‌هایی بدون حرف مشترک ولی هم‌بسته (مثلاً AUDNZD و GBPJPY) را هم می‌گیرد. نامسنجیده = نادیده گرفته می‌شود (نه فرض هم‌بسته، نه فرض بی‌ربط)، و سقف حرف ارز همچنان کف محافظه‌کارانه است | تست‌ها: `test_prop_correlation_cap_refuses_a_symbol_sharing_no_letter`، `test_prop_correlation_cap_is_skipped_when_unmeasured`، ۴۱۵۲ تست کل پروژه سبز |
 
 پوزیشن‌های قدیمیِ بالای سقف بسته نشدند (NZDUSD فروش ×۴، USDJPY خرید ×۳ در لحظهٔ نصب)؛ فقط
 ورود جدید بسته است. ارزش کل ناوگان ۱۷ سپتامبر ۰۰:۳۱ ایران: ۱٬۴۱۹٬۳۰۲ (‎+۱.۴٪ از شروع).
