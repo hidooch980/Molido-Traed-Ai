@@ -2094,9 +2094,10 @@ def run_cycle(
                 None,
             )
             if blocked is not None:
-                currency, held = blocked
-                refuse(entry, f"{held} accounts already hold {currency} {fleet_side} "
-                    f"between them, the prop currency cap is {FLEET_CURRENCY_CAP_PROP}")
+                currency, currency_accounts = blocked
+                refuse(entry, f"{currency_accounts} accounts already hold {currency} "
+                    f"{fleet_side} between them, the prop currency cap is "
+                    f"{FLEET_CURRENCY_CAP_PROP}")
                 continue
 
         # Prop money only, and on top of the currency-letter cap rather than
