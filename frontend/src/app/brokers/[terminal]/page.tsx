@@ -280,6 +280,8 @@ export default async function TerminalPage({
               brainsHint: t("accountPolicy.brainsHint"),
               symbols: t("accountPolicy.symbols"),
               symbolsHint: t("accountPolicy.symbolsHint"),
+              trailing: t("accountPolicy.trailing"),
+              trailingHint: t("accountPolicy.trailingHint"),
               inForce: t("accountPolicy.inForce"),
               usingFleetDefault: t("accountPolicy.usingFleetDefault"),
               save: t("accountPolicy.save"),

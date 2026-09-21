@@ -95,6 +95,22 @@ class TestSymbols:
         assert account_policy.symbols("111") == ["XAUUSD"]
 
 
+class TestTrailingLogins:
+    def test_only_accounts_with_trailing_on_are_returned(self, stored):
+        stored({
+            "111": {"login": "111", "strategies": [], "trailing": True},
+            "222": {"login": "222", "strategies": [], "trailing": False},
+            "333": {"login": "333", "strategies": []},
+        })
+
+        assert account_policy.trailing_logins() == {"111"}
+
+    def test_an_empty_table_locks_nobody(self, stored):
+        stored({})
+
+        assert account_policy.trailing_logins() == set()
+
+
 class TestPrecedence:
     def test_the_stored_policy_beats_the_environment(self, stored, monkeypatch):
         from app.core.config import get_settings

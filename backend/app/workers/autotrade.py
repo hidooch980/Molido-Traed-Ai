@@ -235,16 +235,50 @@ WEEKEND_LOCK_AT_R = 0.3
 
 
 def weekend_lock_logins() -> set[str]:
-    """Accounts the weekend lock applies to: `MOLIDO_WEEKEND_LOCK_LOGINS`.
+    """Accounts the weekend lock applies to, from `MOLIDO_WEEKEND_LOCK_LOGINS`.
 
-    A setting rather than read from the challenge registry, because a
-    registration and a login are matched by label and a wrong guess here would
-    stop a non-prop account trading every Friday afternoon.
+    A manual add-on now rather than the only source: `_is_prop_account` and
+    `_prop_registered_logins` below read the challenge registry directly and
+    cover the ordinary case - an account registered with a rulebook - without
+    an engineer naming its login here first. This env var still works,
+    additively, for whatever that reading does not cover.
     """
     import os
 
     raw = os.environ.get("MOLIDO_WEEKEND_LOCK_LOGINS", "")
     return {part.strip() for part in raw.split(",") if part.strip()}
+
+
+def _prop_registered_logins(session: Session) -> set[str]:
+    """Every login an active challenge registration names explicitly.
+
+    The fleet-wide counterpart to `_is_prop_account`, for a caller - the
+    weekend stop-tightening sweep - that has to decide for every terminal at
+    once rather than one login it already has in hand.
+
+    Deliberately narrower than `_is_prop_account`: a registration whose label
+    names no login at all applies by a fallback that only resolves against
+    one specific login being asked about (`_challenge_gate`'s "not claimed by
+    a named one"), and guessing that here, fleet-wide, with no login to check
+    it against, is exactly the wrong guess that stops a non-prop account
+    trading every Friday afternoon. Only the unambiguous case is read.
+    """
+    from app.services import challenge_accounts
+
+    try:
+        registered = [
+            view
+            for view in challenge_accounts.listing(
+                session, tenant_id=challenge_accounts.default_tenant(session)
+            )
+            if view.account.is_active
+        ]
+    except Exception:  # noqa: BLE001 - an unreadable registry names nobody
+        return set()
+    logins: set[str] = set()
+    for view in registered:
+        logins.update(_LOGIN_IN_LABEL.findall((view.account.label or "").strip()))
+    return logins
 
 
 def _weekend_ahead(moment: datetime) -> bool:
@@ -1903,7 +1937,7 @@ def run_cycle(
         # obeyed is one limit consulted.
         verdict.permitted_risk_r = headroom_r
 
-    if login in weekend_lock_logins() and _weekend_ahead(moment):
+    if (is_prop or login in weekend_lock_logins()) and _weekend_ahead(moment):
         # A prop challenge is lost on a Monday gap as surely as on a bad trade.
         return _report(
             mode=mode,

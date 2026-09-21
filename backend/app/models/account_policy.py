@@ -24,7 +24,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import Float, String
+from sqlalchemy import Boolean, Float, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
@@ -54,6 +54,13 @@ class AccountPolicy(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     #: did the same would be a second halt nobody can find.
     symbols: Mapped[list[Any]] = mapped_column(JSONType, default=list, nullable=False)
 
+    #: Whether the trailing-stop worker (`app/workers/trailing.py`) runs on
+    #: this account. Off by default - the same default the deployment-wide
+    #: `MOLIDO_TRAILING_LOGINS` list gave every account before this column
+    #: existed, so a fresh account with no row here behaves exactly as one
+    #: did before trailing was per-account at all.
+    trailing: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
     #: Percent of equity behind one stop. None means not set here.
     #:
     #: Nullable rather than defaulted to the fleet figure: a stored copy of
@@ -71,6 +78,7 @@ class AccountPolicy(Base, UUIDPrimaryKeyMixin, TimestampMixin):
             "login": self.login,
             "strategies": list(self.strategies or []),
             "symbols": list(self.symbols or []),
+            "trailing": bool(self.trailing),
             "risk_percent": self.risk_percent,
             "changed_by": self.changed_by or None,
             "changed_at": self.updated_at.isoformat() if self.updated_at else None,

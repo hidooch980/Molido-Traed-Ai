@@ -2547,6 +2547,52 @@ class TestAnAccountCanBeConfinedToItsOwnList:
         assert report["orders"] == 1
 
 
+class TestAPropRegisteredAccountIsWeekendLockedWithoutTheEnvVar:
+    """`_is_prop_account` reaches the challenge registry directly, so a
+    registered account is weekend-locked from the moment it is registered -
+    no `MOLIDO_WEEKEND_LOCK_LOGINS` edit, no restart."""
+
+    FRIDAY_EVENING = datetime(2026, 9, 18, 17, 0, tzinfo=UTC)
+
+    def _register_prop(self, session, login):
+        from decimal import Decimal
+
+        from app.services import challenge_accounts
+
+        return challenge_accounts.create(
+            session,
+            tenant_id=challenge_accounts.default_tenant(session),
+            label=login,
+            rulebook_key="ftmo-challenge-2step-phase1",
+            starting_balance=Decimal("10000"),
+            currency_per_r=Decimal("50"),
+            rules_confirmed=True,
+        )
+
+    def test_a_registered_account_is_locked_with_no_env_var_set(self, session, live):
+        self._register_prop(session, "68345601")
+        decide(session, at=self.FRIDAY_EVENING - timedelta(minutes=5))
+
+        report = autotrade.run_cycle(
+            session, now=self.FRIDAY_EVENING, broker=FakeBroker(), bridge=FakeBridge()
+        )
+
+        assert report["orders"] == 0
+        assert "weekend lock" in (report.get("refused") or "")
+
+    def test_an_unregistered_account_still_trades_the_same_friday(self, session, live):
+        """The env var and the registry are both absent here - a demo
+        account must not be locked by a registration that names some other
+        login."""
+        decide(session, at=self.FRIDAY_EVENING - timedelta(minutes=5))
+
+        report = autotrade.run_cycle(
+            session, now=self.FRIDAY_EVENING, broker=FakeBroker(), bridge=FakeBridge()
+        )
+
+        assert report["orders"] == 1
+
+
 class TestTheCouncil:
     """The agreement gate. One brain moving alone is a hypothesis, not a
     trade - and a brain that only records still gets a vote, because

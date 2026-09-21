@@ -735,6 +735,9 @@ class AccountPolicyPayload(BaseModel):
     #: applies. Never a way to stop an account trading - the kill switch is
     #: where that belongs.
     symbols: list[str] = Field(default_factory=list, max_length=20)
+    #: Whether the trailing-stop worker runs on this account. False is the
+    #: same default every account had before this was per-account.
+    trailing: bool = Field(default=False)
     risk_percent: float | None = Field(default=None, gt=0, le=5.0)
 
 
@@ -759,6 +762,7 @@ def read_account_policy(login: str, _: Principal = READ) -> dict[str, Any]:
             "risk_percent": _risk_percent(str(login)),
             "strategies": sorted(names) if names else [],
             "symbols": sorted(own_symbols) if own_symbols else sorted(traded_universe()),
+            "trailing": bool((stored or {}).get("trailing")),
             "refused": None if names else refusal,
         },
         "available_strategies": _available_strategies(),
@@ -804,6 +808,7 @@ def write_account_policy(
         session.add(row)
     row.strategies = list(payload.strategies)
     row.symbols = sorted({s.strip().upper() for s in payload.symbols if s.strip()})
+    row.trailing = bool(payload.trailing)
     row.risk_percent = payload.risk_percent
     row.changed_by = principal.actor[:120]
     session.commit()
@@ -821,6 +826,7 @@ def write_account_policy(
         "stored": row.as_dict(),
         "in_force": {
             "symbols": sorted(own_symbols) if own_symbols else sorted(traded_universe()),
+            "trailing": bool(row.trailing),
             "risk_percent": _risk_percent(str(login)),
             "strategies": sorted(names) if names else [],
             "refused": None if names else refusal,
