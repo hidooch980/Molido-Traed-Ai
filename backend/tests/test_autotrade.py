@@ -97,6 +97,22 @@ class FakeBridge:
         }
 
 
+#: A contract specification for a symbol FakeBridge does not carry by
+#: default, for tests that need a JPY-quoted instrument sizable. Priced on
+#: the same scale as `decide()`'s fixed entry/stop/target so the spread
+#: guard sees the same cost ratio it does for EURUSD - only the name is
+#: what these tests are about.
+USDJPY_SPEC = {
+    "name": "USDJPY",
+    "tick_value": 1.0,
+    "tick_size": 0.00001,
+    "volume_min": 0.01,
+    "volume_step": 0.01,
+    "bid": 1.15890,
+    "ask": 1.15904,
+}
+
+
 @pytest.fixture(autouse=True)
 def switch_released(monkeypatch):
     """Every test below predates the kill switch and is about something else.
@@ -901,6 +917,66 @@ class TestOneSymbolIsOnePosition:
 
         assert report["orders"] == 1
         assert fleet[("EURUSD", "buy")] == autotrade.FLEET_SYMBOL_CAP
+
+    def _register_prop(self, session, login):
+        """Register the login FakeBridge publishes as a prop challenge account,
+        with what `_challenge_gate` needs entered to clear its own checks so
+        the test is about the fleet currency cap and nothing upstream of it."""
+        from decimal import Decimal
+
+        from app.services import challenge_accounts
+
+        return challenge_accounts.create(
+            session,
+            tenant_id=challenge_accounts.default_tenant(session),
+            label=login,
+            rulebook_key="ftmo-challenge-2step-phase1",
+            starting_balance=Decimal("10000"),
+            currency_per_r=Decimal("50"),
+            rules_confirmed=True,
+        )
+
+    def test_prop_currency_cap_refuses_a_correlated_symbol_under_the_exact_cap(
+        self, session, live
+    ):
+        """CHFJPY and USDJPY are two symbols and one JPY bet - the exact-symbol
+        cap above cannot see that, so a prop account needs its own, narrower
+        cap counted on the shared currency instead."""
+        from collections import Counter
+
+        self._register_prop(session, "68345601")
+        decide(session, symbol="USDJPY", decision="long")
+        fleet_currency = Counter({("JPY", "buy"): autotrade.FLEET_CURRENCY_CAP_PROP})
+
+        report = autotrade.run_cycle(
+            session,
+            now=NOW,
+            broker=FakeBroker(),
+            bridge=FakeBridge(symbols=[USDJPY_SPEC]),
+            fleet_currency_held=fleet_currency,
+        )
+
+        assert report["orders"] == 0
+        assert any("prop currency cap" in n for n in report["skipped"])
+
+    def test_prop_currency_cap_does_not_bind_a_demo_account(self, session, live):
+        """The same currency count must not touch an account measuring a
+        brain: the cap is prop-only, and it must not change what a demo
+        deployment's forward record is measuring."""
+        from collections import Counter
+
+        decide(session, symbol="USDJPY", decision="long")
+        fleet_currency = Counter({("JPY", "buy"): autotrade.FLEET_CURRENCY_CAP_PROP})
+
+        report = autotrade.run_cycle(
+            session,
+            now=NOW,
+            broker=FakeBroker(),
+            bridge=FakeBridge(symbols=[USDJPY_SPEC]),
+            fleet_currency_held=fleet_currency,
+        )
+
+        assert report["orders"] == 1
 
     def test_an_unreadable_book_sends_nothing(self, session, live):
         """Read as empty, it passed every limit that counts the book."""

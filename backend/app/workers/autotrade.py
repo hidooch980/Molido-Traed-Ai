@@ -766,21 +766,70 @@ MAX_ORDER_RISK_FRACTION = 0.02
 #: 15 Sep 2026 for -5,217, and EURUSD on two on 16 Sep for -2,882.
 FLEET_SYMBOL_CAP = 2
 
+#: How many accounts may hold one *currency*, in one direction, at once - a
+#: prop account only. CHFJPY and USDJPY are two symbols but one bet on JPY,
+#: and the exact-symbol cap above does not see that. A demo account measuring
+#: a brain can afford to; a challenge with real money behind it cannot, so
+#: this only binds accounts registered with `brain/challenge.py`. Tighter
+#: than FLEET_SYMBOL_CAP because a currency is held by more symbols than a
+#: symbol is held by accounts.
+FLEET_CURRENCY_CAP_PROP = 3
 
-def _fleet_holdings(directories: dict[str, Any]) -> Counter[tuple[str, str]]:
-    """(symbol, side) -> how many accounts hold it, from every readable book."""
+
+def _is_prop_account(session: Session, login: str) -> bool:
+    """Whether `login` is registered against a prop challenge rulebook.
+
+    Mirrors the login-matching `_challenge_gate` does when resolving which
+    registration governs an account's money, kept separate so the fleet
+    currency cap can ask the question without threading a new return value
+    through every `_challenge_gate` caller and test.
+    """
+    from app.services import challenge_accounts
+
+    if not login:
+        return False
+    try:
+        registered = [
+            view
+            for view in challenge_accounts.listing(
+                session, tenant_id=challenge_accounts.default_tenant(session)
+            )
+            if view.account.is_active
+        ]
+    except Exception:  # noqa: BLE001 - an unreadable registry is not "is prop"
+        return False
+    return any(_label_names(view.account.label, login) for view in registered)
+
+
+def _fleet_holdings(
+    directories: dict[str, Any],
+) -> tuple[Counter[tuple[str, str]], Counter[tuple[str, str]]]:
+    """(symbol, side) and (currency, side) counts, from every readable book.
+
+    Both are built from the same single pass over each account's book, so
+    adding the currency count costs no extra bridge reads. The currency count
+    is what lets a prop account's cap see CHFJPY and USDJPY as the same bet on
+    JPY, rather than as two unrelated symbols each under its own cap.
+    """
     from app.providers.metatrader import MetaTraderBridge
 
-    counts: Counter[tuple[str, str]] = Counter()
+    symbol_counts: Counter[tuple[str, str]] = Counter()
+    currency_counts: Counter[tuple[str, str]] = Counter()
     for directory in directories.values():
         book = MetaTraderBridge(directory=directory).positions()
-        pairs = {
-            (str(p.get("symbol")), str(p.get("side")))
-            for p in book.get("positions") or []
-            if p.get("symbol")
-        }
-        counts.update(pairs)
-    return counts
+        symbol_sides: set[tuple[str, str]] = set()
+        currency_sides: set[tuple[str, str]] = set()
+        for position in book.get("positions") or []:
+            symbol = position.get("symbol")
+            if not symbol:
+                continue
+            side = str(position.get("side"))
+            symbol_sides.add((str(symbol), side))
+            for currency in _currencies_of(str(symbol)):
+                currency_sides.add((currency, side))
+        symbol_counts.update(symbol_sides)
+        currency_counts.update(currency_sides)
+    return symbol_counts, currency_counts
 
 
 def _open_risk_room(
@@ -1587,7 +1636,7 @@ def run_all_accounts(
 
     reports: dict[str, Any] = {}
     sent = 0
-    fleet = _fleet_holdings(accounts)
+    fleet, fleet_currency = _fleet_holdings(accounts)
     for key, directory in sorted(accounts.items()):
         allowed, why = account_switch.state(key)
         if not allowed:
@@ -1604,6 +1653,7 @@ def run_all_accounts(
                 bridge=MetaTraderBridge(directory=directory),
                 kill_switch=kill_switch,
                 fleet_held=fleet,
+                fleet_currency_held=fleet_currency,
             )
         except Exception as problem:  # noqa: BLE001 - one account, not the fleet
             reports[key] = {
@@ -1646,6 +1696,7 @@ def run_cycle(
     bridge: Any = None,
     kill_switch: Any = None,
     fleet_held: Counter[tuple[str, str]] | None = None,
+    fleet_currency_held: Counter[tuple[str, str]] | None = None,
 ) -> dict[str, Any]:
     """Send an order for every fresh rule decision that has not had one.
 
@@ -1696,6 +1747,10 @@ def run_cycle(
     equity = float(published.get("equity") or 0.0)
     if not login or equity <= 0:
         return _report(mode=mode, refused="the terminal published no usable account")
+
+    # Asked once per cycle, not per candidate: it is a fact about the account,
+    # not about the symbol under consideration.
+    is_prop = _is_prop_account(session, login)
 
     # Counted from the terminal, never from this system's own record. They
     # disagree exactly when it matters, and the broker's answer is the one the
@@ -1927,6 +1982,26 @@ def run_cycle(
             refuse(entry, f"{fleet_held[(traded_as, fleet_side)]} accounts already hold "
                 f"{traded_as} {fleet_side}, the fleet cap is {FLEET_SYMBOL_CAP}")
             continue
+
+        # Prop money only: a challenge account is refused on a *currency* the
+        # fleet is already leaning on in the same direction, even through a
+        # symbol under the exact-symbol cap above - CHFJPY and USDJPY are two
+        # symbols and one JPY bet. A demo account is not asked this; it exists
+        # to measure a brain, and this would change what is being measured.
+        if is_prop and fleet_currency_held is not None:
+            blocked = next(
+                (
+                    (currency, fleet_currency_held[(currency, fleet_side)])
+                    for currency in sorted(_currencies_of(traded_as))
+                    if fleet_currency_held[(currency, fleet_side)] >= FLEET_CURRENCY_CAP_PROP
+                ),
+                None,
+            )
+            if blocked is not None:
+                currency, held = blocked
+                refuse(entry, f"{held} accounts already hold {currency} {fleet_side} "
+                    f"between them, the prop currency cap is {FLEET_CURRENCY_CAP_PROP}")
+                continue
 
         if len(sent) >= room:
             refuse(entry, "the open-position cap was reached in this cycle")
@@ -2327,6 +2402,10 @@ def run_cycle(
             continue
         if fleet_held is not None:
             fleet_held[(traded_as, "buy" if entry.decision == "long" else "sell")] += 1
+        if fleet_currency_held is not None:
+            side = "buy" if entry.decision == "long" else "sell"
+            for currency in _currencies_of(traded_as):
+                fleet_currency_held[(currency, side)] += 1
         sent.append(
             {
                 "symbol": entry.symbol,
