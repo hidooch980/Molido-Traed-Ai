@@ -13,6 +13,13 @@ posts the difference since it last looked:
     in R against the stop it was announced with, and the exit price from the
     matching closed deal when the terminal published one.
 
+**Brain consensus** is posted too, labelled as what it is: when at least
+`CONSENSUS_MIN` brains hold a fresh decision on the same symbol and side and
+more agree than oppose, the channel gets "N brains agree" - once per
+`CONSENSUS_WINDOW`. It is not called "strong": `execution.conviction` keeps
+that word for a proven edge, and there is none yet. The votes are the ones
+the order path counts (`autotrade._fresh_votes`, silenced brains excluded).
+
 **The first look posts nothing.** It records what is already open and already
 closed, so switching the channel on does not replay a week of trades.
 
@@ -41,6 +48,11 @@ SAME_SIGNAL_WINDOW = timedelta(hours=2)
 
 #: Closed deals remembered as already matched; older ones are forgotten.
 KEEP_DEALS = 1000
+
+#: Brains that must agree before a consensus is posted, and how long the same
+#: (symbol, side) stays quiet after it was.
+CONSENSUS_MIN = 3
+CONSENSUS_WINDOW = timedelta(hours=12)
 
 DEFAULT_STATE_FILE = "/var/lib/molido/state/signal-channel.json"
 
@@ -220,6 +232,51 @@ def step(
     }
 
 
+def consensus_text(symbol: str, side: str, agree: set[str], oppose: set[str]) -> str:
+    direction = "خرید" if side == "long" else "فروش"
+    return "\n".join(
+        [
+            f"🧠 توافق {len(agree)} مغز: {direction} {symbol}",
+            "",
+            f"موافق: {', '.join(sorted(agree))}",
+            f"مخالف: {len(oppose)}",
+            "",
+            "این نظر مغزهاست، نه معاملهٔ بازشده.",
+        ]
+    )
+
+
+def consensus_step(
+    posted: dict[str, str] | None,
+    votes: dict[tuple[str, str], set[str]],
+    *,
+    now: datetime,
+    send: Callable[[str], bool],
+) -> dict[str, str]:
+    """Post each (symbol, side) that has a qualifying consensus, once per window."""
+    qualifying = []
+    for (symbol, side), agree in votes.items():
+        if side not in ("long", "short"):
+            continue
+        oppose = votes.get((symbol, "short" if side == "long" else "long"), set())
+        if len(agree) >= CONSENSUS_MIN and len(agree) > len(oppose):
+            qualifying.append((symbol, side, agree, oppose))
+
+    if posted is None:
+        # First look: what already agrees is not news.
+        return {f"{sym}|{side}": now.isoformat() for sym, side, _a, _o in qualifying}
+
+    cutoff = now - CONSENSUS_WINDOW
+    out = {k: v for k, v in posted.items() if datetime.fromisoformat(v) >= cutoff}
+    for symbol, side, agree, oppose in sorted(qualifying, key=lambda q: (q[0], q[1])):
+        key = f"{symbol}|{side}"
+        if key in out:
+            continue
+        if send(consensus_text(symbol, side, agree, oppose)):
+            out[key] = now.isoformat()
+    return out
+
+
 def _books(session: Any) -> dict[str, Book]:
     from app.providers.metatrader import MetaTraderBridge, bridge_dirs
 
@@ -260,6 +317,19 @@ def run(session: Any, *, now: datetime | None = None) -> dict[str, Any]:
             log.warning("signal_channel.send_failed", reason=str(payload)[:200])
         return bool(ok)
 
-    state = step(load_state(), _books(session), now=now or datetime.now(UTC), send=send)
+    from app.workers.autotrade import _fresh_votes
+
+    moment = now or datetime.now(UTC)
+    previous = load_state()
+    state = step(previous, _books(session), now=moment, send=send)
+    state["consensus"] = consensus_step(
+        # Missing, not empty: a state written before consensus existed is a
+        # first look for it, so switching it on does not post every standing
+        # agreement at once.
+        None if previous is None else previous.get("consensus"),
+        _fresh_votes(session, moment),
+        now=moment,
+        send=send,
+    )
     save_state(state)
     return {"posted": posted, "open_signals": len(state["signals"])}

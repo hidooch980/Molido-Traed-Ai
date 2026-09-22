@@ -167,3 +167,88 @@ def test_the_channel_is_saved_from_the_site(session, given, stored):
 def test_a_malformed_channel_is_refused(session):
     with pytest.raises(ValidationFailedError):
         telegram_settings.save(session, signal_channel="my channel")
+
+
+# ------------------------------------------------------------------ consensus
+def votes(**sides):
+    """votes(EURUSD_long=("a","b","c"), EURUSD_short=("d",))"""
+    out = {}
+    for key, brains in sides.items():
+        symbol, side = key.rsplit("_", 1)
+        out[(symbol, side)] = set(brains)
+    return out
+
+
+def test_consensus_first_look_posts_nothing():
+    out = Outbox()
+    posted = sc.consensus_step(None, votes(EURUSD_long=("a", "b", "c")), now=NOW, send=out)
+
+    assert out.sent == []
+    assert "EURUSD|long" in posted
+
+
+def test_three_agreeing_brains_are_posted_once_and_not_called_strong():
+    out = Outbox()
+    posted = sc.consensus_step({}, votes(EURUSD_long=("a", "b", "c")), now=NOW, send=out)
+    sc.consensus_step(posted, votes(EURUSD_long=("a", "b", "c")), now=NOW, send=out)
+
+    assert len(out.sent) == 1
+    assert "توافق 3 مغز: خرید EURUSD" in out.sent[0]
+    assert "a, b, c" in out.sent[0]
+    assert "قوی" not in out.sent[0]
+    assert "نه معاملهٔ بازشده" in out.sent[0]
+
+
+def test_two_brains_are_not_a_consensus():
+    out = Outbox()
+    sc.consensus_step({}, votes(EURUSD_long=("a", "b")), now=NOW, send=out)
+    assert out.sent == []
+
+
+def test_opposition_as_large_as_the_agreement_blocks_it():
+    out = Outbox()
+    sc.consensus_step(
+        {}, votes(EURUSD_long=("a", "b", "c"), EURUSD_short=("d", "e", "f")), now=NOW, send=out
+    )
+    assert out.sent == []
+
+
+def test_opposition_is_counted_in_the_post():
+    out = Outbox()
+    sc.consensus_step(
+        {}, votes(GBPUSD_short=("a", "b", "c", "d"), GBPUSD_long=("e",)), now=NOW, send=out
+    )
+    assert "توافق 4 مغز: فروش GBPUSD" in out.sent[0]
+    assert "مخالف: 1" in out.sent[0]
+
+
+def test_the_same_consensus_after_the_window_is_posted_again():
+    out = Outbox()
+    posted = sc.consensus_step({}, votes(EURUSD_long=("a", "b", "c")), now=NOW, send=out)
+    later = NOW + sc.CONSENSUS_WINDOW + timedelta(minutes=1)
+
+    sc.consensus_step(posted, votes(EURUSD_long=("a", "b", "c")), now=later, send=out)
+
+    assert len(out.sent) == 2
+
+
+def test_run_posts_consensus_through_the_channel(session, monkeypatch):
+    from app.integrations import telegram
+    from app.workers import autotrade
+
+    sent = []
+    monkeypatch.setattr(
+        telegram, "api_call", lambda m, p, token=None, timeout=None: (sent.append(p) or True, {})
+    )
+    monkeypatch.setattr(sc, "_books", lambda _s: {})
+    monkeypatch.setattr(
+        autotrade, "_fresh_votes", lambda _s, _m: votes(XAUUSD_long=("a", "b", "c"))
+    )
+    telegram_settings.save(session, token="1:AA", chat_ids=["5"], signal_channel="@molido_sig")
+
+    sc.run(session, now=NOW)  # first look: learns
+    sc.save_state({**sc.load_state(), "consensus": {}})
+    sc.run(session, now=NOW)
+
+    assert [p["chat_id"] for p in sent] == ["@molido_sig"]
+    assert "XAUUSD" in sent[0]["text"]
