@@ -1882,7 +1882,7 @@ class TestTheOpenBookIsPricedBeforeAddingToIt:
             "side": "sell",
             "volume": 0.01,
             "price_open": 1.1000,
-            "stop": 1.0950,
+            "stop": 1.1050,  # a sell's stop sits above its entry
         }
         base.update(over)
         return base
@@ -1906,10 +1906,45 @@ class TestTheOpenBookIsPricedBeforeAddingToIt:
 
     def test_a_position_with_no_stop_cannot_be_priced(self):
         """It is not a position risking nothing. It is one whose risk has no
-        ceiling, which no number here can express."""
+        ceiling, which no number here can express. MetaTrader publishes a
+        missing stop as 0."""
+        assert autotrade._open_risk_r(
+            self.position(stop=0.0), self.SPEC, self.ONE_R
+        ) is None
+        assert autotrade._open_risk_r(
+            self.position(stop=None), self.SPEC, self.ONE_R
+        ) is None
+
+    def test_a_stop_moved_to_entry_risks_nothing(self):
+        """Trailing puts the stop exactly on entry. That position can no longer
+        lose; reading it as unpriceable refused every new signal on the
+        account while it stayed open."""
         assert autotrade._open_risk_r(
             self.position(stop=1.1000), self.SPEC, self.ONE_R
-        ) is None
+        ) == 0.0
+
+    def test_a_stop_locked_in_profit_risks_nothing(self):
+        # A sell opened at 1.1000 with its stop trailed down to 1.0980.
+        assert autotrade._open_risk_r(
+            self.position(stop=1.0980), self.SPEC, self.ONE_R
+        ) == 0.0
+        # A buy opened at 1.1000 with its stop trailed up to 1.1020.
+        assert autotrade._open_risk_r(
+            self.position(side="buy", stop=1.1020), self.SPEC, self.ONE_R
+        ) == 0.0
+
+    def test_a_book_protected_at_entry_does_not_refuse_the_trade(self):
+        headroom, why = autotrade._portfolio_headroom(
+            "EURUSD",
+            "buy",
+            0.002,
+            [self.position(stop=1.1000)],
+            {"USDCAD": self.SPEC},
+            self.ONE_R,
+        )
+
+        assert headroom is not None
+        assert why == ""
 
     def test_a_position_missing_fields_cannot_be_priced(self):
         assert autotrade._open_risk_r({"symbol": "X"}, self.SPEC, self.ONE_R) is None
@@ -1936,7 +1971,8 @@ class TestTheOpenBookIsPricedBeforeAddingToIt:
         """The whole point: the same trade is smaller when the book already
         leans the same way."""
         crowded = [
-            self.position(symbol=s, side="buy") for s in ("EURUSD", "GBPUSD", "AUDUSD")
+            self.position(symbol=s, side="buy", stop=1.0950)
+            for s in ("EURUSD", "GBPUSD", "AUDUSD")
         ]
         specs = {s: {**self.SPEC, "name": s} for s in ("EURUSD", "GBPUSD", "AUDUSD")}
 

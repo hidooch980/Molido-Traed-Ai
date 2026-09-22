@@ -467,11 +467,24 @@ def _open_risk_r(
         return None
     if tick_size <= 0 or one_r_money <= 0 or volume <= 0:
         return None
-    distance = abs(opened - stop)
-    if distance <= 0:
+    if stop <= 0:
         # A position with no stop is not a position risking nothing. It is one
         # whose risk has no ceiling, which no number here can express.
         return None
+    # A stop at or past entry risks nothing more, it is not a missing stop.
+    # Trailing moves stops exactly to entry ("stop to entry"), and reading that
+    # zero distance as "no stop" refused every signal on the account for as
+    # long as the protected position stayed open (22 Sep 2026: four of five
+    # accounts, 'the open EURJPY cannot be priced in R').
+    side = str(position.get("side") or "").lower()
+    if side == "buy":
+        distance = opened - stop
+    elif side == "sell":
+        distance = stop - opened
+    else:
+        distance = abs(opened - stop)
+    if distance <= 0:
+        return 0.0
     money = (distance / tick_size) * tick_value * volume
     return money / one_r_money
 
