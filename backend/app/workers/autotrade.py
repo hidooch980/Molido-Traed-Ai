@@ -581,6 +581,78 @@ def _names_a_login(label: str) -> bool:
     return bool(_LOGIN_IN_LABEL.findall((label or "").strip()))
 
 
+#: FTMO's standard account sizes. An account registered automatically is
+#: anchored to the nearest one, so a first sight after a few trades still puts
+#: the floor where FTMO puts it; a balance more than 10% from every size is
+#: taken as it is.
+FTMO_SIZES: tuple[float, ...] = (10_000.0, 25_000.0, 50_000.0, 100_000.0, 200_000.0)
+
+
+def _ftmo_starting_balance(balance: float) -> float:
+    nearest = min(FTMO_SIZES, key=lambda size: abs(size - balance))
+    return nearest if abs(nearest - balance) <= 0.10 * nearest else balance
+
+
+def _register_ftmo(
+    session: Session, published: dict[str, Any], moment: datetime
+) -> tuple[bool, str]:
+    """Register an FTMO account the owner connected but did not register.
+
+    An account with no registration passes the challenge gate with no limits
+    at all - no daily floor, no weekend lock - because nothing says it is a
+    challenge. Connecting an FTMO login is enough to say so: its server is
+    FTMO's. The product (1-Step or 2-Step) is not published by the terminal,
+    so the registration uses `ftmo-strictest`, safe on either.
+
+    A registration that already names this login - active or deliberately
+    switched off - is left alone. Returns `(ok, reason)`: an FTMO account
+    that could not be registered is refused rather than traded unprotected.
+    """
+    server = str(published.get("server") or "")
+    login = str(published.get("login") or "").strip()
+    if "ftmo" not in server.lower() or not login:
+        return True, ""
+
+    from decimal import Decimal
+
+    from app.brain import rulebooks
+    from app.services import challenge_accounts
+
+    try:
+        tenant = challenge_accounts.default_tenant(session)
+        for view in challenge_accounts.listing(session, tenant_id=tenant):
+            if _label_names(view.account.label, login):
+                return True, ""
+        balance = float(published.get("balance") or published.get("equity") or 0.0)
+        start = _ftmo_starting_balance(balance)
+        challenge_accounts.create(
+            session,
+            tenant_id=tenant,
+            label=f"FTMO {login} (auto)",
+            rulebook_key=rulebooks.FTMO_STRICTEST_KEY,
+            starting_balance=Decimal(str(round(start, 2))),
+            currency=str(published.get("currency") or "USD"),
+            # One R = the starting capital, so the engine's R and the order's
+            # equity fraction are the same unit (0.01 R = 1% of the account)
+            # and the loss projection is priced rather than refused.
+            currency_per_r=Decimal(str(round(start, 2))),
+            notes=(
+                f"Registered automatically on {moment:%Y-%m-%d} from server "
+                f"{server}. Re-register with the exact product to use its own limits."
+            ),
+            now=moment,
+        )
+    except Exception as problem:  # noqa: BLE001 - refused, never traded unprotected
+        return False, (
+            f"this FTMO account could not be registered as a challenge "
+            f"({type(problem).__name__}), so its limits are unknown"
+        )
+    log.warning(
+        "autotrade.ftmo_registered", login=login, server=server, starting_balance=start
+    )
+    return True, ""
+
+
 def _challenge_gate(
     session: Session,
     published: dict[str, Any],
@@ -1929,6 +2001,9 @@ def run_cycle(
     specifications = {
         str(s.get("name")): s for s in (feed.symbols().get("symbols") or [])
     }
+    registered, registration_why = _register_ftmo(session, published, moment)
+    if not registered:
+        return _report(mode=mode, refused=registration_why, open_positions=open_now)
     passes, why, headroom_r = _challenge_gate(
         session,
         published,

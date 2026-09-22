@@ -171,7 +171,7 @@ class TestTheFtmoFloorIsReadAsItIsPublished:
 
     def test_every_ftmo_program_is_listed(self):
         keys = {b.key for b in rb.RULEBOOKS if b.provider == "FTMO"}
-        assert keys == set(self.ONE_STEP) | set(self.TWO_STEP)
+        assert keys == set(self.ONE_STEP) | set(self.TWO_STEP) | {rb.FTMO_STRICTEST_KEY}
 
     @pytest.mark.parametrize("key", ONE_STEP)
     def test_the_1step_floor_trails_and_the_day_is_3_percent(self, key):

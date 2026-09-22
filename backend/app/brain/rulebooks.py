@@ -299,6 +299,17 @@ _FTMO_DAYS = (
     "least one position is opened, and the 4-day minimum applies to both phases"
 )
 _FTMO_NO_DAYS = "the 1-Step products carry no minimum trading days"
+_FTMO_STRICTEST = (
+    "registered automatically for an FTMO account whose product was not "
+    "stated: every limit is the tighter of the 1-Step and 2-Step readings - "
+    "3% daily, the trailing floor, the 10% target, four trading days before "
+    "the target locks, and the Best Day share. Safe on either product; "
+    "re-register with the exact product to trade the looser one"
+)
+
+
+#: The key an FTMO account gets when it is registered without its product.
+FTMO_STRICTEST_KEY = "ftmo-strictest"
 
 
 RULEBOOKS: tuple[Rulebook, ...] = (
@@ -421,6 +432,30 @@ RULEBOOKS: tuple[Rulebook, ...] = (
             _FTMO_EA,
             _FTMO_STANDARD,
             _FTMO_BEST_DAY,
+        ),
+    ),
+    Rulebook(
+        key=FTMO_STRICTEST_KEY,
+        provider="FTMO",
+        program="FTMO (product not stated - strictest reading)",
+        phase="evaluation",
+        rules=ChallengeRules(
+            profit_target_pct=0.10,
+            max_daily_drawdown_pct=0.03,
+            max_total_drawdown_pct=0.10,
+            min_trading_days=4,
+            **_FTMO_1STEP,
+        ),
+        source=FTMO_SOURCE,
+        retrieved=FTMO_RETRIEVED,
+        notes=(
+            _FTMO_STRICTEST,
+            _CLOSED_ONLY,
+            _FTMO_TRAIL,
+            _FTMO_DAILY,
+            _FTMO_EQUITY,
+            _FTMO_EA,
+            _FTMO_EVAL_FREE,
         ),
     ),
 )
