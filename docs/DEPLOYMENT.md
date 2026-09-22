@@ -248,11 +248,13 @@ Install on a host once:
     15 3 * * *   /opt/molidotrade/infra/backup.sh >> /var/log/molido-backup.log 2>&1
 
 A note older than its reader's limit counts as no note, and no note is a
-failed check. The kill switch is moved only from the host:
+failed check. The kill switch is moved only from the host, through the
+collector - the api container mounts `/var/lib/molido` read-only, so
+`engage` and `release` there fail to write:
 
-    docker exec -i molidotrade-api-1 python -m app.execution.killswitch status
-    docker exec -i molidotrade-api-1 python -m app.execution.killswitch engage  --by <name> --reason "<why>"
-    docker exec -i molidotrade-api-1 python -m app.execution.killswitch release --by <name> --reason "<why>"
+    docker exec -i molidotrade-collector-1 python -m app.execution.killswitch status
+    docker exec -i molidotrade-collector-1 python -m app.execution.killswitch engage  --by <name> --reason "<why>"
+    docker exec -i molidotrade-collector-1 python -m app.execution.killswitch release --by <name> --reason "<why>"
 
 Releasing the switch authorises nothing by itself; every other gate still has
 to pass on the next cycle. The principle, stated in `app/ops/readiness.py`:

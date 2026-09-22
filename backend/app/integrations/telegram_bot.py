@@ -307,13 +307,16 @@ def _why_no_trade(session: Session) -> str:
         for login, order in (during.get("orders") or {}).items():
             sent[f"{login} {(order or {}).get('state') or '?'}"] += 1
 
+    lines = _last_cycle_lines()
     if not reasons and not sent:
-        return (
-            f"در {WHY_WINDOW_HOURS} ساعت اخیر نه سفارشی ثبت شده و نه ردی. "
-            "اگر بازار بسته است، این همان بسته بودن بازار است."
+        lines.append(
+            f"ژورنال {WHY_WINDOW_HOURS} ساعت اخیر: نه سفارشی و نه ردِ سیگنالی. "
+            "یعنی یا تصمیم تازه‌ای نبوده (بازار بسته) یا حساب پیش از رسیدن به "
+            "سیگنال‌ها رد شده — آخرین چرخهٔ بالا کدام را می‌گوید."
         )
+        return "\n".join(lines)
 
-    lines = [f"{WHY_WINDOW_HOURS} ساعت اخیر، از ژورنال:", ""]
+    lines += [f"{WHY_WINDOW_HOURS} ساعت اخیر، از ژورنال:", ""]
     for login in sorted(set(reasons) | {key.split()[0] for key in sent}):
         states = {k.split(" ", 1)[1]: v for k, v in sent.items() if k.split()[0] == login}
         head = f"• {login}: " + (
@@ -327,6 +330,38 @@ def _why_no_trade(session: Session) -> str:
     lines.append("")
     lines.append("این پاسخ فقط می‌خواند؛ هیچ چرخهٔ سفارشی اجرا نمی‌کند.")
     return "\n".join(lines)
+
+
+def _last_cycle_lines() -> list[str]:
+    """What the last order cycle said per account, from the collector's record.
+
+    First, because it is the only place a refusal made before any signal was
+    looked at - kill switch, order authorization, risk brain - is visible.
+    The journal below cannot hold those: no decision was reached to hold them.
+    """
+    from app.execution import last_cycle
+
+    record, missing = last_cycle.read()
+    if record is None:
+        return [f"آخرین چرخهٔ سفارش: ثبت نشده ({missing}).", ""]
+    head = f"آخرین چرخهٔ سفارش ({str(record.get('at') or '?')[:16]} UTC): "
+    head += f"{record.get('orders', 0)} سفارش، {record.get('accounts', 0)} حساب"
+    lines = [head]
+    if record.get("reason"):
+        lines.append(f"   — {str(record['reason'])[:200]}")
+    for login, note in sorted((record.get("per_account") or {}).items()):
+        if isinstance(note, dict):
+            mostly = "؛ ".join(
+                f"{count}× {reason}" for reason, count in (note.get("mostly") or {}).items()
+            )
+            text = f"{note.get('orders', 0)} سفارش، {note.get('skipped', 0)} رد" + (
+                f" — {mostly}" if mostly else ""
+            )
+        else:
+            text = str(note)
+        lines.append(f"• {login}: {text[:300]}")
+    lines.append("")
+    return lines
 
 
 def _help(session: Session) -> str:

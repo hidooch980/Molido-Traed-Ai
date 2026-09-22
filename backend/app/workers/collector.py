@@ -957,16 +957,28 @@ async def collect(ctx: dict) -> dict[str, Any]:
     # is still on the cycle's return value for anything that wants it.
     orders = payload.get("orders") or {}
     by_account = orders.get("by_account") or {}
+    notes = {
+        str(key): _account_note(report)
+        for key, report in by_account.items()
+        if isinstance(report, dict)
+    }
     log.info(
         "collector.orders_complete",
         orders=orders.get("orders", 0),
         accounts=orders.get("accounts", 0),
         reason=orders.get("reason"),
-        per_account={
-            str(key): _account_note(report)
-            for key, report in by_account.items()
-            if isinstance(report, dict)
-        },
+        per_account=notes,
+    )
+    # And the same answer where the chat channel can read it: a refusal
+    # before any signal (kill switch, authorization, risk brain) reaches no
+    # journal row, so without this `/why_no_trade` cannot see it.
+    from app.execution import last_cycle
+
+    last_cycle.write(
+        orders=int(orders.get("orders", 0) or 0),
+        accounts=int(orders.get("accounts", 0) or 0),
+        reason=orders.get("reason"),
+        per_account=notes,
     )
 
     return payload
@@ -1400,6 +1412,25 @@ async def exit_evidence_job(ctx: dict) -> dict[str, Any]:
     return result
 
 
+async def session_map_job(ctx: dict) -> dict[str, Any]:
+    """Weekly: each brain's edge by trading session - the golden-hour map.
+
+    Proposal only - logged and sent, no filter is applied. Read from the
+    journal, so it costs one query rather than a replay.
+    """
+    from app.learning import session_map
+
+    result = await asyncio.to_thread(session_map.run)
+    log.info(
+        "session_map.weekly",
+        golden=result["golden"],
+        avoid=result["avoid"],
+        required_t=result["required_t"],
+        sent=result["sent"],
+    )
+    return result
+
+
 def _cron_jobs() -> list:
     from arq import cron
 
@@ -1434,6 +1465,8 @@ def _cron_jobs() -> list:
         # is earning its vote", from the journal the week just filled.
         # Fifteen minutes after the scorecard, from the same week's journal.
         cron(exit_evidence_job, weekday={6}, hour={9}, minute={45}, max_tries=1),
+        # And after that, from the same journal: which session each brain earns in.
+        cron(session_map_job, weekday={6}, hour={10}, minute={0}, max_tries=1),
         cron(
             weekly_scorecard_job,
             weekday={6},
