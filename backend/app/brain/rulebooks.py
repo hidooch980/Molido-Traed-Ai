@@ -98,8 +98,10 @@ def _publish(value: Any) -> Any:
 _CLOSED_ONLY = "the profit target is calculated on closed trades only"
 
 
-#: When the FTMO page below was read.
-FTMO_RETRIEVED = date(2026, 8, 14)
+#: When the FTMO page below was read. Re-read 22 Sep 2026: the 2-Step
+#: products now carry a 5% daily loss and a *static* 10% floor, and the
+#: 1-Step products no longer carry a minimum-days rule - see below.
+FTMO_RETRIEVED = date(2026, 9, 22)
 FTMO_SOURCE = "https://ftmo.com/en/trading-objectives/"
 
 #: Where the five rules below the objectives were read, and when.
@@ -120,8 +122,20 @@ FTMO_FAQ_HOLDING = (
     "do-i-have-to-close-my-positions-overnight-or-before-the-weekend/"
 )
 
-# FTMO's floor trails, and against a static floor the difference is the
-# whole account once it is in profit:
+# Read 22 Sep 2026. The page is split by product, and the two products no
+# longer share their numbers:
+#
+#   FTMO Challenge: 1-Step and FTMO Account (1-Step): 3% daily, and "The
+#   Maximum Loss rule establishes an end-of-day trailing limit" of 10%. No
+#   Minimum Trading Days rule - that section names only the 2-Step.
+#
+#   FTMO Challenge: 2-Step (both phases) and FTMO Account (2-Step): the daily
+#   amount "is 5% of the Initial Simulated Capital", and "The Maximum Loss
+#   rule establishes a static limit" - $90,000 on $100,000, not trailing.
+#   "At least 4 Trading Days", which "applies to both phases (FTMO Challenge
+#   and Verification) of the FTMO Challenge: 2-Step".
+#
+# What follows is the 1-Step reading, kept as it was first written:
 #
 #   "The Maximum Loss rule establishes an end-of-day trailing limit". The floor
 #   is recalculated daily at 00:00 CE(S)T from "the highest account balance
@@ -163,7 +177,6 @@ _FTMO_COMMON: dict[str, Any] = {
     "automated_trading_allowed": True,
     "drawdown_basis": DrawdownBasis.EQUITY,
     "allowance_basis": AllowanceBasis.STARTING_BALANCE,
-    "total_drawdown_trailing": True,
     "max_trading_days": NOT_IMPOSED,       # "No time limit"
     # The same page, and it is a platform limit rather than a strategy rule:
     # "platform servers have 200 orders at a time and 2000 max positions per
@@ -190,6 +203,9 @@ _FTMO_COMMON: dict[str, Any] = {
 #: once on each page, for news and for holding.
 _FTMO_EVALUATION: dict[str, Any] = {
     **_FTMO_COMMON,
+    # The 2-Step floor is "a static limit" (22 Sep 2026); the 1-Step products
+    # override this below with their trailing one.
+    "total_drawdown_trailing": False,
     "news_trading_allowed": True,
     "weekend_holding_allowed": True,
     # The Best Day Rule is a 1-Step rule. See `_FTMO_1STEP` below; on the
@@ -206,6 +222,7 @@ _FTMO_EVALUATION: dict[str, Any] = {
 #: here and nowhere else.
 _FTMO_1STEP: dict[str, Any] = {
     **_FTMO_EVALUATION,
+    "total_drawdown_trailing": True,
     "max_single_day_profit_share": 0.50,
 }
 
@@ -218,9 +235,18 @@ _FTMO_1STEP: dict[str, Any] = {
 #: reading, which is the safe direction to be wrong in.
 _FTMO_FUNDED: dict[str, Any] = {
     **_FTMO_COMMON,
+    "total_drawdown_trailing": False,
     "news_trading_allowed": False,
     "weekend_holding_allowed": False,
     "max_single_day_profit_share": NOT_IMPOSED,
+}
+
+#: The funded 1-Step account: the 1-Step floor and Best Day Rule ("to be
+#: eligible for a Reward on an FTMO Account"), the funded restrictions.
+_FTMO_FUNDED_1STEP: dict[str, Any] = {
+    **_FTMO_FUNDED,
+    "total_drawdown_trailing": True,
+    "max_single_day_profit_share": 0.50,
 }
 
 _FTMO_TRAIL = (
@@ -232,6 +258,15 @@ _FTMO_DAILY = (
     "the daily floor is that day's 00:00 CE(S)T balance less 3% of the initial "
     "capital, so the amount is a share of the starting capital while the anchor "
     "moves with each day's opening balance"
+)
+_FTMO_DAILY_2STEP = (
+    "the daily floor is that day's 00:00 CE(S)T balance less 5% of the initial "
+    "capital, so the amount is a share of the starting capital while the anchor "
+    "moves with each day's opening balance"
+)
+_FTMO_STATIC = (
+    "the maximum loss floor is static: 10% of the initial capital below it, "
+    "$90,000 on a $100,000 account, however far the account has risen"
 )
 _FTMO_EQUITY = (
     "both limits are watched on equity - balance plus open P/L, swaps and "
@@ -263,6 +298,18 @@ _FTMO_DAYS = (
     "a trading day is any day from 00:00:00 to 23:59:59 CE(S)T in which at "
     "least one position is opened, and the 4-day minimum applies to both phases"
 )
+_FTMO_NO_DAYS = "the 1-Step products carry no minimum trading days"
+_FTMO_STRICTEST = (
+    "registered automatically for an FTMO account whose product was not "
+    "stated: every limit is the tighter of the 1-Step and 2-Step readings - "
+    "3% daily, the trailing floor, the 10% target, four trading days before "
+    "the target locks, and the Best Day share. Safe on either product; "
+    "re-register with the exact product to trade the looser one"
+)
+
+
+#: The key an FTMO account gets when it is registered without its product.
+FTMO_STRICTEST_KEY = "ftmo-strictest"
 
 
 RULEBOOKS: tuple[Rulebook, ...] = (
@@ -273,7 +320,7 @@ RULEBOOKS: tuple[Rulebook, ...] = (
         phase="phase 1 (FTMO Challenge)",
         rules=ChallengeRules(
             profit_target_pct=0.10,
-            max_daily_drawdown_pct=0.03,
+            max_daily_drawdown_pct=0.05,
             max_total_drawdown_pct=0.10,
             min_trading_days=4,
             **_FTMO_EVALUATION,
@@ -282,8 +329,8 @@ RULEBOOKS: tuple[Rulebook, ...] = (
         retrieved=FTMO_RETRIEVED,
         notes=(
             _CLOSED_ONLY,
-            _FTMO_TRAIL,
-            _FTMO_DAILY,
+            _FTMO_STATIC,
+            _FTMO_DAILY_2STEP,
             _FTMO_EQUITY,
             _FTMO_DAYS,
             _FTMO_EA,
@@ -297,7 +344,7 @@ RULEBOOKS: tuple[Rulebook, ...] = (
         phase="phase 2 (Verification)",
         rules=ChallengeRules(
             profit_target_pct=0.05,
-            max_daily_drawdown_pct=0.03,
+            max_daily_drawdown_pct=0.05,
             max_total_drawdown_pct=0.10,
             min_trading_days=4,
             **_FTMO_EVALUATION,
@@ -306,8 +353,8 @@ RULEBOOKS: tuple[Rulebook, ...] = (
         retrieved=FTMO_RETRIEVED,
         notes=(
             _CLOSED_ONLY,
-            _FTMO_TRAIL,
-            _FTMO_DAILY,
+            _FTMO_STATIC,
+            _FTMO_DAILY_2STEP,
             _FTMO_EQUITY,
             _FTMO_DAYS,
             _FTMO_EA,
@@ -323,7 +370,7 @@ RULEBOOKS: tuple[Rulebook, ...] = (
             profit_target_pct=0.10,
             max_daily_drawdown_pct=0.03,
             max_total_drawdown_pct=0.10,
-            min_trading_days=4,
+            min_trading_days=NOT_IMPOSED,
             **_FTMO_1STEP,
         ),
         source=FTMO_SOURCE,
@@ -333,7 +380,7 @@ RULEBOOKS: tuple[Rulebook, ...] = (
             _FTMO_TRAIL,
             _FTMO_DAILY,
             _FTMO_EQUITY,
-            _FTMO_DAYS,
+            _FTMO_NO_DAYS,
             _FTMO_EA,
             _FTMO_EVAL_FREE,
             _FTMO_BEST_DAY,
@@ -348,10 +395,33 @@ RULEBOOKS: tuple[Rulebook, ...] = (
             # "There is no Profit Target on the subsequent FTMO Account
             # (2-Step)" - stated absence, not an unknown.
             profit_target_pct=NOT_IMPOSED,
-            max_daily_drawdown_pct=0.03,
+            max_daily_drawdown_pct=0.05,
             max_total_drawdown_pct=0.10,
             min_trading_days=NOT_IMPOSED,
             **_FTMO_FUNDED,
+        ),
+        source=FTMO_SOURCE,
+        retrieved=FTMO_RETRIEVED,
+        notes=(
+            _FTMO_STATIC,
+            _FTMO_DAILY_2STEP,
+            _FTMO_EQUITY,
+            _FTMO_EA,
+            _FTMO_STANDARD,
+        ),
+    ),
+    Rulebook(
+        key="ftmo-account-1step",
+        provider="FTMO",
+        program="FTMO Account (1-Step)",
+        phase="funded",
+        rules=ChallengeRules(
+            # "There is no Profit Target on the subsequent FTMO Account (1-Step)".
+            profit_target_pct=NOT_IMPOSED,
+            max_daily_drawdown_pct=0.03,
+            max_total_drawdown_pct=0.10,
+            min_trading_days=NOT_IMPOSED,
+            **_FTMO_FUNDED_1STEP,
         ),
         source=FTMO_SOURCE,
         retrieved=FTMO_RETRIEVED,
@@ -361,6 +431,31 @@ RULEBOOKS: tuple[Rulebook, ...] = (
             _FTMO_EQUITY,
             _FTMO_EA,
             _FTMO_STANDARD,
+            _FTMO_BEST_DAY,
+        ),
+    ),
+    Rulebook(
+        key=FTMO_STRICTEST_KEY,
+        provider="FTMO",
+        program="FTMO (product not stated - strictest reading)",
+        phase="evaluation",
+        rules=ChallengeRules(
+            profit_target_pct=0.10,
+            max_daily_drawdown_pct=0.03,
+            max_total_drawdown_pct=0.10,
+            min_trading_days=4,
+            **_FTMO_1STEP,
+        ),
+        source=FTMO_SOURCE,
+        retrieved=FTMO_RETRIEVED,
+        notes=(
+            _FTMO_STRICTEST,
+            _CLOSED_ONLY,
+            _FTMO_TRAIL,
+            _FTMO_DAILY,
+            _FTMO_EQUITY,
+            _FTMO_EA,
+            _FTMO_EVAL_FREE,
         ),
     ),
 )

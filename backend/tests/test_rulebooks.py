@@ -160,14 +160,53 @@ class TestTheNumbersSurviveTheChallengeBrain:
 
 
 class TestTheFtmoFloorIsReadAsItIsPublished:
-    def test_every_ftmo_floor_trails(self):
-        """FTMO calls it "an end-of-day trailing limit" that "can only
-        increase". Reading it as static would report headroom the account does
-        not have, exactly when it is in profit."""
-        ftmo = [b for b in rb.RULEBOOKS if b.provider == "FTMO"]
+    """Re-read 22 Sep 2026: the two products no longer share their numbers."""
 
-        assert ftmo, "the FTMO rulebooks went missing"
-        assert all(b.rules.total_drawdown_trailing is True for b in ftmo)
+    ONE_STEP = ("ftmo-challenge-1step", "ftmo-account-1step")
+    TWO_STEP = (
+        "ftmo-challenge-2step-phase1",
+        "ftmo-challenge-2step-phase2",
+        "ftmo-account-2step",
+    )
+
+    def test_every_ftmo_program_is_listed(self):
+        keys = {b.key for b in rb.RULEBOOKS if b.provider == "FTMO"}
+        assert keys == set(self.ONE_STEP) | set(self.TWO_STEP) | {rb.FTMO_STRICTEST_KEY}
+
+    @pytest.mark.parametrize("key", ONE_STEP)
+    def test_the_1step_floor_trails_and_the_day_is_3_percent(self, key):
+        """"an end-of-day trailing limit" that "can only increase"."""
+        rules = rb.get(key).rules
+        assert rules.total_drawdown_trailing is True
+        assert rules.max_daily_drawdown_pct == 0.03
+        assert rules.max_total_drawdown_pct == 0.10
+        assert rules.min_trading_days is rb.NOT_IMPOSED
+        assert rules.max_single_day_profit_share == 0.50
+
+    @pytest.mark.parametrize("key", TWO_STEP)
+    def test_the_2step_floor_is_static_and_the_day_is_5_percent(self, key):
+        """"The Maximum Loss rule establishes a static limit", and the daily
+        amount "is 5% of the Initial Simulated Capital"."""
+        rules = rb.get(key).rules
+        assert rules.total_drawdown_trailing is False
+        assert rules.max_daily_drawdown_pct == 0.05
+        assert rules.max_total_drawdown_pct == 0.10
+        assert rules.max_single_day_profit_share is rb.NOT_IMPOSED
+
+    def test_the_2step_challenge_needs_four_days_and_the_account_none(self):
+        assert rb.get("ftmo-challenge-2step-phase1").rules.min_trading_days == 4
+        assert rb.get("ftmo-challenge-2step-phase2").rules.min_trading_days == 4
+        assert rb.get("ftmo-account-2step").rules.min_trading_days is rb.NOT_IMPOSED
+
+    def test_the_static_2step_floor_does_not_rise_with_the_peak(self):
+        """$90,000 on $100,000 however far the account has risen."""
+        rules = rb.get("ftmo-challenge-2step-phase1").rules
+        state = _fresh()
+        state = ch.ChallengeState(
+            **{**state.__dict__, "peak_equity": 108_000.0, "current_equity": 107_000.0}
+        )
+        anchor, _ = ch._total_anchor(rules, state, 108_000.0)
+        assert anchor == 100_000.0
 
 class TestTheRulersAreTranscribedNotAssumed:
     @pytest.mark.parametrize("book", rb.RULEBOOKS, ids=lambda b: b.key)
