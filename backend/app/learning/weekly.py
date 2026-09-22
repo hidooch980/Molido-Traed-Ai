@@ -91,8 +91,8 @@ class BrainWeek:
         }
 
 
-def positions(rows: list[JournalEntry]) -> dict[str, dict[str, Any]]:
-    """Rule-arm decisions grouped into the positions they really are.
+def position_heads(rows: list[JournalEntry]) -> list[JournalEntry]:
+    """The first row of every rule-arm position, the row that speaks for it.
 
     The recorder writes the same view every cycle while it holds, so one
     oil rally became 65 "wins" for one brain and 109 of its 165 resolved
@@ -109,26 +109,34 @@ def positions(rows: list[JournalEntry]) -> dict[str, dict[str, Any]]:
         key = (row.strategy, row.symbol, row.decision, row.price_source)
         keyed.setdefault(key, []).append(row)
 
-    out: dict[str, dict[str, Any]] = {}
-    for (strategy, *_rest), group in keyed.items():
-        bucket = out.setdefault(
-            strategy, {"positions": 0, "resolved": 0, "wins": 0, "total_r": 0.0}
-        )
+    heads: list[JournalEntry] = []
+    for group in keyed.values():
         group.sort(key=lambda r: _aware(r.opened_at))
         open_until: datetime | None = None
         for row in group:
             opened = _aware(row.opened_at)
             closed = _aware(row.closed_at) if row.closed_at is not None else far_future
             if open_until is None or opened > open_until:
-                bucket["positions"] += 1
-                if row.r_multiple is not None:
-                    bucket["resolved"] += 1
-                    bucket["total_r"] += float(row.r_multiple)
-                    if row.r_multiple > 0:
-                        bucket["wins"] += 1
+                heads.append(row)
                 open_until = closed
             else:
                 open_until = max(open_until, closed)
+    return heads
+
+
+def positions(rows: list[JournalEntry]) -> dict[str, dict[str, Any]]:
+    """Rule-arm decisions grouped into the positions they really are, per brain."""
+    out: dict[str, dict[str, Any]] = {}
+    for row in position_heads(rows):
+        bucket = out.setdefault(
+            row.strategy, {"positions": 0, "resolved": 0, "wins": 0, "total_r": 0.0}
+        )
+        bucket["positions"] += 1
+        if row.r_multiple is not None:
+            bucket["resolved"] += 1
+            bucket["total_r"] += float(row.r_multiple)
+            if row.r_multiple > 0:
+                bucket["wins"] += 1
     return out
 
 

@@ -156,26 +156,26 @@ def by_hour(rows: Sequence[Row]) -> list[Slice]:
     return segments(rows, lambda at: f"{at.hour:02d}", label="hour")
 
 
-def by_session(rows: Sequence[Row]) -> list[Slice]:
-    """Tokyo, London, New York, by UTC hour.
+def session_of(at: datetime) -> str:
+    """Tokyo, London, overlap, New York, by UTC hour.
 
     The boundaries are the conventional ones and they are approximate: the
     exchanges move with daylight saving and this does not. Approximate is
     enough for the question - does the edge live in one session - and stating
     it here stops the boundary being read as a measurement.
     """
+    hour = at.hour
+    if 0 <= hour < 7:
+        return "tokyo"
+    if 7 <= hour < 12:
+        return "london"
+    if 12 <= hour < 17:
+        return "overlap"
+    return "new-york"
 
-    def session(at: datetime) -> str:
-        hour = at.hour
-        if 0 <= hour < 7:
-            return "tokyo"
-        if 7 <= hour < 12:
-            return "london"
-        if 12 <= hour < 17:
-            return "overlap"
-        return "new-york"
 
-    return segments(rows, session, label="session")
+def by_session(rows: Sequence[Row]) -> list[Slice]:
+    return segments(rows, session_of, label="session")
 
 
 def by_weekday(rows: Sequence[Row]) -> list[Slice]:
@@ -208,6 +208,18 @@ def by_period(rows: Sequence[Row], *, parts: int = 3) -> list[Slice]:
         name = names[i] if names else f"part-{i + 1}"
         out.append(Slice(name=f"period:{name}", instants=n, edge_r=edge, t=t))
     return out
+
+
+def required_t(hypotheses: int) -> float:
+    """The |t| one finding needs when it was picked from `hypotheses` tries.
+
+    Bonferroni-style: 1.96 for a single pre-stated test, rising with the log
+    of how many were tried, so the best of a table is not read as if it had
+    been the only question asked.
+    """
+    if hypotheses <= 1:
+        return 1.96
+    return 1.96 * math.sqrt(1 + math.log(hypotheses))
 
 
 # ----------------------------------------------------------------- cost stress
@@ -501,9 +513,7 @@ class Robustness:
     @property
     def required_t(self) -> float:
         """Bonferroni-style, for however many hypotheses were tried."""
-        if self.hypotheses_tested <= 1:
-            return 1.96
-        return 1.96 * math.sqrt(1 + math.log(self.hypotheses_tested))
+        return required_t(self.hypotheses_tested)
 
     @property
     def findings(self) -> list[str]:
@@ -639,5 +649,7 @@ __all__ = [
     "paired",
     "permutation_test",
     "regime_segments",
+    "required_t",
     "segments",
+    "session_of",
 ]
