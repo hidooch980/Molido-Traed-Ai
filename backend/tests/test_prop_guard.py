@@ -18,7 +18,7 @@ from app.models.equity import EquitySample
 from app.services import equity as equity_series
 from app.workers import autotrade
 
-RULES = rulebooks.get("ftmo-challenge-2step-phase2").rules  # 3% daily, 5% target, 4 days
+RULES = rulebooks.get("ftmo-challenge-2step-phase2").rules  # 5% daily, 5% target, 4 days
 NOW = datetime(2026, 9, 14, 12, 0, tzinfo=UTC)
 LOGIN = "1514533027"
 SPECS = {"EURUSD": {"tick_size": 0.00001, "tick_value": 1.0}}
@@ -73,7 +73,7 @@ BOUNDARY = datetime(2026, 9, 13, 22, 0, tzinfo=UTC)  # 00:00 CE(S)T on the 14th
 
 
 def test_open_stops_above_seventy_percent_of_the_daily_allowance_refuse(session):
-    allowed, why, _ = guard(session, [position(3_000), position(2_000)])  # 5,000 > 4,200
+    allowed, why, _ = guard(session, [position(5_000), position(3_000)])  # 8,000 > 7,000
     assert allowed is False
     assert "open stops risk" in why
 
@@ -88,13 +88,13 @@ def test_room_shrinks_by_what_is_already_open(session):
     allowed, _, room = guard(session, [position(2_700)], headroom=5.0)
     assert allowed is True
     # A quarter of the room left before the daily floor, open stops counted:
-    # 0.25 * (200,000 - 2,700 - 194,000) = 825, at 1,500 per R.
-    assert room == pytest.approx(825 / 1_500)
+    # 0.25 * (200,000 - 2,700 - 190,000) = 1,825, at 1,500 per R.
+    assert room == pytest.approx(1_825 / 1_500)
 
 
 def test_the_day_stops_after_half_the_allowance_is_lost(session):
     sample(session, BOUNDARY + timedelta(minutes=1))
-    allowed, why, _ = guard(session, [], equity=196_900.0)  # down 3,100 >= 3,000
+    allowed, why, _ = guard(session, [], equity=194_900.0)  # down 5,100 >= 5,000
     assert allowed is False
     assert "today" in why
 
