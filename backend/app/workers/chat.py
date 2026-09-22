@@ -72,6 +72,30 @@ def _beat() -> None:
 
 _running = True
 
+#: How often the signal channel looks at the terminals. The chat loop turns
+#: every few seconds; a trade does not need announcing faster than this.
+SIGNAL_EVERY_SECONDS = 60
+
+
+def _signals(last: float) -> float:
+    """Post new trades to the signal channel, at most once a minute.
+
+    Its own session and its own try: a channel that cannot be reached must
+    never be the reason the admins' questions go unanswered.
+    """
+    if time.monotonic() - last < SIGNAL_EVERY_SECONDS:
+        return last
+    try:
+        from app.integrations import signal_channel
+
+        with session_scope() as session:
+            report = signal_channel.run(session)
+        if report.get("posted"):
+            log.info("chat.signals_posted", **report)
+    except Exception as problem:  # noqa: BLE001 - reported, never fatal
+        log.warning("chat.signals_failed", error=f"{type(problem).__name__}: {problem}")
+    return time.monotonic()
+
 
 def _stop(_signum: int, _frame: Any) -> None:
     global _running
@@ -92,8 +116,10 @@ def run() -> int:
     from app.integrations.telegram_bot import poll
 
     log.info("chat.started", wait_seconds=WAIT_SECONDS)
+    signals_at = 0.0
     while _running:
         _beat()
+        signals_at = _signals(signals_at)
         try:
             with session_scope() as session:
                 report = poll(session, wait=WAIT_SECONDS)

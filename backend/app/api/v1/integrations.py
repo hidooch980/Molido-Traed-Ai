@@ -194,6 +194,7 @@ class TelegramPayload(BaseModel):
     token: str | None = None
     chat_ids: list[str] | None = None
     enabled: bool | None = None
+    signal_channel: str | None = None
 
 
 @router.put("/telegram")
@@ -219,6 +220,7 @@ def write_telegram(
         token=payload.token,
         chat_ids=payload.chat_ids,
         enabled=payload.enabled,
+        signal_channel=payload.signal_channel,
     )
     session.commit()
     return channel.as_dict()

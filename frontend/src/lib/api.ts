@@ -1294,6 +1294,7 @@ export const api = {
       recipients: number;
       source: string;
       ready: boolean;
+      signal_channel?: string;
       reachable?: boolean;
       detail?: string;
       reason?: string;

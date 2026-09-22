@@ -58,6 +58,7 @@ export default async function TelegramPage() {
             masked_token: data.masked_token,
             chat_ids: data.chat_ids ?? [],
             source: data.source,
+            signal_channel: data.signal_channel ?? "",
           }}
           labels={{
             title: t("telegram.configure"),
@@ -66,6 +67,8 @@ export default async function TelegramPage() {
             tokenKeep: t("telegram.tokenKeep"),
             chatIds: t("telegram.chatIds"),
             chatIdsHint: t("telegram.chatIdsHint"),
+            signalChannel: t("telegram.signalChannel"),
+            signalChannelHint: t("telegram.signalChannelHint"),
             enabled: t("telegram.enabled"),
             save: t("telegram.save"),
             saving: t("telegram.saving"),

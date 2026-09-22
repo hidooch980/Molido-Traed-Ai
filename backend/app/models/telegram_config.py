@@ -42,3 +42,9 @@ class TelegramConfig(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     #: deliberately muted the channel is different from one that never had a
     #: token, and the two want different messages on the page.
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+    #: Where trade signals go: a channel id (-100...) or @username. Not an
+    #: admin - the bot never answers it, only posts to it. Empty is off.
+    signal_channel: Mapped[str] = mapped_column(
+        String(64), default="", server_default="", nullable=False
+    )

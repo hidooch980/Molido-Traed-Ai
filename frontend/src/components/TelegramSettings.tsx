@@ -26,6 +26,8 @@ export interface TelegramLabels {
   tokenKeep: string;
   chatIds: string;
   chatIdsHint: string;
+  signalChannel: string;
+  signalChannelHint: string;
   enabled: string;
   save: string;
   saving: string;
@@ -53,11 +55,13 @@ export function TelegramSettings({
     masked_token: string | null;
     chat_ids: string[];
     source: string;
+    signal_channel?: string;
   };
 }) {
   const [token, setToken] = useState("");
   const [chatIds, setChatIds] = useState(initial.chat_ids.join("\n"));
   const [enabled, setEnabled] = useState(initial.enabled);
+  const [signalChannel, setSignalChannel] = useState(initial.signal_channel ?? "");
   const [state, setState] = useState<"idle" | "saving" | "testing">("idle");
   const [note, setNote] = useState<string | null>(null);
   const [tone, setTone] = useState<"good" | "bad" | null>(null);
@@ -75,7 +79,12 @@ export function TelegramSettings({
     setState("saving");
     setNote(null);
     try {
-      const body: Record<string, unknown> = { chat_ids: ids(), enabled };
+      const body: Record<string, unknown> = {
+        chat_ids: ids(),
+        enabled,
+        // Always sent: an empty value is how the channel is switched off.
+        signal_channel: signalChannel.trim(),
+      };
       // Omitted rather than sent empty: an empty string means "clear it",
       // and a form that posts one every time would wipe a token the
       // operator cannot read back from this page.
@@ -100,6 +109,7 @@ export function TelegramSettings({
         setNote(labels.saved);
         setMasked(payload.masked_token ?? masked);
         setSaved((payload.chat_ids ?? []).length);
+        setSignalChannel(payload.signal_channel ?? signalChannel);
         setToken("");
       }
     } catch (problem) {
@@ -180,6 +190,18 @@ export function TelegramSettings({
           onChange={(event) => setChatIds(event.target.value)}
         />
         <span className="ink-3 text-xs">{labels.chatIdsHint}</span>
+      </label>
+
+      <label className="block text-sm">
+        <span className="ink-2">{labels.signalChannel}</span>
+        <input
+          className="input w-full mt-1"
+          dir="ltr"
+          placeholder="@my_signals"
+          value={signalChannel}
+          onChange={(event) => setSignalChannel(event.target.value)}
+        />
+        <span className="ink-3 text-xs">{labels.signalChannelHint}</span>
       </label>
 
       <label className="flex items-center gap-2 text-sm">
