@@ -26,6 +26,12 @@ from app.models.tenancy import Tenant
 from app.providers.base import RawBar
 
 
+@pytest.fixture(autouse=True)
+def _last_cycle_file(tmp_path, monkeypatch) -> None:
+    """Keep the order cycle's outcome record out of the real state directory."""
+    monkeypatch.setenv("MOLIDO_LAST_CYCLE_FILE", str(tmp_path / "last-orders-cycle.json"))
+
+
 @pytest.fixture()
 def session() -> Iterator[Session]:
     # StaticPool + check_same_thread=False: FastAPI's TestClient serves requests

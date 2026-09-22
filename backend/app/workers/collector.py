@@ -957,16 +957,28 @@ async def collect(ctx: dict) -> dict[str, Any]:
     # is still on the cycle's return value for anything that wants it.
     orders = payload.get("orders") or {}
     by_account = orders.get("by_account") or {}
+    notes = {
+        str(key): _account_note(report)
+        for key, report in by_account.items()
+        if isinstance(report, dict)
+    }
     log.info(
         "collector.orders_complete",
         orders=orders.get("orders", 0),
         accounts=orders.get("accounts", 0),
         reason=orders.get("reason"),
-        per_account={
-            str(key): _account_note(report)
-            for key, report in by_account.items()
-            if isinstance(report, dict)
-        },
+        per_account=notes,
+    )
+    # And the same answer where the chat channel can read it: a refusal
+    # before any signal (kill switch, authorization, risk brain) reaches no
+    # journal row, so without this `/why_no_trade` cannot see it.
+    from app.execution import last_cycle
+
+    last_cycle.write(
+        orders=int(orders.get("orders", 0) or 0),
+        accounts=int(orders.get("accounts", 0) or 0),
+        reason=orders.get("reason"),
+        per_account=notes,
     )
 
     return payload
