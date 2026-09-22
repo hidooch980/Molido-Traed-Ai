@@ -30,6 +30,7 @@ from app.providers.base import RawBar
 def _last_cycle_file(tmp_path, monkeypatch) -> None:
     """Keep the order cycle's outcome record out of the real state directory."""
     monkeypatch.setenv("MOLIDO_LAST_CYCLE_FILE", str(tmp_path / "last-orders-cycle.json"))
+    monkeypatch.setenv("MOLIDO_UPDATE_STATE_DIR", str(tmp_path / "update-state"))
 
 
 @pytest.fixture()

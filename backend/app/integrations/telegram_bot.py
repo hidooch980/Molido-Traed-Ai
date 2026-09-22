@@ -367,7 +367,8 @@ def _last_cycle_lines() -> list[str]:
 def _help(session: Session) -> str:
     return "\n".join(
         [
-            "این ربات به سؤال پاسخ می‌دهد و هیچ کاری انجام نمی‌دهد.",
+            "این ربات به سؤال پاسخ می‌دهد. تنها کاری که می‌کند درخواست به‌روزرسانی "
+            "سرور است، با تأیید دومرحله‌ای.",
             "",
             "دستورها:",
             "/status — حالت اجرا و خلاصهٔ حساب‌ها",
@@ -381,6 +382,7 @@ def _help(session: Session) -> str:
             "/journal — کارنامهٔ هفتگی مغزها",
             "/why_no_trade — دلیل نام‌بردهٔ آخرین ردها",
             "/health — سلامت سرویس‌ها",
+            "/update — به‌روزرسانی سرور به آخرین نسخه (با کد تأیید)",
             "",
             "هیچ پیامی از اینجا نمی‌تواند سفارشی ثبت کند. برای معامله، کلید API با "
             "مجوز اجرا لازم است که جای دیگری نگهداری می‌شود.",
@@ -562,7 +564,15 @@ def poll(
         # way to type, never a second door.
         text = LABEL_TO_COMMAND.get(text.strip(), text)
 
-        if text.strip().lstrip("/").lower() in {"start", "menu"}:
+        # The one command that is not a question. Handled here, after the
+        # admin check and outside `READ_ONLY_COMMANDS`, and it only writes a
+        # request the host acts on - see `telegram_update`.
+        from app.integrations import telegram_update
+
+        update_text = telegram_update.handle(chat_id, text)
+        if update_text is not None:
+            reply = Reply(update_text, keyboard=False)
+        elif text.strip().lstrip("/").lower() in {"start", "menu"}:
             reply = Reply(
                 "*MolidoTrade AI*\n\nیکی را انتخاب کنید. این کانال فقط پاسخ "
                 "می‌دهد و هرگز سفارشی ثبت نمی‌کند."

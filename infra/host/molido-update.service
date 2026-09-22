@@ -1,0 +1,11 @@
+[Unit]
+Description=Run a deploy requested from Telegram, if one is waiting
+After=docker.service
+
+[Service]
+Type=oneshot
+# git needs a HOME to find root's credentials; systemd does not set one.
+Environment=HOME=/root
+Environment=MOLIDO_ROOT=@ROOT@
+ExecStart=/usr/local/bin/molido-update
+TimeoutStartSec=45min
