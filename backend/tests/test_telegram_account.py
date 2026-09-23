@@ -153,3 +153,175 @@ class TestThroughThePoll:
     def test_a_stranger_cannot_add_an_account(self, session, monkeypatch, queue):
         self.poll(session, monkeypatch, 999, f"/addaccount 1520012345 FTMO-Demo2 {SECRET}")
         assert requests(queue) == []
+
+
+# ------------------------------------------------ delete / activate / deactivate
+
+
+@pytest.fixture
+def switch_dir(tmp_path, monkeypatch):
+    from app.execution import account_switch
+
+    directory = tmp_path / "accounts"
+    monkeypatch.setattr(account_switch, "DEFAULT_STATE_DIR", directory)
+    return directory
+
+
+KNOWN = lambda: ["main", "term-j"]  # noqa: E731
+
+
+def test_other_text_is_not_a_manage_command():
+    assert ta.handle_manage("500", "/status") is None
+    assert ta.handle_manage("500", "") is None
+
+
+def test_delete_needs_confirmation_before_anything_is_queued(queue):
+    answer = ta.handle_manage("500", "/delaccount term-j", now=NOW)
+    assert answer.buttons == [[("✅ تأیید", "delaccount term-j confirm"), ta.CANCEL]]
+    assert requests(queue) == []
+
+
+def test_confirmed_delete_queues_a_clear_and_reports_back(queue):
+    text = ta.handle_manage("500", "/delaccount term-j confirm", now=NOW)
+    assert "ثبت شد" in text
+    assert requests(queue) == [{"action": "clear", "terminal": "term-j"}]
+
+    sent = []
+    ta.check_pending(
+        lambda chat, t: sent.append((chat, t)),
+        now=NOW,
+        result_for=lambda rid: {"known": True, "applied": True, "cleared": True},
+    )
+    assert sent == [("500", "✅ حساب ترمینال term-j حذف شد.")]
+    assert ta._load() == {}
+
+
+def test_a_failed_delete_is_reported_with_the_reason(queue):
+    ta.handle_manage("500", "/delaccount term-j confirm", now=NOW)
+    sent = []
+    ta.check_pending(
+        lambda c, t: sent.append(t),
+        now=NOW,
+        result_for=lambda rid: {"known": True, "applied": False, "reason": "no such terminal"},
+    )
+    assert sent[0].startswith("❌") and "no such terminal" in sent[0]
+
+
+def test_delete_of_a_bad_terminal_name_is_refused(queue):
+    assert "حذف نشد" in ta.handle_manage("500", "/delaccount ../etc confirm", now=NOW)
+    assert requests(queue) == []
+
+
+def test_deactivate_pauses_at_once_and_is_attributed(switch_dir):
+    from app.execution import account_switch
+
+    text = ta.handle_manage("500", "/deactivate term-j", known_accounts=KNOWN)
+    assert "متوقف" in text
+    allowed, why = account_switch.state("term-j")
+    assert not allowed and "telegram:500" in why
+
+
+def test_activate_needs_confirmation(switch_dir):
+    from app.execution import account_switch
+
+    ta.handle_manage("500", "/deactivate term-j", known_accounts=KNOWN)
+    answer = ta.handle_manage("500", "/activate term-j", known_accounts=KNOWN)
+    assert answer.buttons[0][0] == ("✅ تأیید", "activate term-j confirm")
+    assert account_switch.state("term-j")[0] is False
+
+    text = ta.handle_manage("500", "/activate term-j confirm", known_accounts=KNOWN)
+    assert "فعال شد" in text
+    assert account_switch.state("term-j")[0] is True
+
+
+def test_an_unknown_account_is_refused_and_nothing_written(switch_dir):
+    text = ta.handle_manage("500", "/deactivate ghost", known_accounts=KNOWN)
+    assert "تعریف نشده" in text
+    assert not switch_dir.exists() or not any(switch_dir.iterdir())
+
+
+def test_bare_switch_command_lists_states(switch_dir):
+    ta.handle_manage("500", "/deactivate main", known_accounts=KNOWN)
+    answer = ta.handle_manage("500", "/activate", known_accounts=KNOWN)
+    assert "main — ⏸ متوقف" in answer.text and "term-j — 🟢 فعال" in answer.text
+    assert answer.buttons[0] == [("▶️ فعال main", "activate main"), ("🗑 حذف main", "delaccount main")]
+    assert answer.buttons[1][0] == ("⏸ توقف term-j", "deactivate term-j")
+
+
+def test_every_menu_button_is_a_handled_command(switch_dir):
+    for row in ta.menu().buttons:
+        for _label, data in row:
+            assert data == "manage" or data.startswith(("wiz ", "prop")) or (
+                ta.handle_manage("500", data, known_accounts=KNOWN) is not None
+            )
+
+
+def test_a_stranger_cannot_delete_or_switch(session, monkeypatch, queue, switch_dir):
+    TestThroughThePoll().poll(session, monkeypatch, 999, "/delaccount term-j confirm")
+    TestThroughThePoll().poll(session, monkeypatch, 999, "/deactivate main")
+    assert requests(queue) == []
+    assert not switch_dir.exists()
+
+
+def test_an_admin_delete_goes_through_the_poll(session, monkeypatch, queue):
+    calls = TestThroughThePoll().poll(session, monkeypatch, 500, "/delaccount term-j confirm")
+    assert requests(queue) == [{"action": "clear", "terminal": "term-j"}]
+    assert not any(m == "deleteMessage" for m, _ in calls)
+
+
+class TestButtons:
+    def poll(self, session, monkeypatch, update):
+        calls = []
+
+        def fake_api(method, payload, *, token=None, timeout=None):
+            calls.append((method, payload))
+            if method == "getUpdates":
+                return True, {"ok": True, "result": [update]}
+            return True, {"ok": True}
+
+        from app.integrations import telegram
+
+        monkeypatch.setattr(telegram, "api_call", fake_api)
+        monkeypatch.setattr(telegram_bot, "_write_offset", lambda _v: True)
+        monkeypatch.setattr(telegram_bot, "_read_offset", lambda: 0)
+        telegram_settings.save(session, token="1:AA", chat_ids=["500"])
+        telegram_bot.poll(session)
+        return [p for m, p in calls if m == "sendMessage"]
+
+    def tap(self, session, monkeypatch, data, chat=500):
+        update = {
+            "update_id": 1,
+            "callback_query": {"id": "c", "data": data, "message": {"chat": {"id": chat}}},
+        }
+        return self.poll(session, monkeypatch, update)
+
+    def test_the_manage_key_is_on_the_persistent_keyboard(self):
+        rows = telegram_bot._reply_keyboard()["keyboard"]
+        assert rows[-1] == [{"text": telegram_bot.MANAGE_LABEL}]
+
+    def test_the_manage_key_opens_the_menu_with_buttons(self, session, monkeypatch):
+        update = {"update_id": 1, "message": {"chat": {"id": 500}, "text": telegram_bot.MANAGE_LABEL}}
+        [sent] = self.poll(session, monkeypatch, update)
+        assert "/addaccount" in sent["text"]
+        data = [b["callback_data"] for r in sent["reply_markup"]["inline_keyboard"] for b in r]
+        assert "activate" in data and "prop" in data
+
+    def test_tapping_add_only_explains_and_queues_nothing(self, session, monkeypatch, queue):
+        [sent] = self.tap(session, monkeypatch, f"addaccount 1520012345 FTMO-Demo2 {SECRET}")
+        assert "Master" in sent["text"]
+        assert requests(queue) == []
+
+    def test_the_confirm_button_deletes(self, session, monkeypatch, queue):
+        [sent] = self.tap(session, monkeypatch, "delaccount term-j")
+        confirm = sent["reply_markup"]["inline_keyboard"][0][0]["callback_data"]
+        assert requests(queue) == []
+        self.tap(session, monkeypatch, confirm)
+        assert requests(queue) == [{"action": "clear", "terminal": "term-j"}]
+
+    def test_a_stranger_tapping_confirm_is_refused(self, session, monkeypatch, queue):
+        self.tap(session, monkeypatch, "delaccount term-j confirm", chat=999)
+        assert requests(queue) == []
+
+    def test_an_oversized_button_is_dropped_not_sent(self):
+        answer = ta.Answer("x", [[("ok", "prop"), ("long", "x" * 65)]])
+        assert telegram_bot._as_reply(answer).buttons == ((("ok", "prop"),),)
