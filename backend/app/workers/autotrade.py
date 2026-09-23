@@ -1211,6 +1211,16 @@ def _account_state(
     balance = float(published.get("balance") or 0.0)
     if equity <= 0:
         return None, "the terminal published no equity, so risk cannot be sized"
+    # Only an explicit False: an older terminal that publishes no such field
+    # has not said trading is off. FTMO turned trading off on 1514533027 on
+    # 21 Sep 2026, and for two days every cycle still sent it orders, each
+    # answered "retcode 10017 Trade disabled" - 31 refusals that read like
+    # a broker fault instead of an account that is closed.
+    if published.get("trade_allowed") is False:
+        return None, (
+            "the broker has trading disabled on this account (trade_allowed is "
+            "false) - check the account with the broker; nothing is sent"
+        )
 
     peak = equity_service.peak_equity(session, account_key)
     if peak is None:
@@ -2733,9 +2743,8 @@ def run_cycle(
         # Held from this cycle on, so two decisions on one symbol inside a
         # single pass cannot both go through either.
         held.add(entry.symbol)
-        own_currency.update(
-            _currency_legs(_tradeable_symbol(entry.symbol), "buy" if entry.decision == "long" else "sell")
-        )
+        placed_side = "buy" if entry.decision == "long" else "sell"
+        own_currency.update(_currency_legs(_tradeable_symbol(entry.symbol), placed_side))
 
     # One flush for every refusal this account made.
     #
