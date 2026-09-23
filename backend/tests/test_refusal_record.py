@@ -34,7 +34,8 @@ class TestEveryRefusalIsRecorded:
         # 19 from 16 Sep 2026: the fleet symbol cap.
         # 20 from 21 Sep 2026: the prop-only fleet currency cap.
         # 21 from 21 Sep 2026: the prop-only measured fleet correlation cap.
-        assert source.count("refuse(entry,") == 21
+        # 22 from 23 Sep 2026: the per-account currency cap, every account.
+        assert source.count("refuse(entry,") == 22
 
     def test_the_one_remaining_append_is_the_recorder_itself(self):
         source = inspect.getsource(autotrade.run_cycle)

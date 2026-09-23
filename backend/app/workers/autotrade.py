@@ -893,6 +893,29 @@ FLEET_SYMBOL_CAP = 2
 #: this only binds accounts registered with `brain/challenge.py`. Tighter
 #: than FLEET_SYMBOL_CAP because a currency is held by more symbols than a
 #: symbol is held by accounts.
+#: Positions one account may hold leaning on the same currency the same way.
+#:
+#: Every account, not only prop. On 18 Sep 2026 term-c bought EURJPY, CADJPY
+#: and CHFJPY inside fifty minutes - three symbols, so the one-per-symbol
+#: rule passed each, and one bet on the yen at three times the risk. All
+#: three stopped together for -13,406, most of the account's drawdown. The
+#: fleet currency cap counts accounts, so one account holding three yen
+#: positions reads as one there; this counts the account's own book.
+ACCOUNT_CURRENCY_CAP = 2
+
+
+def _currency_legs(symbol: str, side: str) -> list[tuple[str, str]]:
+    """Which way a trade leans on each currency: long the base, short the quote.
+
+    A buy of AUDUSD sells dollars and a buy of USDCAD buys them. Counting both
+    legs with the order's side reads those as the same dollar bet and refuses
+    the trade that actually offsets it.
+    """
+    base, quote = _currencies(symbol)
+    lean = "buy" if str(side).lower() == "buy" else "sell"
+    other = "sell" if lean == "buy" else "buy"
+    return [(c, s) for c, s in ((base, lean), (quote, other)) if c]
+
 FLEET_CURRENCY_CAP_PROP = 3
 
 
@@ -1188,6 +1211,16 @@ def _account_state(
     balance = float(published.get("balance") or 0.0)
     if equity <= 0:
         return None, "the terminal published no equity, so risk cannot be sized"
+    # Only an explicit False: an older terminal that publishes no such field
+    # has not said trading is off. FTMO turned trading off on 1514533027 on
+    # 21 Sep 2026, and for two days every cycle still sent it orders, each
+    # answered "retcode 10017 Trade disabled" - 31 refusals that read like
+    # a broker fault instead of an account that is closed.
+    if published.get("trade_allowed") is False:
+        return None, (
+            "the broker has trading disabled on this account (trade_allowed is "
+            "false) - check the account with the broker; nothing is sent"
+        )
 
     peak = equity_service.peak_equity(session, account_key)
     if peak is None:
@@ -1202,6 +1235,18 @@ def _account_state(
             "no day-boundary balance has been recorded, so today's loss cannot be "
             "measured against anything"
         )
+
+    # A good day is banked, not pushed. See `daily_profit_lock_pct`.
+    from app.core.config import get_settings
+
+    lock = float(getattr(get_settings(), "daily_profit_lock_pct", 0.0) or 0.0)
+    if lock > 0 and float(day_open) > 0:
+        gained = (equity - float(day_open)) / float(day_open)
+        if gained >= lock:
+            return None, (
+                f"daily profit lock: up {gained:.1%} on the day, at or beyond "
+                f"the {lock:.0%} lock - no new trades until the next day"
+            )
 
     # The day's P&L expressed in R, which is what the brain's limits are in.
     # One R is what a single trade risks, so a 3 R daily limit is three losing
@@ -1947,6 +1992,10 @@ def run_cycle(
     # across two of them - twice the risk the sizing computed for one
     # decision, and invisible in any count-based limit.
     held = {str(p.get("symbol")) for p in live_positions if p.get("symbol")}
+    own_currency: Counter[tuple[str, str]] = Counter()
+    for p in live_positions:
+        if p.get("symbol"):
+            own_currency.update(_currency_legs(str(p.get("symbol")), str(p.get("side") or "")))
 
     # The risk brain, which until now decided nothing. It exists to be the
     # link that cannot be talked out of its answer, and it was reachable only
@@ -2165,6 +2214,21 @@ def run_cycle(
         if fleet_held is not None and fleet_held[(traded_as, fleet_side)] >= FLEET_SYMBOL_CAP:
             refuse(entry, f"{fleet_held[(traded_as, fleet_side)]} accounts already hold "
                 f"{traded_as} {fleet_side}, the fleet cap is {FLEET_SYMBOL_CAP}")
+            continue
+
+        own_blocked = next(
+            (
+                (currency, lean)
+                for currency, lean in sorted(_currency_legs(traded_as, fleet_side))
+                if own_currency[(currency, lean)] >= ACCOUNT_CURRENCY_CAP
+            ),
+            None,
+        )
+        if own_blocked is not None:
+            currency, lean = own_blocked
+            refuse(entry, f"the account already holds {own_currency[own_blocked]} "
+                f"positions {lean} {currency}, the account currency cap is "
+                f"{ACCOUNT_CURRENCY_CAP}")
             continue
 
         # Prop money only: a challenge account is refused on a *currency* the
@@ -2679,6 +2743,8 @@ def run_cycle(
         # Held from this cycle on, so two decisions on one symbol inside a
         # single pass cannot both go through either.
         held.add(entry.symbol)
+        placed_side = "buy" if entry.decision == "long" else "sell"
+        own_currency.update(_currency_legs(_tradeable_symbol(entry.symbol), placed_side))
 
     # One flush for every refusal this account made.
     #

@@ -46,13 +46,25 @@ TOLERANCE = 0.20
 #: answer is noise with a decimal point.
 MIN_MOVE_TICKS = 5.0
 
-#: And how much profit. This is the binding constraint, not the move: profit
-#: is published to two decimals, so a position showing one cent carries a
-#: rounding error of fifty per cent whatever the price has done, and dividing
-#: by it produces a confident ratio built out of the last digit. A dollar is a
-#: hundred times that granularity, which is enough for a fault measured in
-#: factors of ten.
-MIN_PROFIT = 1.0
+#: And how much profit. This is the binding constraint, and the constraint is
+#: swap, not the two decimals the figure is printed to.
+#:
+#: The bridge publishes `profit` alone - ticket, symbol, side, volume,
+#: price_open, stop, target, profit - with no swap or commission to subtract,
+#: so whatever has accrued is inside the number this divides by. On a large
+#: position that is noise inside TOLERANCE. On a small one it is most of the
+#: figure: CADJPY on 22 September 2026 showed $1.42 against $2.67 predicted,
+#: and the missing $1.25 was carry on 0.28 lots. That reported a 0.53 ratio
+#: on a specification which is demonstrably correct - one lot is 100,000 CAD,
+#: so a 1.00 move is 100,000 JPY, and 100000/634.90 is USDJPY at 157.50.
+#:
+#: Ten dollars keeps a dollar or two of swap inside the 20% tolerance while
+#: still auditing the small positions that were right - the XAUEUR at -18.49
+#: in the gold-defect snapshot is one. It costs the audit only the smallest
+#: positions, which is the right trade: a false finding against a sound
+#: specification spends attention on nothing and teaches everyone to ignore
+#: the next one.
+MIN_PROFIT = 10.0
 
 
 @dataclass(frozen=True)
