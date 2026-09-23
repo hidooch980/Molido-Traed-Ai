@@ -592,6 +592,25 @@ def poll(
         # not as a command. Mapped back here so both keyboards and a
         # typed command walk exactly the same allowlist - the menu is a
         # way to type, never a second door.
+        # A step of the add-account wizard, when one is in progress. A key or
+        # a command instead of an answer ends it and is handled as usual.
+        from app.integrations import telegram_wizard
+
+        raw = text.strip()
+        wizard = telegram_wizard.handle(
+            session,
+            chat_id,
+            text,
+            is_command=raw.startswith("/") or raw in LABEL_TO_COMMAND or raw == MANAGE_LABEL,
+        )
+        if wizard is not None and wizard.delete_message and message_id is not None:
+            # The password step: deleted before anything else, as /addaccount's is.
+            telegram.api_call(
+                "deleteMessage",
+                {"chat_id": chat_id, "message_id": message_id},
+                token=channel.token,
+            )
+
         text = LABEL_TO_COMMAND.get(text.strip(), text)
         if text.strip() == MANAGE_LABEL:
             text = "manage"
@@ -602,7 +621,9 @@ def poll(
         from app.integrations import telegram_account, telegram_prop, telegram_update
 
         update_text = telegram_update.handle(chat_id, text)
-        if callback and telegram_account.is_command(text):
+        if wizard is not None:
+            reply = _as_reply(wizard.answer)
+        elif callback and telegram_account.is_command(text):
             # A button can only ask how; a password is never a button.
             reply = Reply(telegram_account.HELP, keyboard=False)
         elif text.strip().lstrip("/").lower() == "manage":

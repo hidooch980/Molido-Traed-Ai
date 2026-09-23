@@ -251,7 +251,7 @@ def test_bare_switch_command_lists_states(switch_dir):
 def test_every_menu_button_is_a_handled_command(switch_dir):
     for row in ta.menu().buttons:
         for _label, data in row:
-            assert data == "manage" or ta.is_command(data) or data.startswith("prop") or (
+            assert data == "manage" or data.startswith(("wiz ", "prop")) or (
                 ta.handle_manage("500", data, known_accounts=KNOWN) is not None
             )
 
