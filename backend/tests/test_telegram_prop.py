@@ -57,7 +57,8 @@ def test_off_is_immediate_on_needs_confirm(session):
     assert "غیرفعال شد" in tp.handle(session, "500", "/prop off Acc One")
     assert rows(session)["Acc One"].is_active is False
 
-    assert "confirm" in tp.handle(session, "500", "/prop on Acc One")
+    answer = tp.handle(session, "500", "/prop on Acc One")
+    assert answer.buttons[0][0][1].endswith("confirm")
     assert rows(session)["Acc One"].is_active is False
     assert "فعال شد" in tp.handle(session, "500", "/prop on Acc One confirm")
     assert rows(session)["Acc One"].is_active is True
@@ -65,7 +66,8 @@ def test_off_is_immediate_on_needs_confirm(session):
 
 def test_delete_needs_confirm(session):
     tp.handle(session, "500", "/prop add live 5000 Gone")
-    assert "confirm" in tp.handle(session, "500", "/prop del Gone")
+    answer = tp.handle(session, "500", "/prop del Gone")
+    assert answer.buttons[0][0][1].endswith("confirm")
     assert "Gone" in rows(session)
     assert "حذف شد" in tp.handle(session, "500", "/prop del Gone confirm")
     assert "Gone" not in rows(session)
@@ -79,8 +81,24 @@ def test_listing_shows_prop_and_live(session):
     tp.handle(session, "500", f"/prop add funded 50000 {BOOK} Funded A")
     tp.handle(session, "500", "/prop add live 5000 Own")
     tp.handle(session, "500", "/prop off Own")
-    text = tp.handle(session, "500", "/prop")
-    assert "🟢 Funded A — پراپ/funded" in text and "⏸ Own — عادی" in text
+    answer = tp.handle(session, "500", "/prop")
+    assert "🟢 Funded A — پراپ/funded" in answer.text and "⏸ Own — عادی" in answer.text
+
+
+def test_buttons_name_the_account_by_id_and_work(session):
+    tp.handle(session, "500", "/prop add live 5000 " + "Long Name " * 10)
+    answer = tp.handle(session, "500", "/prop")
+    off, delete = answer.buttons[0]
+    assert all(len(data.encode()) <= 64 for _l, data in answer.buttons[0])
+    assert "غیرفعال شد" in tp.handle(session, "500", off[1])
+
+    confirm = tp.handle(session, "500", delete[1]).buttons[0][0][1]
+    assert "حذف شد" in tp.handle(session, "500", confirm)
+    assert rows(session) == {}
+
+
+def test_a_malformed_id_is_not_found(session):
+    assert "نیست" in tp.handle(session, "500", "/prop off id:zzz")
 
 
 def _poll(session, monkeypatch, chat_id, text):

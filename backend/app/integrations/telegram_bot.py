@@ -65,6 +65,11 @@ LABEL_TO_COMMAND: dict[str, str] = {
     label: command for row in KEYBOARD for label, command in row
 }
 
+#: The one key below the read-only ones that is not a question: it opens the
+#: account menu. Kept out of `KEYBOARD` so that stays the read-only allowlist;
+#: what the menu's buttons send is routed after the same admin check.
+MANAGE_LABEL = "⚙️ مدیریت حساب‌ها"
+
 TITLES: dict[str, str] = {
     "status": "وضعیت سامانه",
     "positions": "پوزیشن‌های باز",
@@ -90,6 +95,22 @@ class Reply:
     #: Which view this is, so its own button can be left out of the inline
     #: menu attached to it.
     view: str = ""
+    #: Buttons belonging to this answer, instead of the inline menu.
+    buttons: tuple[tuple[tuple[str, str], ...], ...] = ()
+
+
+def _as_reply(answer: Any) -> Reply:
+    """A str or a `telegram_account.Answer` as a reply."""
+    from app.integrations.telegram_account import Answer
+
+    if isinstance(answer, Answer):
+        # Telegram refuses a whole message over one button whose data passes
+        # 64 bytes, so such a button is left out (the command can be typed).
+        rows = (
+            tuple(b for b in row if len(b[1].encode("utf-8")) <= 64) for row in answer.buttons
+        )
+        return Reply(answer.text, buttons=tuple(row for row in rows if row))
+    return Reply(answer, keyboard=False)
 
 
 def _reply_keyboard() -> dict[str, Any]:
@@ -97,7 +118,8 @@ def _reply_keyboard() -> dict[str, Any]:
     return {
         "keyboard": [
             [{"text": label} for label, _command in row] for row in KEYBOARD
-        ],
+        ]
+        + [[{"text": MANAGE_LABEL}]],
         "resize_keyboard": True,
         "is_persistent": True,
         "input_field_placeholder": "یک دکمه را بزنید",
@@ -388,6 +410,7 @@ def _help(session: Session) -> str:
             "/activate — فعال‌سازی معامله روی یک حساب (با تأیید)",
             "/deactivate — توقف معامله روی یک حساب",
             "/prop — حساب‌های پراپ و عادی: ثبت، حذف، فعال/غیرفعال",
+            f"یا دکمهٔ «{MANAGE_LABEL}» پایین صفحه.",
             "",
             "هیچ پیامی از اینجا نمی‌تواند سفارشی ثبت کند. برای معامله، کلید API با "
             "مجوز اجرا لازم است که جای دیگری نگهداری می‌شود.",
@@ -570,6 +593,8 @@ def poll(
         # typed command walk exactly the same allowlist - the menu is a
         # way to type, never a second door.
         text = LABEL_TO_COMMAND.get(text.strip(), text)
+        if text.strip() == MANAGE_LABEL:
+            text = "manage"
 
         # The one command that is not a question. Handled here, after the
         # admin check and outside `READ_ONLY_COMMANDS`, and it only writes a
@@ -577,7 +602,12 @@ def poll(
         from app.integrations import telegram_account, telegram_prop, telegram_update
 
         update_text = telegram_update.handle(chat_id, text)
-        if not callback and telegram_account.is_command(text):
+        if callback and telegram_account.is_command(text):
+            # A button can only ask how; a password is never a button.
+            reply = Reply(telegram_account.HELP, keyboard=False)
+        elif text.strip().lstrip("/").lower() == "manage":
+            reply = _as_reply(telegram_account.menu())
+        elif not callback and telegram_account.is_command(text):
             # The message may carry a broker password: deleted before
             # anything else, whatever the outcome of the request.
             if message_id is not None:
@@ -590,9 +620,9 @@ def poll(
         elif update_text is not None:
             reply = Reply(update_text, keyboard=False)
         elif (manage_text := telegram_account.handle_manage(chat_id, text)) is not None:
-            reply = Reply(manage_text, keyboard=False)
+            reply = _as_reply(manage_text)
         elif (prop_text := telegram_prop.handle(session, chat_id, text)) is not None:
-            reply = Reply(prop_text, keyboard=False)
+            reply = _as_reply(prop_text)
         elif text.strip().lstrip("/").lower() in {"start", "menu"}:
             reply = Reply(
                 "*MolidoTrade AI*\n\nیکی را انتخاب کنید. این کانال فقط پاسخ "
@@ -630,7 +660,14 @@ def poll(
         # matters while reading: the next view is a tap away instead of a
         # journey to the bottom of the chat.
         markup: dict[str, Any] = (
-            _reply_keyboard()
+            {
+                "inline_keyboard": [
+                    [{"text": label, "callback_data": data} for label, data in row]
+                    for row in reply.buttons
+                ]
+            }
+            if reply.buttons
+            else _reply_keyboard()
             if reply.view in KEYBOARD_VIEWS
             else _inline_keyboard(reply.view)
         )
@@ -641,7 +678,7 @@ def poll(
                 "text": reply.text,
                 "parse_mode": "Markdown",
                 "disable_web_page_preview": "true",
-                **({"reply_markup": markup} if reply.keyboard else {}),
+                **({"reply_markup": markup} if reply.keyboard or reply.buttons else {}),
             },
             token=channel.token,
         )

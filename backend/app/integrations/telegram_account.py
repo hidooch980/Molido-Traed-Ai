@@ -29,6 +29,7 @@ import json
 import os
 import pathlib
 from collections.abc import Callable
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -91,6 +92,53 @@ def is_command(text: str) -> bool:
     return bool(words) and words[0].lstrip("/").lower().split("@")[0] == "addaccount"
 
 
+@dataclass(frozen=True)
+class Answer:
+    """A reply with inline buttons: rows of (label, callback data).
+
+    Every button's data is one of these same commands, so a tap walks the
+    same path as typing it - after the same admin check.
+    """
+
+    text: str
+    buttons: list[list[tuple[str, str]]] = field(default_factory=list)
+
+
+#: Back to the account menu, under every confirmation.
+CANCEL = ("❌ انصراف", "manage")
+
+
+def confirm_answer(text: str, command: str) -> Answer:
+    """A confirmation that can be tapped instead of typed."""
+    return Answer(text, [[("✅ تأیید", f"{command} {CONFIRM_WORD}"), CANCEL]])
+
+
+def menu() -> Answer:
+    """The account menu the "⚙️ مدیریت حساب‌ها" key opens."""
+    return Answer(
+        "\n".join(
+            [
+                "*مدیریت حساب‌ها*",
+                "",
+                "➕ *اتصال حساب بروکر به ترمینال*: رمز را باید تایپ کنید، دکمه "
+                "نمی‌تواند آن را بپرسد. این را بفرستید (پیام بلافاصله پاک می‌شود):",
+                "`/addaccount شماره سرور رمز`",
+                "",
+                "➕ *ثبت حساب پراپ یا عادی* در جدول حساب‌ها:",
+                "`/prop add challenge 100000 کلیدقانون نام`",
+                "`/prop add live 5000 نام`",
+                "",
+                "برای حذف، فعال یا غیرفعال کردن، یکی از فهرست‌ها را بزنید.",
+            ]
+        ),
+        [
+            [("🖥 حساب‌های ترمینال", "activate")],
+            [("🏆 حساب‌های پراپ و عادی", "prop")],
+            [("➕ راهنمای اتصال بروکر", "addaccount"), ("➕ راهنمای ثبت پراپ", "prop help")],
+        ],
+    )
+
+
 MANAGE_COMMANDS = frozenset({"delaccount", "activate", "deactivate"})
 CONFIRM_WORD = "confirm"
 
@@ -119,7 +167,7 @@ def handle_manage(
     *,
     now: datetime | None = None,
     known_accounts: Callable[[], list[str]] | None = None,
-) -> str | None:
+) -> str | Answer | None:
     """`/delaccount`, `/activate`, `/deactivate`, or None when it is none of them."""
     name, args = _command(text)
     if name not in MANAGE_COMMANDS:
@@ -130,7 +178,9 @@ def handle_manage(
     return _switch(chat_id, name == "activate", args, confirmed, known_accounts)
 
 
-def _delete(chat_id: str, args: list[str], confirmed: bool, moment: datetime) -> str:
+def _delete(
+    chat_id: str, args: list[str], confirmed: bool, moment: datetime
+) -> str | Answer:
     from app.services import mt5_link
 
     if not args:
@@ -140,13 +190,10 @@ def _delete(chat_id: str, args: list[str], confirmed: bool, moment: datetime) ->
     except ValidationFailedError as exc:
         return f"حذف نشد: {_md(exc)}"
     if not confirmed:
-        return "\n".join(
-            [
-                f"⚠️ حساب ترمینال {_md(request.terminal)} خارج و لاگین آن فراموش می‌شود؛ "
-                "اگر معامله‌ای باز است، ترمینال وسط کار بسته می‌شود.",
-                "برای تأیید بفرستید:",
-                f"`/delaccount {_md(request.terminal)} {CONFIRM_WORD}`",
-            ]
+        return confirm_answer(
+            f"⚠️ حساب ترمینال {_md(request.terminal)} خارج و لاگین آن فراموش می‌شود؛ "
+            "اگر معامله‌ای باز است، ترمینال وسط کار بسته می‌شود. تأیید می‌کنید؟",
+            f"delaccount {request.terminal}",
         )
     result = mt5_link.submit(request, now=moment)
     if not result.queued:
@@ -176,7 +223,7 @@ def _switch(
     args: list[str],
     confirmed: bool,
     known_accounts: Callable[[], list[str]] | None,
-) -> str:
+) -> str | Answer:
     from app.execution import account_switch
 
     if known_accounts is None:
@@ -192,12 +239,21 @@ def _switch(
 
     if not args:
         lines = ["وضعیت حساب‌ها:"]
+        buttons: list[list[tuple[str, str]]] = []
         for row in account_switch.listing(known):
+            key = row["account"]
             mark = "🟢 فعال" if row["active"] else "⏸ متوقف"
-            lines.append(f"{_md(row['account'])} — {mark}")
+            lines.append(f"{_md(key)} — {mark}")
+            toggle = (
+                (f"⏸ توقف {key}", f"deactivate {key}")
+                if row["active"]
+                else (f"▶️ فعال {key}", f"activate {key}")
+            )
+            buttons.append([toggle, (f"🗑 حذف {key}", f"delaccount {key}")])
         verb = "activate" if active else "deactivate"
-        lines += ["", f"`/{verb} نام‌حساب`"]
-        return "\n".join(lines)
+        lines += ["", f"`/{verb} نام‌حساب` یا دکمه‌ها:"]
+        buttons.append([("⬅️ منو", "manage")])
+        return Answer("\n".join(lines), buttons)
 
     account = args[0]
     if account not in known:
@@ -206,13 +262,10 @@ def _switch(
             f"موجود: {_md(', '.join(known) or '(هیچ)')}"
         )
     if active and not confirmed:
-        return "\n".join(
-            [
-                f"فعال‌سازی {_md(account)} اجازه می‌دهد بقیهٔ گیت‌ها (کلید قطع کلی، "
-                "ریسک، قوانین) دوباره بررسی شوند؛ خودش سفارشی ثبت نمی‌کند.",
-                "برای تأیید بفرستید:",
-                f"`/activate {_md(account)} {CONFIRM_WORD}`",
-            ]
+        return confirm_answer(
+            f"فعال‌سازی {_md(account)} اجازه می‌دهد بقیهٔ گیت‌ها (کلید قطع کلی، "
+            "ریسک، قوانین) دوباره بررسی شوند؛ خودش سفارشی ثبت نمی‌کند. تأیید می‌کنید؟",
+            f"activate {account}",
         )
     account_switch.write(
         account,

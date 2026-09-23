@@ -20,7 +20,7 @@ from typing import Any
 from app.core.enums import AccountKind
 from app.core.errors import MolidoError
 from app.core.logging import get_logger
-from app.integrations.telegram_account import CONFIRM_WORD, _md
+from app.integrations.telegram_account import CONFIRM_WORD, Answer, _md, confirm_answer
 
 log = get_logger(__name__)
 
@@ -47,7 +47,7 @@ def is_command(text: str) -> bool:
     return bool(words) and words[0].lstrip("/").lower().split("@")[0] == "prop"
 
 
-def handle(session: Any, chat_id: str, text: str) -> str | None:
+def handle(session: Any, chat_id: str, text: str) -> str | Answer | None:
     """Answer a `/prop` message, or None when it is not one."""
     if not is_command(text):
         return None
@@ -78,13 +78,14 @@ def _tenant(session: Any):
     return challenge_accounts.default_tenant(session)
 
 
-def _listing(session: Any) -> str:
+def _listing(session: Any) -> str | Answer:
     from app.services import challenge_accounts
 
     views = challenge_accounts.listing(session, tenant_id=_tenant(session))
     if not views:
         return "هیچ حسابی ثبت نشده.\n\n" + HELP
     lines = ["حساب‌ها:"]
+    buttons: list[list[tuple[str, str]]] = []
     for view in views:
         account = view.account
         state = "🟢" if account.is_active else "⏸"
@@ -93,19 +94,38 @@ def _listing(session: Any) -> str:
             f"{state} {_md(account.label)} — {kind}، "
             f"{float(account.starting_balance):,.0f} {_md(account.currency)}"
         )
-    return "\n".join(lines)
+        # By id: a label can be 120 characters and a button's data only 64 bytes.
+        ref = f"{ID_PREFIX}{account.id.hex}"
+        short = account.label[:20]
+        toggle = (
+            (f"⏸ {short}", f"prop off {ref}")
+            if account.is_active
+            else (f"▶️ {short}", f"prop on {ref}")
+        )
+        buttons.append([toggle, (f"🗑 {short}", f"prop del {ref}")])
+    buttons.append([("⬅️ منو", "manage")])
+    return Answer("\n".join(lines), buttons)
+
+
+#: A button names its account by id, since a label may not fit.
+ID_PREFIX = "id:"
 
 
 def _find(session: Any, label: str):
+    import uuid
+
     from sqlalchemy import select
 
     from app.models.challenge_accounts import ChallengeAccount
 
+    match = ChallengeAccount.label == label
+    if label.startswith(ID_PREFIX):
+        try:
+            match = ChallengeAccount.id == uuid.UUID(label[len(ID_PREFIX):])
+        except ValueError:
+            return None
     return session.scalar(
-        select(ChallengeAccount).where(
-            ChallengeAccount.tenant_id == _tenant(session),
-            ChallengeAccount.label == label,
-        )
+        select(ChallengeAccount).where(ChallengeAccount.tenant_id == _tenant(session), match)
     )
 
 
@@ -149,20 +169,18 @@ def _add(session: Any, chat_id: str, args: list[str]) -> str:
     return f"✅ حساب {_md(account.label)} ثبت شد.{note}"
 
 
-def _delete(session: Any, chat_id: str, label: str, confirmed: bool) -> str:
+def _delete(session: Any, chat_id: str, label: str, confirmed: bool) -> str | Answer:
     from app.services import challenge_accounts
 
     account = _find(session, label)
     if account is None:
         return f"حسابی به نام {_md(label)} نیست."
+    label = account.label
     if not confirmed:
-        return "\n".join(
-            [
-                f"⚠️ حساب {_md(label)} با همهٔ تاریخچه‌اش پاک می‌شود. برای نگه‌داشتن "
-                f"تاریخچه `/prop off {_md(label)}` را بزنید.",
-                "برای حذف بفرستید:",
-                f"`/prop del {_md(label)} {CONFIRM_WORD}`",
-            ]
+        return confirm_answer(
+            f"⚠️ حساب {_md(label)} با همهٔ تاریخچه‌اش پاک می‌شود. برای نگه‌داشتن "
+            "تاریخچه، غیرفعالش کنید. حذف شود؟",
+            f"prop del {ID_PREFIX}{account.id.hex}",
         )
     with session.begin_nested():
         challenge_accounts.remove(session, tenant_id=_tenant(session), account_id=account.id)
@@ -170,18 +188,19 @@ def _delete(session: Any, chat_id: str, label: str, confirmed: bool) -> str:
     return f"🗑 حساب {_md(label)} حذف شد."
 
 
-def _switch(session: Any, chat_id: str, label: str, active: bool, confirmed: bool) -> str:
+def _switch(
+    session: Any, chat_id: str, label: str, active: bool, confirmed: bool
+) -> str | Answer:
     from app.services import challenge_accounts
 
     account = _find(session, label)
     if account is None:
         return f"حسابی به نام {_md(label)} نیست."
+    label = account.label
     if active and not confirmed:
-        return "\n".join(
-            [
-                f"حساب {_md(label)} دوباره زیر پایش ریسک می‌رود. برای تأیید بفرستید:",
-                f"`/prop on {_md(label)} {CONFIRM_WORD}`",
-            ]
+        return confirm_answer(
+            f"حساب {_md(label)} دوباره زیر پایش ریسک می‌رود. تأیید می‌کنید؟",
+            f"prop on {ID_PREFIX}{account.id.hex}",
         )
     with session.begin_nested():
         challenge_accounts.set_active(
