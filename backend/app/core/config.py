@@ -213,6 +213,16 @@ class Settings(BaseSettings):
     #: ranking at all. What is chosen here is which instruments the accounts
     #: carry, which is a decision about the book, not about the evidence.
     traded_symbols: str = ""
+    #: Stop opening trades for the rest of the day once an account is up this
+    #: much on the day's opening balance, as a fraction (0.02 is 2%). 0 is off.
+    #:
+    #: A lock, not a target. Nothing here makes a day earn 2%; it only stops a
+    #: day that already has from handing it back. The owner asked on 23 Sep
+    #: 2026 for 2-6% a day. As a target that cannot be configured, and chasing
+    #: it would mean raising risk per trade. As a ceiling it is the ordinary
+    #: prop discipline of banking a good day. Open positions keep their stops
+    #: and trailing; only new entries wait for the next day boundary.
+    daily_profit_lock_pct: float = 0.0
     #: How many brains must agree on a symbol and side before an order is
     #: sent. 1 is a brain acting alone; 2 is the roadmap's agreement gate.
     #: Non-trading brains vote too - recording them is what buys their vote.

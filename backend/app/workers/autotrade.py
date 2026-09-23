@@ -893,6 +893,16 @@ FLEET_SYMBOL_CAP = 2
 #: this only binds accounts registered with `brain/challenge.py`. Tighter
 #: than FLEET_SYMBOL_CAP because a currency is held by more symbols than a
 #: symbol is held by accounts.
+#: Positions one account may hold leaning on the same currency the same way.
+#:
+#: Every account, not only prop. On 18 Sep 2026 term-c bought EURJPY, CADJPY
+#: and CHFJPY inside fifty minutes - three symbols, so the one-per-symbol
+#: rule passed each, and one bet on the yen at three times the risk. All
+#: three stopped together for -13,406, most of the account's drawdown. The
+#: fleet currency cap counts accounts, so one account holding three yen
+#: positions reads as one there; this counts the account's own book.
+ACCOUNT_CURRENCY_CAP = 2
+
 FLEET_CURRENCY_CAP_PROP = 3
 
 
@@ -1202,6 +1212,18 @@ def _account_state(
             "no day-boundary balance has been recorded, so today's loss cannot be "
             "measured against anything"
         )
+
+    # A good day is banked, not pushed. See `daily_profit_lock_pct`.
+    from app.core.config import get_settings
+
+    lock = float(getattr(get_settings(), "daily_profit_lock_pct", 0.0) or 0.0)
+    if lock > 0 and float(day_open) > 0:
+        gained = (equity - float(day_open)) / float(day_open)
+        if gained >= lock:
+            return None, (
+                f"daily profit lock: up {gained:.1%} on the day, at or beyond "
+                f"the {lock:.0%} lock - no new trades until the next day"
+            )
 
     # The day's P&L expressed in R, which is what the brain's limits are in.
     # One R is what a single trade risks, so a 3 R daily limit is three losing
@@ -1947,6 +1969,11 @@ def run_cycle(
     # across two of them - twice the risk the sizing computed for one
     # decision, and invisible in any count-based limit.
     held = {str(p.get("symbol")) for p in live_positions if p.get("symbol")}
+    own_currency: Counter[tuple[str, str]] = Counter()
+    for p in live_positions:
+        if p.get("symbol"):
+            for currency in _currencies_of(str(p.get("symbol"))):
+                own_currency[(currency, str(p.get("side") or "").lower())] += 1
 
     # The risk brain, which until now decided nothing. It exists to be the
     # link that cannot be talked out of its answer, and it was reachable only
@@ -2165,6 +2192,20 @@ def run_cycle(
         if fleet_held is not None and fleet_held[(traded_as, fleet_side)] >= FLEET_SYMBOL_CAP:
             refuse(entry, f"{fleet_held[(traded_as, fleet_side)]} accounts already hold "
                 f"{traded_as} {fleet_side}, the fleet cap is {FLEET_SYMBOL_CAP}")
+            continue
+
+        own_blocked = next(
+            (
+                currency
+                for currency in sorted(_currencies_of(traded_as))
+                if own_currency[(currency, fleet_side)] >= ACCOUNT_CURRENCY_CAP
+            ),
+            None,
+        )
+        if own_blocked is not None:
+            refuse(entry, f"the account already holds {own_currency[(own_blocked, fleet_side)]} "
+                f"{own_blocked} {fleet_side} positions, the account currency cap is "
+                f"{ACCOUNT_CURRENCY_CAP}")
             continue
 
         # Prop money only: a challenge account is refused on a *currency* the
@@ -2679,6 +2720,8 @@ def run_cycle(
         # Held from this cycle on, so two decisions on one symbol inside a
         # single pass cannot both go through either.
         held.add(entry.symbol)
+        for currency in _currencies_of(_tradeable_symbol(entry.symbol)):
+            own_currency[(currency, "buy" if entry.decision == "long" else "sell")] += 1
 
     # One flush for every refusal this account made.
     #

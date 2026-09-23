@@ -197,12 +197,19 @@ esac
 
 echo
 echo "=== deployed build ==="
-# Retry: the web container answers on :3000 a moment before Next has finished
-# compiling its first request, and a single early check reads as a failure.
+# Look for the stamp inside the running web container, not in a page.
+#
+# The footer is rendered in the browser from the layout's client chunk, so
+# the stamp is never in the HTML a curl receives - on the domain host or any
+# other. This check fetched `http://localhost/` (a 308 on the domain host),
+# was then pointed at the domain (a 200 with no stamp in it), and failed on
+# every good deploy either way: 22 Sep 2026 16:51 and 23 Sep 2026 01:39 both
+# reported "not serving" builds whose stamps were in the live bundle. The
+# container's own .next/static is exactly what is being served, so finding
+# the stamp there answers "did this build land" without guessing at markup.
 deployed=""
 for _ in $(seq 1 15); do
-  page="$(curl -s -m 20 http://localhost/ || true)"
-  if printf '%s' "$page" | grep -qF "$BUILD_STAMP"; then
+  if compose exec -T web sh -c "grep -rqF '${BUILD_STAMP}' /app/.next/static" 2>/dev/null; then
     deployed="yes"
     break
   fi

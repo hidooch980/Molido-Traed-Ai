@@ -45,6 +45,20 @@
 
 	encode zstd gzip
 
+	# Access logging to stderr, which docker-compose already rotates
+	# (json-file, 10m x 5). Without this Caddy records only its own lifecycle,
+	# so "has any request reached the origin at all?" - the first question
+	# asked of a site returning 503 through the CDN - has no answer here. On
+	# 22 September 2026 that question was answered with
+	# `grep -c handled_request`, which returned 0 on a perfectly healthy
+	# origin serving 200s, and the outage was diagnosed from the wrong fact
+	# for a day. A file output is deliberately not used: this host runs at 80%
+	# disk, and an unrotated access log is how the remaining 20% disappears.
+	log {
+		output stderr
+		format json
+	}
+
 	header {
 		Strict-Transport-Security "max-age=31536000; includeSubDomains"
 		X-Content-Type-Options "nosniff"

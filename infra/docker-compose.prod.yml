@@ -27,6 +27,7 @@ x-backend-env: &backend-env
   # restriction. Narrows execution only: every brain still ranks the whole
   # watchlist and every decision is still journalled.
   MOLIDO_TRADED_SYMBOLS: ${MOLIDO_TRADED_SYMBOLS:-}
+  MOLIDO_DAILY_PROFIT_LOCK_PCT: ${MOLIDO_DAILY_PROFIT_LOCK_PCT:-0}
   # Which accounts have their stops tightened as a trade goes their way,
   # "login,login" or "*" for every account. Unset means none: a stop that
   # moves produces a different distribution of outcomes than the fixed
