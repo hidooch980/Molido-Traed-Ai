@@ -153,3 +153,106 @@ class TestThroughThePoll:
     def test_a_stranger_cannot_add_an_account(self, session, monkeypatch, queue):
         self.poll(session, monkeypatch, 999, f"/addaccount 1520012345 FTMO-Demo2 {SECRET}")
         assert requests(queue) == []
+
+
+# ------------------------------------------------ delete / activate / deactivate
+
+
+@pytest.fixture
+def switch_dir(tmp_path, monkeypatch):
+    from app.execution import account_switch
+
+    directory = tmp_path / "accounts"
+    monkeypatch.setattr(account_switch, "DEFAULT_STATE_DIR", directory)
+    return directory
+
+
+KNOWN = lambda: ["main", "term-j"]  # noqa: E731
+
+
+def test_other_text_is_not_a_manage_command():
+    assert ta.handle_manage("500", "/status") is None
+    assert ta.handle_manage("500", "") is None
+
+
+def test_delete_needs_confirmation_before_anything_is_queued(queue):
+    text = ta.handle_manage("500", "/delaccount term-j", now=NOW)
+    assert "confirm" in text
+    assert requests(queue) == []
+
+
+def test_confirmed_delete_queues_a_clear_and_reports_back(queue):
+    text = ta.handle_manage("500", "/delaccount term-j confirm", now=NOW)
+    assert "ثبت شد" in text
+    assert requests(queue) == [{"action": "clear", "terminal": "term-j"}]
+
+    sent = []
+    ta.check_pending(
+        lambda chat, t: sent.append((chat, t)),
+        now=NOW,
+        result_for=lambda rid: {"known": True, "applied": True, "cleared": True},
+    )
+    assert sent == [("500", "✅ حساب ترمینال term-j حذف شد.")]
+    assert ta._load() == {}
+
+
+def test_a_failed_delete_is_reported_with_the_reason(queue):
+    ta.handle_manage("500", "/delaccount term-j confirm", now=NOW)
+    sent = []
+    ta.check_pending(
+        lambda c, t: sent.append(t),
+        now=NOW,
+        result_for=lambda rid: {"known": True, "applied": False, "reason": "no such terminal"},
+    )
+    assert sent[0].startswith("❌") and "no such terminal" in sent[0]
+
+
+def test_delete_of_a_bad_terminal_name_is_refused(queue):
+    assert "حذف نشد" in ta.handle_manage("500", "/delaccount ../etc confirm", now=NOW)
+    assert requests(queue) == []
+
+
+def test_deactivate_pauses_at_once_and_is_attributed(switch_dir):
+    from app.execution import account_switch
+
+    text = ta.handle_manage("500", "/deactivate term-j", known_accounts=KNOWN)
+    assert "متوقف" in text
+    allowed, why = account_switch.state("term-j")
+    assert not allowed and "telegram:500" in why
+
+
+def test_activate_needs_confirmation(switch_dir):
+    from app.execution import account_switch
+
+    ta.handle_manage("500", "/deactivate term-j", known_accounts=KNOWN)
+    assert "confirm" in ta.handle_manage("500", "/activate term-j", known_accounts=KNOWN)
+    assert account_switch.state("term-j")[0] is False
+
+    text = ta.handle_manage("500", "/activate term-j confirm", known_accounts=KNOWN)
+    assert "فعال شد" in text
+    assert account_switch.state("term-j")[0] is True
+
+
+def test_an_unknown_account_is_refused_and_nothing_written(switch_dir):
+    text = ta.handle_manage("500", "/deactivate ghost", known_accounts=KNOWN)
+    assert "تعریف نشده" in text
+    assert not switch_dir.exists() or not any(switch_dir.iterdir())
+
+
+def test_bare_switch_command_lists_states(switch_dir):
+    ta.handle_manage("500", "/deactivate main", known_accounts=KNOWN)
+    text = ta.handle_manage("500", "/activate", known_accounts=KNOWN)
+    assert "main — ⏸ متوقف" in text and "term-j — 🟢 فعال" in text
+
+
+def test_a_stranger_cannot_delete_or_switch(session, monkeypatch, queue, switch_dir):
+    TestThroughThePoll().poll(session, monkeypatch, 999, "/delaccount term-j confirm")
+    TestThroughThePoll().poll(session, monkeypatch, 999, "/deactivate main")
+    assert requests(queue) == []
+    assert not switch_dir.exists()
+
+
+def test_an_admin_delete_goes_through_the_poll(session, monkeypatch, queue):
+    calls = TestThroughThePoll().poll(session, monkeypatch, 500, "/delaccount term-j confirm")
+    assert requests(queue) == [{"action": "clear", "terminal": "term-j"}]
+    assert not any(m == "deleteMessage" for m, _ in calls)

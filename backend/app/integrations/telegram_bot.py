@@ -384,6 +384,9 @@ def _help(session: Session) -> str:
             "/health — سلامت سرویس‌ها",
             "/update — به‌روزرسانی سرور به آخرین نسخه (با کد تأیید)",
             "/addaccount — اتصال حساب بروکر (شماره، سرور، رمز)",
+            "/delaccount — حذف حساب از یک ترمینال (با تأیید)",
+            "/activate — فعال‌سازی معامله روی یک حساب (با تأیید)",
+            "/deactivate — توقف معامله روی یک حساب",
             "",
             "هیچ پیامی از اینجا نمی‌تواند سفارشی ثبت کند. برای معامله، کلید API با "
             "مجوز اجرا لازم است که جای دیگری نگهداری می‌شود.",
@@ -585,6 +588,8 @@ def poll(
             reply = Reply(telegram_account.handle(chat_id, text), keyboard=False)
         elif update_text is not None:
             reply = Reply(update_text, keyboard=False)
+        elif (manage_text := telegram_account.handle_manage(chat_id, text)) is not None:
+            reply = Reply(manage_text, keyboard=False)
         elif text.strip().lstrip("/").lower() in {"start", "menu"}:
             reply = Reply(
                 "*MolidoTrade AI*\n\nیکی را انتخاب کنید. این کانال فقط پاسخ "
