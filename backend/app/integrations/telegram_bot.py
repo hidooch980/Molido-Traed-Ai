@@ -387,6 +387,7 @@ def _help(session: Session) -> str:
             "/delaccount — حذف حساب از یک ترمینال (با تأیید)",
             "/activate — فعال‌سازی معامله روی یک حساب (با تأیید)",
             "/deactivate — توقف معامله روی یک حساب",
+            "/prop — حساب‌های پراپ و عادی: ثبت، حذف، فعال/غیرفعال",
             "",
             "هیچ پیامی از اینجا نمی‌تواند سفارشی ثبت کند. برای معامله، کلید API با "
             "مجوز اجرا لازم است که جای دیگری نگهداری می‌شود.",
@@ -573,7 +574,7 @@ def poll(
         # The one command that is not a question. Handled here, after the
         # admin check and outside `READ_ONLY_COMMANDS`, and it only writes a
         # request the host acts on - see `telegram_update`.
-        from app.integrations import telegram_account, telegram_update
+        from app.integrations import telegram_account, telegram_prop, telegram_update
 
         update_text = telegram_update.handle(chat_id, text)
         if not callback and telegram_account.is_command(text):
@@ -590,6 +591,8 @@ def poll(
             reply = Reply(update_text, keyboard=False)
         elif (manage_text := telegram_account.handle_manage(chat_id, text)) is not None:
             reply = Reply(manage_text, keyboard=False)
+        elif (prop_text := telegram_prop.handle(session, chat_id, text)) is not None:
+            reply = Reply(prop_text, keyboard=False)
         elif text.strip().lstrip("/").lower() in {"start", "menu"}:
             reply = Reply(
                 "*MolidoTrade AI*\n\nیکی را انتخاب کنید. این کانال فقط پاسخ "
