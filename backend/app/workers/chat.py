@@ -94,6 +94,22 @@ def _signals(last: float) -> float:
             log.info("chat.signals_posted", **report)
     except Exception as problem:  # noqa: BLE001 - reported, never fatal
         log.warning("chat.signals_failed", error=f"{type(problem).__name__}: {problem}")
+    try:
+        # Account connections asked for from the chat: their results, to the
+        # chat that asked.
+        from app.integrations import telegram, telegram_account
+        from app.services import telegram_settings
+
+        with session_scope() as session:
+            channel = telegram_settings.load(session)
+        if channel.token:
+            telegram_account.check_pending(
+                lambda chat_id, text: telegram.api_call(
+                    "sendMessage", {"chat_id": chat_id, "text": text}, token=channel.token
+                )
+            )
+    except Exception as problem:  # noqa: BLE001 - reported, never fatal
+        log.warning("chat.accounts_failed", error=f"{type(problem).__name__}: {problem}")
     return time.monotonic()
 
 

@@ -306,6 +306,10 @@ services:
       # The update offset, beside the kill switch on the host so a redeploy
       # does not replay a day of questions.
       - ${MOLIDO_KILL_SWITCH_HOST:-/var/lib/molido}:/var/lib/molido
+      # The broker-login queue the API already writes to, so /addaccount
+      # hands the host agent the same request the site's form does. The
+      # container still never touches the terminal, its config or systemd.
+      - ${MOLIDO_MT5_QUEUE_HOST:-/var/molido/mt5-queue}:/var/molido/mt5-queue
       # Every terminal's bridge, read-only. Without these the bot answers
       # "no heartbeat file" for every account while the collector reads them
       # perfectly - a channel reporting an outage that exists only inside
