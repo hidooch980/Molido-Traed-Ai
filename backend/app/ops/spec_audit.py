@@ -58,11 +58,13 @@ MIN_MOVE_TICKS = 5.0
 #: on a specification which is demonstrably correct - one lot is 100,000 CAD,
 #: so a 1.00 move is 100,000 JPY, and 100000/634.90 is USDJPY at 157.50.
 #:
-#: Twenty-five dollars is the smallest profit at which a few dollars of swap
-#: stays inside the 20% tolerance. It costs the audit the smallest positions,
-#: which is the right trade: a false finding against a sound specification
-#: spends attention on nothing and teaches everyone to ignore the next one.
-MIN_PROFIT = 25.0
+#: Ten dollars keeps a dollar or two of swap inside the 20% tolerance while
+#: still auditing the small positions that were right - the XAUEUR at -18.49
+#: in the gold-defect snapshot is one. It costs the audit only the smallest
+#: positions, which is the right trade: a false finding against a sound
+#: specification spends attention on nothing and teaches everyone to ignore
+#: the next one.
+MIN_PROFIT = 10.0
 
 
 @dataclass(frozen=True)

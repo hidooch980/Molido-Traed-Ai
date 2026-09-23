@@ -609,8 +609,10 @@ class TestTheCap:
         """They disagree exactly when it matters, and the broker's answer is
         the one the account is judged on."""
         # Distinct symbols: the per-symbol cap would otherwise stop this at
-        # one, and the thing under test here is the count cap.
-        for i, symbol in enumerate(["EURUSD", "GBPUSD", "USDCAD", "AUDUSD"]):
+        # one, and the thing under test here is the count cap. No GBPUSD: the
+        # bridge's GBPNZD book already leans on GBP both ways, so the account
+        # currency cap would refuse it first and this would test that instead.
+        for i, symbol in enumerate(["EURUSD", "USDCAD", "AUDUSD"]):
             decide(session, symbol=symbol, at=NOW - timedelta(minutes=i + 1))
 
         report = autotrade.run_cycle(

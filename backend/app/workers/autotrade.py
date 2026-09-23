@@ -903,6 +903,19 @@ FLEET_SYMBOL_CAP = 2
 #: positions reads as one there; this counts the account's own book.
 ACCOUNT_CURRENCY_CAP = 2
 
+
+def _currency_legs(symbol: str, side: str) -> list[tuple[str, str]]:
+    """Which way a trade leans on each currency: long the base, short the quote.
+
+    A buy of AUDUSD sells dollars and a buy of USDCAD buys them. Counting both
+    legs with the order's side reads those as the same dollar bet and refuses
+    the trade that actually offsets it.
+    """
+    base, quote = _currencies(symbol)
+    lean = "buy" if str(side).lower() == "buy" else "sell"
+    other = "sell" if lean == "buy" else "buy"
+    return [(c, s) for c, s in ((base, lean), (quote, other)) if c]
+
 FLEET_CURRENCY_CAP_PROP = 3
 
 
@@ -1972,8 +1985,7 @@ def run_cycle(
     own_currency: Counter[tuple[str, str]] = Counter()
     for p in live_positions:
         if p.get("symbol"):
-            for currency in _currencies_of(str(p.get("symbol"))):
-                own_currency[(currency, str(p.get("side") or "").lower())] += 1
+            own_currency.update(_currency_legs(str(p.get("symbol")), str(p.get("side") or "")))
 
     # The risk brain, which until now decided nothing. It exists to be the
     # link that cannot be talked out of its answer, and it was reachable only
@@ -2196,15 +2208,16 @@ def run_cycle(
 
         own_blocked = next(
             (
-                currency
-                for currency in sorted(_currencies_of(traded_as))
-                if own_currency[(currency, fleet_side)] >= ACCOUNT_CURRENCY_CAP
+                (currency, lean)
+                for currency, lean in sorted(_currency_legs(traded_as, fleet_side))
+                if own_currency[(currency, lean)] >= ACCOUNT_CURRENCY_CAP
             ),
             None,
         )
         if own_blocked is not None:
-            refuse(entry, f"the account already holds {own_currency[(own_blocked, fleet_side)]} "
-                f"{own_blocked} {fleet_side} positions, the account currency cap is "
+            currency, lean = own_blocked
+            refuse(entry, f"the account already holds {own_currency[own_blocked]} "
+                f"positions {lean} {currency}, the account currency cap is "
                 f"{ACCOUNT_CURRENCY_CAP}")
             continue
 
@@ -2720,8 +2733,9 @@ def run_cycle(
         # Held from this cycle on, so two decisions on one symbol inside a
         # single pass cannot both go through either.
         held.add(entry.symbol)
-        for currency in _currencies_of(_tradeable_symbol(entry.symbol)):
-            own_currency[(currency, "buy" if entry.decision == "long" else "sell")] += 1
+        own_currency.update(
+            _currency_legs(_tradeable_symbol(entry.symbol), "buy" if entry.decision == "long" else "sell")
+        )
 
     # One flush for every refusal this account made.
     #
