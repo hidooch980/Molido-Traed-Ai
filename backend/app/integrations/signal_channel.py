@@ -13,7 +13,9 @@ posts the difference since it last looked:
     in R against the stop it was announced with, and the exit price from the
     matching closed deal when the terminal published one.
 
-**Brain consensus** is posted too, labelled as what it is: when at least
+**Brain consensus** is off by default (`CONSENSUS_POSTED`): the owner wants
+the channel to carry trade signals only. When switched on, it is labelled as
+what it is: when at least
 `CONSENSUS_MIN` brains hold a fresh decision on the same symbol and side and
 more agree than oppose, the channel gets "N brains agree" - once per
 `CONSENSUS_WINDOW`. It is not called "strong": `execution.conviction` keeps
@@ -53,6 +55,10 @@ KEEP_DEALS = 1000
 #: (symbol, side) stays quiet after it was.
 CONSENSUS_MIN = 3
 CONSENSUS_WINDOW = timedelta(hours=12)
+
+#: Whether consensus is posted at all. Off: the channel carries only trades
+#: that were actually opened and closed.
+CONSENSUS_POSTED = False
 
 DEFAULT_STATE_FILE = "/var/lib/molido/state/signal-channel.json"
 
@@ -322,14 +328,15 @@ def run(session: Any, *, now: datetime | None = None) -> dict[str, Any]:
     moment = now or datetime.now(UTC)
     previous = load_state()
     state = step(previous, _books(session), now=moment, send=send)
-    state["consensus"] = consensus_step(
-        # Missing, not empty: a state written before consensus existed is a
-        # first look for it, so switching it on does not post every standing
-        # agreement at once.
-        None if previous is None else previous.get("consensus"),
-        _fresh_votes(session, moment),
-        now=moment,
-        send=send,
-    )
+    if CONSENSUS_POSTED:
+        state["consensus"] = consensus_step(
+            # Missing, not empty: a state written before consensus existed is a
+            # first look for it, so switching it on does not post every
+            # standing agreement at once.
+            None if previous is None else previous.get("consensus"),
+            _fresh_votes(session, moment),
+            now=moment,
+            send=send,
+        )
     save_state(state)
     return {"posted": posted, "open_signals": len(state["signals"])}
