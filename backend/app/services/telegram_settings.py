@@ -20,6 +20,7 @@ one, and the alert goes to nobody with no error anywhere.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -44,6 +45,8 @@ class ChannelConfig:
     chat_ids: tuple[str, ...]
     enabled: bool
     source: str
+    #: Where trade signals are posted; empty when there is no channel.
+    signal_channel: str = ""
 
     @property
     def masked(self) -> str | None:
@@ -66,6 +69,7 @@ class ChannelConfig:
             "recipients": len(self.chat_ids),
             "source": self.source,
             "ready": self.ready,
+            "signal_channel": self.signal_channel,
             "note": (
                 "the token is stored and never returned. A saved token "
                 "replaces the environment's; clearing it falls back to the "
@@ -97,6 +101,7 @@ def load(session: Session | None) -> ChannelConfig:
             or ((env_chat,) if env_chat else ()),
             enabled=bool(row.enabled),
             source="site" if row.bot_token else "site+env",
+            signal_channel=str(getattr(row, "signal_channel", "") or ""),
         )
 
     return ChannelConfig(
@@ -131,12 +136,35 @@ def _clean_chat_ids(raw: list[Any] | None) -> tuple[str, ...]:
     return tuple(out)
 
 
+_CHANNEL_NAME = re.compile(r"^@[A-Za-z][A-Za-z0-9_]{4,31}$")
+
+
+def _clean_signal_channel(raw: str) -> str:
+    """A channel id or @username, or empty to switch the channel off."""
+    text = raw.strip()
+    if not text:
+        return ""
+    if text.startswith("https://t.me/") or text.startswith("t.me/"):
+        text = "@" + text.rstrip("/").rsplit("/", 1)[-1]
+    if _CHANNEL_NAME.match(text):
+        return text
+    candidate = text[1:] if text.startswith("-") else text
+    if candidate.isdigit():
+        return text
+    raise ValidationFailedError(
+        f"{raw!r} is not a Telegram channel. Use its @username (for example "
+        "@molido_signals) or its numeric id, which starts with -100.",
+        signal_channel=raw,
+    )
+
+
 def save(
     session: Session,
     *,
     token: str | None = None,
     chat_ids: list[Any] | None = None,
     enabled: bool | None = None,
+    signal_channel: str | None = None,
 ) -> ChannelConfig:
     """Store what was given, leave what was not.
 
@@ -164,6 +192,9 @@ def save(
 
     if enabled is not None:
         row.enabled = bool(enabled)
+
+    if signal_channel is not None:
+        row.signal_channel = _clean_signal_channel(signal_channel)
 
     session.flush()
     return load(session)

@@ -367,7 +367,8 @@ def _last_cycle_lines() -> list[str]:
 def _help(session: Session) -> str:
     return "\n".join(
         [
-            "این ربات به سؤال پاسخ می‌دهد و هیچ کاری انجام نمی‌دهد.",
+            "این ربات به سؤال پاسخ می‌دهد. تنها کاری که می‌کند درخواست به‌روزرسانی "
+            "سرور است، با تأیید دومرحله‌ای.",
             "",
             "دستورها:",
             "/status — حالت اجرا و خلاصهٔ حساب‌ها",
@@ -381,6 +382,8 @@ def _help(session: Session) -> str:
             "/journal — کارنامهٔ هفتگی مغزها",
             "/why_no_trade — دلیل نام‌بردهٔ آخرین ردها",
             "/health — سلامت سرویس‌ها",
+            "/update — به‌روزرسانی سرور به آخرین نسخه (با کد تأیید)",
+            "/addaccount — اتصال حساب بروکر (شماره، سرور، رمز)",
             "",
             "هیچ پیامی از اینجا نمی‌تواند سفارشی ثبت کند. برای معامله، کلید API با "
             "مجوز اجرا لازم است که جای دیگری نگهداری می‌شود.",
@@ -525,6 +528,7 @@ def poll(
         highest = max(highest, int(update.get("update_id") or 0))
         message = update.get("message") or {}
         callback = update.get("callback_query") or {}
+        message_id = None
 
         if callback:
             chat_id = str(((callback.get("message") or {}).get("chat") or {}).get("id"))
@@ -537,6 +541,7 @@ def poll(
         else:
             chat_id = str((message.get("chat") or {}).get("id"))
             text = str(message.get("text") or "")
+            message_id = message.get("message_id")
 
         if not chat_id or not text:
             continue
@@ -562,7 +567,25 @@ def poll(
         # way to type, never a second door.
         text = LABEL_TO_COMMAND.get(text.strip(), text)
 
-        if text.strip().lstrip("/").lower() in {"start", "menu"}:
+        # The one command that is not a question. Handled here, after the
+        # admin check and outside `READ_ONLY_COMMANDS`, and it only writes a
+        # request the host acts on - see `telegram_update`.
+        from app.integrations import telegram_account, telegram_update
+
+        update_text = telegram_update.handle(chat_id, text)
+        if not callback and telegram_account.is_command(text):
+            # The message may carry a broker password: deleted before
+            # anything else, whatever the outcome of the request.
+            if message_id is not None:
+                telegram.api_call(
+                    "deleteMessage",
+                    {"chat_id": chat_id, "message_id": message_id},
+                    token=channel.token,
+                )
+            reply = Reply(telegram_account.handle(chat_id, text), keyboard=False)
+        elif update_text is not None:
+            reply = Reply(update_text, keyboard=False)
+        elif text.strip().lstrip("/").lower() in {"start", "menu"}:
             reply = Reply(
                 "*MolidoTrade AI*\n\nیکی را انتخاب کنید. این کانال فقط پاسخ "
                 "می‌دهد و هرگز سفارشی ثبت نمی‌کند."

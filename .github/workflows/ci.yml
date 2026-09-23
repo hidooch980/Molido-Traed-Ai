@@ -74,6 +74,10 @@ jobs:
         # Stubbed docker; it restarts containers unattended, so the cooldown
         # that stops a restart loop is the thing tested.
         run: bash infra/host/test-molido-autoheal.sh
+      - name: The Telegram updater's own tests
+        # Stubbed docker and deploy; it deploys unattended on a chat request,
+        # so staleness, the cooldown and failure reporting are what is tested.
+        run: bash infra/host/test-molido-update.sh
       - name: Every host script parses
         run: |
           set -e
