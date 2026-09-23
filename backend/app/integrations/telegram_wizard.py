@@ -209,10 +209,10 @@ def _answer(
                 return Outcome(_ask("نام حساب لازم است:"))
             _set(chat_id, None, moment)
             book = "" if flow.get("kind") == "live" else f" {flow.get('book', '')}"
-            reply = telegram_prop.handle(
+            added = telegram_prop.handle(
                 session, chat_id, f"/prop add {flow['kind']} {flow['balance']}{book} {text}"
             )
-            return Outcome(reply if reply is not None else "انجام نشد.")
+            return Outcome(added if added is not None else "انجام نشد.")
 
     _set(chat_id, None, moment)
     return Outcome("این مرحله شناخته نیست؛ دوباره شروع کنید.")
