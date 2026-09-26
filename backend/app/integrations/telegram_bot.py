@@ -116,10 +116,10 @@ def _as_reply(answer: Any) -> Reply:
 def _reply_keyboard() -> dict[str, Any]:
     """The persistent keyboard: rows of labels, kept until replaced."""
     return {
-        "keyboard": [
-            [{"text": label} for label, _command in row] for row in KEYBOARD
-        ]
-        + [[{"text": MANAGE_LABEL}]],
+        # The account menu first: seven rows do not fit a phone's keyboard
+        # panel, and a key that needs scrolling to is a key nobody finds.
+        "keyboard": [[{"text": MANAGE_LABEL}]]
+        + [[{"text": label} for label, _command in row] for row in KEYBOARD],
         "resize_keyboard": True,
         "is_persistent": True,
         "input_field_placeholder": "یک دکمه را بزنید",
