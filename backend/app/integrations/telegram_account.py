@@ -10,6 +10,14 @@ Telegram to delete it the moment it is read, never echoes it, never logs it,
 and keeps it nowhere - it goes into the queue file the agent consumes, as it
 does from the site. It still crossed Telegram's servers, and the help says so.
 
+`/delaccount <terminal>` logs a terminal out and forgets its login (the
+site's unlink), and `/activate` / `/deactivate <account>` write the same
+per-account pause switch the site does. Deleting and activating are the
+risky directions, so each needs the same command repeated with `confirm`;
+pausing is the safe direction and takes effect at once. None of the three
+carries a secret or places an order: activating only lets every other gate
+be asked again.
+
 The agent's answer takes up to seven minutes. `pending` remembers which chat
 asked, and `check_pending` - called by the chat worker once a minute - sends
 the result there when it arrives, or says so if the agent never answers.
@@ -21,6 +29,7 @@ import json
 import os
 import pathlib
 from collections.abc import Callable
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -81,6 +90,190 @@ def _md(text: object) -> str:
 def is_command(text: str) -> bool:
     words = (text or "").strip().split(maxsplit=1)
     return bool(words) and words[0].lstrip("/").lower().split("@")[0] == "addaccount"
+
+
+@dataclass(frozen=True)
+class Answer:
+    """A reply with inline buttons: rows of (label, callback data).
+
+    Every button's data is one of these same commands, so a tap walks the
+    same path as typing it - after the same admin check.
+    """
+
+    text: str
+    buttons: list[list[tuple[str, str]]] = field(default_factory=list)
+
+
+#: Back to the account menu, under every confirmation.
+CANCEL = ("❌ انصراف", "manage")
+
+
+def confirm_answer(text: str, command: str) -> Answer:
+    """A confirmation that can be tapped instead of typed."""
+    return Answer(text, [[("✅ تأیید", f"{command} {CONFIRM_WORD}"), CANCEL]])
+
+
+def menu() -> Answer:
+    """The account menu the "⚙️ مدیریت حساب‌ها" key opens."""
+    return Answer(
+        "\n".join(
+            [
+                "*مدیریت حساب‌ها*",
+                "",
+                "➕ برای افزودن، دکمهٔ افزودن را بزنید؛ ربات مرحله‌به‌مرحله می‌پرسد.",
+                "🖥 / 🏆 برای حذف، فعال یا غیرفعال کردن، یکی از فهرست‌ها را بزنید.",
+                "",
+                "یا با تایپ: `/addaccount شماره سرور رمز` — `/prop add live 5000 نام`",
+            ]
+        ),
+        [
+            [("🖥 حساب‌های ترمینال", "activate")],
+            [("🏆 حساب‌های پراپ و عادی", "prop")],
+            [("➕ افزودن حساب بروکر", "wiz broker")],
+            [("➕ افزودن حساب پراپ/عادی", "wiz prop")],
+        ],
+    )
+
+
+MANAGE_COMMANDS = frozenset({"delaccount", "activate", "deactivate"})
+CONFIRM_WORD = "confirm"
+
+MANAGE_HELP = "\n".join(
+    [
+        "مدیریت حساب‌ها از تلگرام:",
+        "`/delaccount ترمینال` — خروج حساب از ترمینال و فراموش کردن لاگین",
+        "`/activate حساب` — اجازهٔ معامله روی حساب",
+        "`/deactivate حساب` — توقف معامله روی حساب (فوری)",
+        "",
+        "حذف و فعال‌سازی با تکرار دستور و کلمهٔ `confirm` انجام می‌شود.",
+    ]
+)
+
+
+def _command(text: str) -> tuple[str, list[str]]:
+    words = (text or "").strip().split()
+    if not words:
+        return "", []
+    return words[0].lstrip("/").lower().split("@")[0], words[1:]
+
+
+def handle_manage(
+    chat_id: str,
+    text: str,
+    *,
+    now: datetime | None = None,
+    known_accounts: Callable[[], list[str]] | None = None,
+) -> str | Answer | None:
+    """`/delaccount`, `/activate`, `/deactivate`, or None when it is none of them."""
+    name, args = _command(text)
+    if name not in MANAGE_COMMANDS:
+        return None
+    confirmed = len(args) >= 2 and args[1].lower() == CONFIRM_WORD
+    if name == "delaccount":
+        return _delete(chat_id, args, confirmed, now or datetime.now(UTC))
+    return _switch(chat_id, name == "activate", args, confirmed, known_accounts)
+
+
+def _delete(
+    chat_id: str, args: list[str], confirmed: bool, moment: datetime
+) -> str | Answer:
+    from app.services import mt5_link
+
+    if not args:
+        return MANAGE_HELP
+    try:
+        request = mt5_link.validate_clear(args[0])
+    except ValidationFailedError as exc:
+        return f"حذف نشد: {_md(exc)}"
+    if not confirmed:
+        return confirm_answer(
+            f"⚠️ حساب ترمینال {_md(request.terminal)} خارج و لاگین آن فراموش می‌شود؛ "
+            "اگر معامله‌ای باز است، ترمینال وسط کار بسته می‌شود. تأیید می‌کنید؟",
+            f"delaccount {request.terminal}",
+        )
+    result = mt5_link.submit(request, now=moment)
+    if not result.queued:
+        return f"حذف نشد: {_md(result.reason)}"
+    pending = _load()
+    pending[result.request_id] = {
+        "chat_id": str(chat_id),
+        "login": request.terminal,
+        "kind": "remove",
+        "at": moment.isoformat(),
+    }
+    _save(pending)
+    log.info(
+        "telegram.account_remove_requested",
+        request_id=result.request_id,
+        terminal=request.terminal,
+    )
+    return (
+        f"🗑 درخواست حذف حساب از ترمینال {_md(request.terminal)} ثبت شد. "
+        "نتیجه را همین‌جا می‌فرستم."
+    )
+
+
+def _switch(
+    chat_id: str,
+    active: bool,
+    args: list[str],
+    confirmed: bool,
+    known_accounts: Callable[[], list[str]] | None,
+) -> str | Answer:
+    from app.execution import account_switch
+
+    if known_accounts is None:
+        from app.providers.metatrader import bridge_dirs
+
+        def known_accounts() -> list[str]:
+            return list(bridge_dirs())
+
+    try:
+        known = sorted(known_accounts())
+    except ValueError as exc:
+        return f"فهرست حساب‌ها خوانده نشد: {_md(exc)}"
+
+    if not args:
+        lines = ["وضعیت حساب‌ها:"]
+        buttons: list[list[tuple[str, str]]] = []
+        for row in account_switch.listing(known):
+            key = row["account"]
+            mark = "🟢 فعال" if row["active"] else "⏸ متوقف"
+            lines.append(f"{_md(key)} — {mark}")
+            toggle = (
+                (f"⏸ توقف {key}", f"deactivate {key}")
+                if row["active"]
+                else (f"▶️ فعال {key}", f"activate {key}")
+            )
+            buttons.append([toggle, (f"🗑 حذف {key}", f"delaccount {key}")])
+        verb = "activate" if active else "deactivate"
+        lines += ["", f"`/{verb} نام‌حساب` یا دکمه‌ها:"]
+        buttons.append([("⬅️ منو", "manage")])
+        return Answer("\n".join(lines), buttons)
+
+    account = args[0]
+    if account not in known:
+        return (
+            f"حسابی به نام {_md(account)} تعریف نشده. "
+            f"موجود: {_md(', '.join(known) or '(هیچ)')}"
+        )
+    if active and not confirmed:
+        return confirm_answer(
+            f"فعال‌سازی {_md(account)} اجازه می‌دهد بقیهٔ گیت‌ها (کلید قطع کلی، "
+            "ریسک، قوانین) دوباره بررسی شوند؛ خودش سفارشی ثبت نمی‌کند. تأیید می‌کنید؟",
+            f"activate {account}",
+        )
+    account_switch.write(
+        account,
+        active=active,
+        by=f"telegram:{chat_id}",
+        reason="from Telegram",
+    )
+    log.info("telegram.account_state", account=account, active=active, chat_id=str(chat_id))
+    allowed, why = account_switch.state(account)
+    if active:
+        return f"🟢 حساب {_md(account)} فعال شد." if allowed else f"فعال نشد: {_md(why)}"
+    return f"⏸ معامله روی حساب {_md(account)} متوقف شد."
 
 
 def handle(chat_id: str, text: str, *, now: datetime | None = None) -> str:
@@ -160,7 +353,18 @@ def check_pending(
     for request_id, asked in list(pending.items()):
         answer = result_for(request_id)
         login = asked.get("login", "")
-        if answer.get("known"):
+        if answer.get("known") and asked.get("kind") == "remove":
+            ok = bool(answer.get("cleared"))
+            reason = str(answer.get("reason") or "")
+            send(
+                asked["chat_id"],
+                f"✅ حساب ترمینال {login} حذف شد."
+                if ok
+                else f"❌ حذف حساب ترمینال {login} انجام نشد: {reason or 'دلیلی گزارش نشد'}",
+            )
+            del pending[request_id]
+            reported += 1
+        elif answer.get("known"):
             # The agent's own word for success: applied is not connected - a
             # wrong server name applies perfectly and connects to nothing.
             ok = bool(answer.get("connected"))

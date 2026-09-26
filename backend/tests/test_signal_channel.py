@@ -232,7 +232,7 @@ def test_the_same_consensus_after_the_window_is_posted_again():
     assert len(out.sent) == 2
 
 
-def test_run_posts_consensus_through_the_channel(session, monkeypatch):
+def _run_with_consensus(session, monkeypatch):
     from app.integrations import telegram
     from app.workers import autotrade
 
@@ -249,6 +249,17 @@ def test_run_posts_consensus_through_the_channel(session, monkeypatch):
     sc.run(session, now=NOW)  # first look: learns
     sc.save_state({**sc.load_state(), "consensus": {}})
     sc.run(session, now=NOW)
+    return sent
+
+
+def test_consensus_is_not_posted_by_default(session, monkeypatch):
+    assert sc.CONSENSUS_POSTED is False
+    assert _run_with_consensus(session, monkeypatch) == []
+
+
+def test_run_posts_consensus_through_the_channel_when_switched_on(session, monkeypatch):
+    monkeypatch.setattr(sc, "CONSENSUS_POSTED", True)
+    sent = _run_with_consensus(session, monkeypatch)
 
     assert [p["chat_id"] for p in sent] == ["@molido_sig"]
     assert "XAUUSD" in sent[0]["text"]

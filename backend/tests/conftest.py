@@ -33,6 +33,7 @@ def _last_cycle_file(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("MOLIDO_UPDATE_STATE_DIR", str(tmp_path / "update-state"))
     monkeypatch.setenv("MOLIDO_SIGNAL_STATE_FILE", str(tmp_path / "signal-channel.json"))
     monkeypatch.setenv("MOLIDO_TELEGRAM_ACCOUNTS_FILE", str(tmp_path / "telegram-accounts.json"))
+    monkeypatch.setenv("MOLIDO_TELEGRAM_WIZARD_FILE", str(tmp_path / "telegram-wizard.json"))
 
 
 @pytest.fixture()
