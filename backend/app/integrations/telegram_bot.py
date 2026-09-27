@@ -313,11 +313,11 @@ def _why_no_trade(session: Session) -> str:
     from app.models.journal import ARM_RULE, JournalEntry
 
     since = datetime.now(UTC) - timedelta(hours=WHY_WINDOW_HOURS)
-    rows = session.execute(
+    rows: list[Any] = list(session.execute(
         select(JournalEntry.during).where(
             JournalEntry.arm == ARM_RULE, JournalEntry.opened_at >= since
         )
-    ).scalars().all()
+    ).scalars())
 
     reasons: dict[str, Counter[str]] = {}
     sent: Counter[str] = Counter()

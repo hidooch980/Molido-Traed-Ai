@@ -351,6 +351,8 @@ def paired_comparison(
     # instruments ranked on the same bar are two decisions, not one.
     legs: dict[tuple[datetime, str], dict[str, float]] = {}
     for opened_at, symbol, arm, r_multiple in session.execute(query):
+        if r_multiple is None:  # excluded by the query; narrows the type
+            continue
         legs.setdefault((opened_at, symbol), {})[str(arm)] = float(r_multiple)
 
     by_instant: dict[datetime, list[float]] = {}
