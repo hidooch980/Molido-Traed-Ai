@@ -297,7 +297,7 @@ class TestButtons:
 
     def test_the_manage_key_is_on_the_persistent_keyboard(self):
         rows = telegram_bot._reply_keyboard()["keyboard"]
-        assert rows[-1] == [{"text": telegram_bot.MANAGE_LABEL}]
+        assert rows[0] == [{"text": telegram_bot.MANAGE_LABEL}]
 
     def test_the_manage_key_opens_the_menu_with_buttons(self, session, monkeypatch):
         update = {"update_id": 1, "message": {"chat": {"id": 500}, "text": telegram_bot.MANAGE_LABEL}}

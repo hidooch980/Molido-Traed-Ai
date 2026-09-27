@@ -160,7 +160,7 @@ def prune(
         cutoff = moment - policy.keep
         older = f"{policy.timestamp_column} < :cutoff"
         try:
-            eligible = session.execute(
+            eligible: int = session.execute(
                 text(f"SELECT count(*) FROM {policy.table} WHERE {older}"),  # noqa: S608
                 {"cutoff": cutoff},
             ).scalar_one()

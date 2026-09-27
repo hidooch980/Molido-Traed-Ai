@@ -116,10 +116,10 @@ def _as_reply(answer: Any) -> Reply:
 def _reply_keyboard() -> dict[str, Any]:
     """The persistent keyboard: rows of labels, kept until replaced."""
     return {
-        "keyboard": [
-            [{"text": label} for label, _command in row] for row in KEYBOARD
-        ]
-        + [[{"text": MANAGE_LABEL}]],
+        # The account menu first: seven rows do not fit a phone's keyboard
+        # panel, and a key that needs scrolling to is a key nobody finds.
+        "keyboard": [[{"text": MANAGE_LABEL}]]
+        + [[{"text": label} for label, _command in row] for row in KEYBOARD],
         "resize_keyboard": True,
         "is_persistent": True,
         "input_field_placeholder": "یک دکمه را بزنید",
@@ -313,11 +313,11 @@ def _why_no_trade(session: Session) -> str:
     from app.models.journal import ARM_RULE, JournalEntry
 
     since = datetime.now(UTC) - timedelta(hours=WHY_WINDOW_HOURS)
-    rows = session.execute(
+    rows: list[Any] = list(session.execute(
         select(JournalEntry.during).where(
             JournalEntry.arm == ARM_RULE, JournalEntry.opened_at >= since
         )
-    ).scalars().all()
+    ).scalars())
 
     reasons: dict[str, Counter[str]] = {}
     sent: Counter[str] = Counter()
