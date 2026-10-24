@@ -5,6 +5,7 @@ import { api } from "@/lib/api";
 import { getT } from "@/lib/locale";
 
 export const dynamic = "force-dynamic";
+const TIMEFRAMES = ["M1", "M5", "M10", "M15", "M30", "H1"] as const;
 
 /**
  * The chart, point-in-time like everything else.
@@ -34,7 +35,7 @@ export default async function ChartsPage({
 
   const selectedId = params.instrument ?? instruments.data[0].id;
   const selected = instruments.data.find((x) => x.id === selectedId);
-  const timeframe = params.timeframe === "M15" ? "M15" : "H1";
+  const timeframe = TIMEFRAMES.find((tf) => tf === params.timeframe) ?? "H1";
   const bars = await api.bars(selectedId, timeframe, 500);
 
   return (
@@ -88,7 +89,7 @@ export default async function ChartsPage({
             />
           </div>
           <div className="px-4 pb-3 flex gap-1.5">
-            {(["H1", "M15"] as const).map((tf) => (
+            {TIMEFRAMES.map((tf) => (
               <a
                 key={tf}
                 href={`/charts?instrument=${selectedId}&timeframe=${tf}`}

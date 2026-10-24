@@ -109,3 +109,27 @@ breaches, count of actual fills, duplicate/missing orders, feed outages and
 stop coverage. Report unmatched/missing data explicitly. Separately describe
 statistical uncertainty and dependence between trades. A passed FTMO trial
 is not proof of a profitable strategy and does not unlock real-money trading.
+
+## Intraday timeframes requested for this trial
+
+Measure M1, M5, M10, M15 and M30 separately. H1 remains for broker clock
+alignment and existing strategies. M10 is native MT5 data, not synthetic
+Yahoo candles. Yahoo is deliberately not queried for M10.
+
+The updated bridge exposes `PublishTrialTimeframes=false` by default. Set it
+true only on the existing trial terminal after compiling/attaching the new
+expert. It publishes the three extra periods with half the symbols per pass
+to bound export work. Confirm heartbeat freshness on the actual server; this
+budget is not a runtime performance certification.
+
+`infra/ftmo-10k-trial.env.example` names the opt-in collector and forward
+periods. The production Compose file passes both settings through. Defaults
+preserve the existing broker collection workload. A server env override takes
+precedence over source defaults; GitHub changes alone do not activate it.
+
+Both chart pages expose the five requested periods. No fabricated bars or
+signals should fill a missing feed. The existing spread, freshness, risk and
+execution gates still decide whether any proposed trade is allowed. Aggregate
+risk must be shared across timeframes; enabling five periods is not permission
+to risk five independent account budgets. Compilation in MetaEditor and a
+live bridge smoke test remain required before server activation.

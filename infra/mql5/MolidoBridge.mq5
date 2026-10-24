@@ -46,6 +46,8 @@ input int BarCount = 500;
 //--- rule never looks back that far into. 240 M1 bars is four hours, which is
 //--- more than the lookback needs and bounded.
 input int IntradayBarCount = 240;
+//--- Enable only on the trial terminal: native M1, M10 and M30 exports.
+input bool PublishTrialTimeframes = false;
 
 //--- Symbols to add to Market Watch on start, comma separated.
 //---
@@ -102,6 +104,7 @@ string TimeframeName(ENUM_TIMEFRAMES period)
      {
       case PERIOD_M1:  return "M1";
       case PERIOD_M5:  return "M5";
+      case PERIOD_M10: return "M10";
       case PERIOD_M15: return "M15";
       case PERIOD_M30: return "M30";
       case PERIOD_H1:  return "H1";
@@ -1317,7 +1320,9 @@ void Publish()
    int total = SymbolsTotal(true);
    if(cursor >= total)
       cursor = 0;
-   int stop_at = MathMin(cursor + BARS_PER_PASS, total);
+   //--- Six exports instead of three: halve symbols to bound work per pass.
+   int per_pass = PublishTrialTimeframes ? BARS_PER_PASS / 2 : BARS_PER_PASS;
+   int stop_at = MathMin(cursor + per_pass, total);
    for(int i = cursor; i < stop_at; i++)
      {
       string name = SymbolName(i, true);
@@ -1331,18 +1336,13 @@ void Publish()
       //--- the edge does. Publishing the data settles that with evidence
       //--- rather than with either of our opinions.
       WriteBars(name, PERIOD_M5);
+      if(PublishTrialTimeframes)
+        {
+         WriteBars(name, PERIOD_M1);
+         WriteBars(name, PERIOD_M10);
+         WriteBars(name, PERIOD_M30);
+        }
       cursor = i + 1;
-      //--- M1 is not published, and its absence is a measurement rather than
-      //--- a preference. `collector._broker_timeframes` stopped ingesting it
-      //--- for a reason it states: the round trip costs about 0.52 R at one
-      //--- minute against a 0.25 R ceiling, so no M1 decision can pass the
-      //--- spread gate however good the signal is.
-      //---
-      //--- The backend stopped reading them and this kept writing them. A
-      //--- quarter of every cycle went to files nothing opens, and a cycle
-      //--- here is the interval at which the account file refreshes - so the
-      //--- cost was not disk, it was a freshly connected account looking
-      //--- dead for ten minutes.
      }
 
    WriteHeartbeat(cycle);
