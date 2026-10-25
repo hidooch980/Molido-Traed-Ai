@@ -14,6 +14,7 @@ from enum import StrEnum
 class Timeframe(StrEnum):
     M1 = "M1"
     M5 = "M5"
+    M10 = "M10"
     M15 = "M15"
     M30 = "M30"
     H1 = "H1"
@@ -35,6 +36,7 @@ class Timeframe(StrEnum):
 _TIMEFRAME_DELTAS: dict[Timeframe, timedelta] = {
     Timeframe.M1: timedelta(minutes=1),
     Timeframe.M5: timedelta(minutes=5),
+    Timeframe.M10: timedelta(minutes=10),
     Timeframe.M15: timedelta(minutes=15),
     Timeframe.M30: timedelta(minutes=30),
     Timeframe.H1: timedelta(hours=1),

@@ -34,12 +34,9 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 
-#: How much forward evidence before a brain's result means anything.
-#:
-#: Not a number chosen to be reachable. Two hundred resolved trades on one
-#: brain is where a 0.1 R edge becomes distinguishable from zero at the
-#: threshold seven simultaneous hypotheses demand, which is what this fleet
-#: is actually running.
+#: Minimum distinct decision instants per strategy, source and timeframe.
+#: This sample floor alone is not proof: the costed forward registry must
+#: independently approve the same strategy before this probe passes.
 PROVEN_PAIRS = 200
 
 #: And the t it has to clear, corrected for testing eight brains at once.
@@ -178,21 +175,35 @@ def _terminals_alive() -> Finding:
 
 def _sizing_cross_check() -> Finding:
     """The defect that cost $3,730 cannot recur silently."""
-    import inspect
-
     from app.services import calculators
 
-    source = inspect.getsource(calculators)
-    present = "spec_disagreement" in source or "contract_size" in source
+    # Exercise the understated gold tick-value failure without a broker or
+    # database. Text in a comment or an unused variable proves no behaviour.
+    try:
+        result = calculators.lot_size(
+            symbol="XAUUSD", equity=10_000.0, risk_percent=0.25,
+            stop_distance_price=10.0, tick_value=0.1, tick_size=0.01,
+            volume_min=0.01, volume_step=0.01,
+            contract_size=100.0, account_currency="USD",
+        )
+        lots = float(result.get("lots", 0.0))
+        actual_loss = lots * 10.0 * 100.0
+        present = (
+            result.get("available") is True
+            and result.get("tradeable") is True
+            and bool(result.get("spec_disagreement"))
+            and 0 < actual_loss <= 25.0
+        )
+    except Exception:  # noqa: BLE001 - an unreadable check must not pass
+        present = False
     return Finding(
         "position sizing is cross-checked",
         present,
-        "a broker's tick value is checked against its contract size before it "
-        "sizes anything - the defect that opened a position five times too "
-        "large is caught rather than trusted"
+        "the tick value is checked against its contract size in an offline "
+        "gold sizing probe; the broker-implied loss stays within $25"
         if present
-        else "the sizing takes the broker's tick value on trust, which is how "
-        "a gold position came to be five times its intended size",
+        else "the offline sizing probe failed: the understated tick value "
+        "could size a position five times its intended size or more",
     )
 
 
@@ -304,6 +315,9 @@ def _a_brain_beats_its_control(session: Any, now: datetime) -> Finding:
                 JournalEntry.symbol,
                 JournalEntry.opened_at,
                 JournalEntry.timeframe,
+                JournalEntry.price_source,
+                JournalEntry.outcome,
+                JournalEntry.after,
                 JournalEntry.r_multiple,
             ).where(JournalEntry.r_multiple.isnot(None))
         ).all()
@@ -315,52 +329,71 @@ def _a_brain_beats_its_control(session: Any, now: datetime) -> Finding:
             blocks_connection=False,
         )
 
+    # Match source as well as symbol/timeframe: public and broker prices
+    # cannot supply opposite arms of the same comparison.
     paired: dict[tuple, dict[str, float]] = defaultdict(dict)
-    for strategy, arm, symbol, opened, timeframe, r in rows:
-        paired[(strategy, symbol, opened, timeframe)][arm] = float(r)
+    for strategy, arm, symbol, opened, timeframe, source, outcome, after, r in rows:
+        if outcome == "excluded" or (isinstance(after, dict) and "retracted" in after):
+            continue
+        if not math.isfinite(float(r)):
+            continue
+        paired[(strategy, source, timeframe, symbol, opened)][arm] = float(r)
 
-    per: dict[str, list[float]] = defaultdict(list)
-    for (strategy, *_rest), arms in paired.items():
+    # Every simultaneous cross-section gets one vote. Keep price sources and
+    # timeframes separate rather than selecting their most flattering mix.
+    clustered: dict[tuple, dict[datetime, list[tuple[float, float]]]] = defaultdict(
+        lambda: defaultdict(list)
+    )
+    for (strategy, source, timeframe, _symbol, opened), arms in paired.items():
         if "rule" in arms and "control" in arms:
-            per[strategy].append(arms["rule"] - arms["control"])
+            clustered[(strategy, source, timeframe)][opened].append(
+                (arms["rule"] - arms["control"], arms["rule"])
+            )
 
-    best: tuple[str, int, float] | None = None
-    for name, diffs in per.items():
+    from app.learning import edge as registry
+
+    proven = {edge.key for edge in registry.PROVEN if edge.verdict.proven}
+    scored: list[tuple[str, str, str, int, float, float, bool]] = []
+    for (name, source, timeframe), instants in clustered.items():
+        diffs = [sum(p[0] for p in values) / len(values) for values in instants.values()]
+        gross_values = [sum(p[1] for p in values) / len(values) for values in instants.values()]
         n = len(diffs)
         if n < 2:
             continue
         mean = sum(diffs) / n
         sd = math.sqrt(sum((d - mean) ** 2 for d in diffs) / (n - 1))
         t = mean / (sd / math.sqrt(n)) if sd > 0 else 0.0
-        if best is None or t > best[2]:
-            best = (name, n, t)
+        mean_gross = sum(gross_values) / n
+        qualifies = (
+            n >= PROVEN_PAIRS and t >= PROVEN_T and mean_gross > 0 and name in proven
+        )
+        scored.append((name, source, timeframe, n, t, mean_gross, qualifies))
 
-    if best is None:
+    if not scored:
         return Finding(
-            "a brain beats its control",
-            False,
-            "no brain has resolved a paired trade yet, so nothing here has "
-            "been measured against anything",
+            "a brain beats its control", False,
+            "no brain has resolved a paired trade on at least two distinct instants yet",
             blocks_connection=False,
         )
 
-    name, pairs, t = best
-    if pairs >= PROVEN_PAIRS and t >= PROVEN_T:
-        return Finding(
-            "a brain beats its control",
-            True,
-            f"{name}: {pairs} paired trades, t = {t:.2f} against the "
-            f"{PROVEN_T} eight simultaneous hypotheses demand",
-        )
-    return Finding(
-        "a brain beats its control",
-        False,
-        f"the best is {name} at t = {t:.2f} on {pairs} paired trades. "
-        f"Nothing clears {PROVEN_T}, which is what testing eight brains at "
-        "once requires - 1.96 would find an edge in noise about one week in "
-        "three",
-        blocks_connection=False,
+    # An undersampled high-t source must not hide another qualifying source.
+    name, source, timeframe, count, t, gross, qualifies = max(
+        scored, key=lambda item: (item[6], item[4])
     )
+    detail = (
+        f"{name} ({source}/{timeframe}): {count} paired trades clustered by instant, "
+        f"t = {t:.2f} against {PROVEN_T}; gross rule mean {gross:+.4f} R. "
+    )
+    if qualifies:
+        detail += "The same strategy also has registered costed forward evidence."
+    else:
+        detail += (
+            f"Requires {PROVEN_PAIRS} distinct instants, positive gross returns, "
+            "and registered costed forward evidence for this strategy. "
+            "Repeated or overlapping observations are not proof of independence; "
+            "1.96 would find an edge in noise when several brains are tested."
+        )
+    return Finding("a brain beats its control", qualifies, detail, blocks_connection=False)
 
 
 __all__ = ["PROVEN_PAIRS", "PROVEN_T", "Assessment", "Finding", "Verdict", "assess"]

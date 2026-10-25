@@ -300,44 +300,38 @@ class TestStopsReachTheBroker:
 
 
 class TestSizingCrossCheck:
-    def test_the_cross_check_is_present_today(self):
+    def test_the_real_calculator_passes_the_behavioural_probe(self):
         assert real_money._sizing_cross_check().passed is True
 
-    def test_it_is_a_defect_when_absent(self, monkeypatch):
-        import inspect
+    def test_understated_tick_value_cannot_pass_with_a_keyword(self, monkeypatch):
+        from app.services import calculators
 
-        monkeypatch.setattr(inspect, "getsource", lambda module: "def size(): pass")
-
+        monkeypatch.setattr(calculators, "lot_size", lambda **kw: {
+            "available": True, "tradeable": True, "lots": 0.25,
+            "spec_disagreement": "contract_size mentioned but ignored",
+        })
         finding = real_money._sizing_cross_check()
-
         assert finding.passed is False
         assert finding.blocks_connection is True
+        assert "five times its intended size" in finding.detail
 
-    def test_the_absent_message_names_the_defect_that_happened(self, monkeypatch):
-        import inspect
+    def test_an_unavailable_calculation_fails(self, monkeypatch):
+        from app.services import calculators
 
-        monkeypatch.setattr(inspect, "getsource", lambda module: "")
+        monkeypatch.setattr(calculators, "lot_size", lambda **kw: {"available": False})
+        assert real_money._sizing_cross_check().passed is False
 
-        assert "five times its intended size" in real_money._sizing_cross_check().detail
+    def test_a_raising_calculator_fails_closed(self, monkeypatch):
+        from app.services import calculators
 
-    def test_contract_size_alone_satisfies_it(self, monkeypatch):
-        import inspect
+        def broken(**kwargs):
+            raise ValueError("bad specification")
 
-        monkeypatch.setattr(inspect, "getsource", lambda module: "contract_size = 100")
+        monkeypatch.setattr(calculators, "lot_size", broken)
+        assert real_money._sizing_cross_check().passed is False
 
-        assert real_money._sizing_cross_check().passed is True
-
-    def test_spec_disagreement_alone_satisfies_it(self, monkeypatch):
-        import inspect
-
-        monkeypatch.setattr(inspect, "getsource", lambda module: "spec_disagreement()")
-
-        assert real_money._sizing_cross_check().passed is True
-
-    def test_the_present_message_describes_the_check(self):
-        assert "tick value is checked against its contract size" in (
-            real_money._sizing_cross_check().detail
-        )
+    def test_the_present_message_describes_the_probe(self):
+        assert "offline" in real_money._sizing_cross_check().detail
 
 
 class TestGuardsArmed:
@@ -519,7 +513,7 @@ class TestABrainBeatsItsControl:
 
         assert real_money._a_brain_beats_its_control(session, NOW).passed is False
 
-    def test_enough_pairs_and_enough_t_passes(self, session):
+    def test_enough_pairs_and_enough_t_need_registered_evidence(self, session):
         # Alternating differences of 1.0 and 1.2: a real mean, a small spread,
         # and enough of them to clear both bars.
         for i in range(PROVEN_PAIRS + 20):
@@ -531,7 +525,8 @@ class TestABrainBeatsItsControl:
 
         finding = real_money._a_brain_beats_its_control(session, NOW)
 
-        assert finding.passed is True
+        assert finding.passed is False
+        assert "registered costed forward evidence" in finding.detail
         # `blocks_connection` is left at its default on the passing branch and
         # deliberately not asserted: a finding that passed is in neither
         # `defects` nor `unproven`, so the flag decides nothing here.
