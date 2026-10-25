@@ -77,6 +77,7 @@ TITLES: dict[str, str] = {
     "drawdown": "افت سرمایه",
     "journal": "ژورنال تصمیم‌ها",
     "why_no_trade": "چرا معامله‌ای انجام نشد",
+    "trialreview": "ارزیابی دورهٔ آزمایشی",
     "help": "راهنما",
     "accounts": "حساب‌ها",
     "orders": "سفارش‌های اخیر",
@@ -402,7 +403,8 @@ def _help(session: Session) -> str:
             "/challenge — قوانین پراپ و سقف‌ها",
             "/drawdown — سود و زیان شناور",
             "/journal — کارنامهٔ هفتگی مغزها",
-            "/why_no_trade — دلیل نام‌بردهٔ آخرین ردها",
+            "`/why_no_trade` — دلیل نام‌بردهٔ آخرین ردها",
+            "/trialreview — گزارش ۱۴روزهٔ پنج تایم‌فریم (سیگنال، نه سود حساب)",
             "/health — سلامت سرویس‌ها",
             "/update — به‌روزرسانی سرور به آخرین نسخه (با کد تأیید)",
             "/addaccount — اتصال حساب بروکر (شماره، سرور، رمز)",
@@ -417,6 +419,22 @@ def _help(session: Session) -> str:
         ]
     )
 
+
+
+def _trial_review(session: Session) -> str:
+    from app.learning import trial_review
+
+    report = trial_review.build_report(session)
+    lines = ["گزارش ۱۴روزهٔ سیگنال‌های کل سامانه", "این گزارش سود حساب FTMO یا برداشت نیست.", ""]
+    for period in report["timeframes"]:
+        total = sum(group["signal_rows"] for group in period["groups"])
+        resolved = sum(group["resolved_signal_rows"] for group in period["groups"])
+        lines.append(f"• {period['timeframe']}: {total} سیگنال؛ {resolved} نتیجهٔ ثبت‌شده")
+    if report["truncated"]:
+        lines.append("گزارش به سقف تعداد رکورد رسیده و ناقص است.")
+    lines += ["", "سود خالص بروکر و برداشت واقعی: در این گزارش موجود نیست.",
+              "این دوره به‌تنهایی درآمد پایدار را اثبات نمی‌کند."]
+    return "\n".join(lines)
 
 # The detailed answers live in `telegram_answers`, which changes when a
 # question is added and never when the transport changes.
@@ -434,6 +452,7 @@ ANSWERS = {
     "drawdown": _drawdown,
     "journal": _journal,
     "why_no_trade": _why_no_trade,
+    "trialreview": _trial_review,
     "help": _help,
 }
 
@@ -447,6 +466,7 @@ def answer_command(session: Session, command: str) -> Reply:
     from app.integrations import notify
 
     name = (command or "").strip().lstrip("/").split()[0].lower() if command.strip() else ""
+    name = {"whynotrade": "why_no_trade"}.get(name, name)
     if name not in notify.READ_ONLY_COMMANDS:
         return Reply(
             "این دستور را نمی‌شناسم. از دکمه‌های زیر استفاده کنید یا /help را بزنید."

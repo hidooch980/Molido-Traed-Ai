@@ -171,3 +171,20 @@ arbitrary-selector utilities, and runs in CI alongside the production build.
 reported zero known advisories; this is a dependency snapshot, not proof that
 the whole application or running server is secure. Server dependencies remain
 unchanged until this branch is reviewed, merged and deployed.
+
+## Read-only 14-day evidence report
+
+`GET /api/v1/learning/trial-review?days=14` (existing READ authentication) and
+Telegram `/trialreview` summarize M1/M5/M10/M15/M30 journal evidence. Strategies,
+price feeds and timeframes stay separate; same-instant matched pairs count as
+one observation. Retracted/excluded and non-finite outcomes are not performance
+evidence. The query is bounded at 50,000 rows and explicitly reports truncation.
+The window is rolling and does not establish the broker's start/expiry date.
+
+These are fleet signal records, not account-specific realized trades. Broker
+net profit and actual payouts remain null until their own evidence is provided;
+this report cannot authorize promotion or certify monthly income. The 10K
+Free Trial reference is a plan, not a claim about the active 200K terminal.
+
+Telegram accepts both `/why_no_trade` and `/whynotrade`; help renders the
+underscored command as code so Markdown cannot hide its separators.

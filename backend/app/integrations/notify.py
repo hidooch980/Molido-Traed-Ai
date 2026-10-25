@@ -58,6 +58,7 @@ READ_ONLY_COMMANDS = frozenset(
         "brains",
         "challenge",
         "prices",
+        "trialreview",
     }
 )
 
@@ -181,6 +182,7 @@ def accept_command(text: str, *, source: str) -> InboundRequest:
     diff that somebody reviews.
     """
     command = (text or "").strip().lstrip("/").split()[0].lower() if text.strip() else ""
+    command = {"whynotrade": "why_no_trade"}.get(command, command)
     if not command:
         raise ValidationFailedError("empty command")
     if command not in READ_ONLY_COMMANDS:
