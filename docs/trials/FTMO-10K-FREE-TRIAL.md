@@ -133,3 +133,41 @@ execution gates still decide whether any proposed trade is allowed. Aggregate
 risk must be shared across timeframes; enabling five periods is not permission
 to risk five independent account budgets. Compilation in MetaEditor and a
 live bridge smoke test remain required before server activation.
+
+
+## Compile on the existing MT5 host
+
+The compiler wrapper never installs an expert or restarts a terminal. Use the
+existing MetaEditor executable and the existing Wine prefix, and a NEW output
+directory outside the terminal. Replace the three paths below with verified
+paths from the host; do not guess a terminal identifier.
+
+```bash
+python3 infra/compile-mt5-bridge.py --metaeditor /absolute/path/metaeditor64.exe --wine-prefix /absolute/path/existing-prefix --output-dir /absolute/path/new-build
+```
+
+On Windows, omit `--wine-prefix` and use the Windows path to MetaEditor. The
+wrapper compiles a fresh copy, requires a zero-error compiler log and a new
+non-empty EX5, and writes source/binary hashes to `manifest.json`. Warnings
+are recorded for review. A successful wrapper test with a fake compiler is
+not proof that the MQL source compiles; the actual host compilation and live
+heartbeat/bar smoke test remain required. Compilation failure leaves its
+staging directory for inspection and never publishes a success manifest.
+
+Install/attach the reviewed EX5 and select `PublishTrialTimeframes=true`
+only on the intended existing demo terminal. Then verify M1, M5, M10, M15,
+M30 files, their closed-bar timestamps and heartbeat freshness before enabling
+the corresponding collector settings. Do not change other terminals.
+
+
+## Dependency security checkpoint (2026-10-25)
+
+Frontend dependencies now pin Next.js 15.5.28 and PostCSS 8.5.31. Overrides
+force nested PostCSS to the same patched version and selector-parser 7.1.7;
+the lockfile also resolves source-map-js 1.2.2. This avoids a Tailwind 4
+migration. A CSS integration test exercises responsive, hover, RTL and
+arbitrary-selector utilities, and runs in CI alongside the production build.
+`npm audit --audit-level=high` now gates frontend CI. The local final audit
+reported zero known advisories; this is a dependency snapshot, not proof that
+the whole application or running server is secure. Server dependencies remain
+unchanged until this branch is reviewed, merged and deployed.
