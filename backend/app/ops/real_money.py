@@ -141,6 +141,7 @@ def _terminals_alive() -> Finding:
     from app.providers.metatrader import MetaTraderBridge, bridge_dirs
 
     silent: list[str] = []
+    unknown_freshness: list[str] = []
     holding = 0
     try:
         for key, path in sorted(bridge_dirs().items()):
@@ -151,7 +152,12 @@ def _terminals_alive() -> Finding:
                 continue
             holding += 1
             age = getattr(state, "age_seconds", None)
-            if age is not None and age > 120:
+            if age is None:
+                # A usable state without a heartbeat age is not evidence of
+                # freshness. Keep the readiness probe fail-closed: positions
+                # behind an unmeasured feed are unknown, not empty.
+                unknown_freshness.append(key)
+            elif age > 120:
                 silent.append(key)
     except Exception as problem:  # noqa: BLE001
         return Finding("terminals", False, f"the bridges could not be read: {problem}")
@@ -168,6 +174,14 @@ def _terminals_alive() -> Finding:
             False,
             f"{', '.join(silent)} stopped publishing - an account that cannot "
             "be read cannot be judged, and its positions are unknown rather "
+            "than zero",
+        )
+    if unknown_freshness:
+        return Finding(
+            "terminals",
+            False,
+            f"{', '.join(unknown_freshness)} have no measurable heartbeat age; "
+            "freshness cannot be confirmed and positions are unknown rather "
             "than zero",
         )
     return Finding("terminals", True, f"{holding} account(s) publishing")
