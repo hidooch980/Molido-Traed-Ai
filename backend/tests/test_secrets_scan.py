@@ -42,6 +42,13 @@ class TestValues:
         root = repo(tmp_path, {"notes.txt": "bot: " + TELEGRAM + "\n"})
         assert [f.category for f in scan.scan_paths(root, ["notes.txt"]).secrets] == ["telegram-bot-token"]
 
+    def test_synthetic_telegram_fixture_is_allowed_only_in_test_files(self):
+        fixture = TELEGRAM.encode()
+        assert scan.value_findings(fixture, is_test=True) == []
+        assert [category for category, _ in scan.value_findings(fixture)] == [
+            "telegram-bot-token"
+        ]
+
     def test_a_random_looking_password_assignment_is_a_secret(self, tmp_path):
         root = repo(tmp_path, {"settings.ini": "password = " + PASSWORD_VALUE + "\n"})
         assert [f.category for f in scan.scan_paths(root, ["settings.ini"]).secrets] == ["credential-assignment"]
