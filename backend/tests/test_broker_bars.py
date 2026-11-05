@@ -156,7 +156,7 @@ class TestBrokerQualityGate:
         bridge()
         path = bridge.directory / "molido_bars_XAUUSD_H1.csv"
         with path.open("a", encoding="utf-8") as handle:
-            handle.write("2026.08.17 03:00:00,NaN,2304,2302,2303,10\\n")
+            handle.write("2026.08.17 03:00:00,NaN,2304,2302,2303,10\n")
 
         result = broker_bars.ingest(session, directory=bridge.directory, now=NOW)
 
@@ -173,7 +173,7 @@ class TestBrokerQualityGate:
         fields = lines[1].split(",")
         fields[2] = str(float(fields[3]) - 2.0)  # high below low
         lines[1] = ",".join(fields)
-        path.write_text("\\n".join(lines) + "\\n", encoding="utf-8")
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
         result = broker_bars.ingest(session, directory=bridge.directory, now=NOW)
 
