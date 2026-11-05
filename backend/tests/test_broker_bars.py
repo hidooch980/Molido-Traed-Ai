@@ -151,6 +151,45 @@ def broker_bars_for(session, symbol: str) -> int:
     )
 
 
+class TestBrokerQualityGate:
+    def test_non_finite_torn_row_does_not_discard_good_rows(self, session, bridge):
+        bridge()
+        path = bridge.directory / "molido_bars_XAUUSD_H1.csv"
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write("2026.08.17 03:00:00,NaN,2304,2302,2303,10\\n")
+
+        result = broker_bars.ingest(session, directory=bridge.directory, now=NOW)
+
+        assert result["ingested"] >= 3
+        assert result["torn_rows"] == 1
+        assert result["quality_reports"][0]["symbol"] == "XAUUSD"
+
+    def test_invalid_ohlc_is_flagged_and_scored_not_trusted(self, session, bridge):
+        from app.models.ingestion import DatasetQuality
+
+        bridge()
+        path = bridge.directory / "molido_bars_XAUUSD_H1.csv"
+        lines = path.read_text(encoding="utf-8").splitlines()
+        fields = lines[1].split(",")
+        fields[2] = str(float(fields[3]) - 2.0)  # high below low
+        lines[1] = ",".join(fields)
+        path.write_text("\\n".join(lines) + "\\n", encoding="utf-8")
+
+        result = broker_bars.ingest(session, directory=bridge.directory, now=NOW)
+
+        assert result["quality_reports"][0]["findings"]["invalid_ohlc_relation"] >= 1
+        quality = session.query(DatasetQuality).filter_by(timeframe=Timeframe.H1.value).one()
+        assert quality.is_training_eligible is False
+        bad = (
+            session.query(Bar)
+            .join(Instrument, Instrument.id == Bar.instrument_id)
+            .filter(Instrument.symbol == "XAUUSD")
+            .order_by(Bar.event_time)
+            .first()
+        )
+        assert float(bad.quality_score) == 0.0
+
+
 class TestTheBrokerSeriesArrives:
     def test_bars_are_read_into_the_database(self, session, bridge):
         bridge()
