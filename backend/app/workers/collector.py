@@ -441,6 +441,9 @@ def _sources_for(timeframe: Any) -> tuple[str, ...]:
 
     if timeframe is Timeframe.D1:
         return (LIVE_DAILY_SOURCE,)
+    if timeframe is Timeframe.M10:
+        # Native MT5 bars; Yahoo does not offer a ten-minute interval.
+        return (SOURCE_BROKER,)
     return (SOURCE_PUBLIC, SOURCE_BROKER)
 
 
@@ -481,13 +484,18 @@ def _broker_timeframes() -> tuple:
     """
     from app.core.enums import Timeframe
 
-    # M1 is not here, and its absence is a measurement rather than a
-    # preference: the round trip costs about 0.52 R at one minute against a
-    # 0.25 R ceiling, so no M1 decision can ever pass the spread gate. Pulling
-    # those bars was a quarter of every cycle's work for a timeframe that
-    # cannot produce a trade - and the cycle was timing out before it reached
-    # the step that sends orders.
-    return (Timeframe.H1, Timeframe.M15, Timeframe.M5)
+    supported = {Timeframe.H1, Timeframe.M1, Timeframe.M5, Timeframe.M10,
+                 Timeframe.M15, Timeframe.M30}
+    raw = get_settings().broker_timeframes
+    chosen = [Timeframe.H1]  # clock alignment and existing strategies need H1
+    for name in raw.split(","):
+        try:
+            timeframe = Timeframe(name.strip().upper())
+        except ValueError:
+            continue
+        if timeframe in supported and timeframe not in chosen:
+            chosen.append(timeframe)
+    return tuple(chosen)
 
 
 def record_forward() -> dict[str, Any]:

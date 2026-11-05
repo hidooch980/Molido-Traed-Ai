@@ -25,6 +25,7 @@ and a system that quietly picks one has answered a question nobody asked.
 from __future__ import annotations
 
 import csv
+import math
 import pathlib
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -36,7 +37,9 @@ from sqlalchemy.orm import Session
 from app.core.enums import AssetClass, Timeframe
 from app.models.instruments import Instrument, Provider
 from app.models.market_data import Bar
+from app.providers.base import RawBar
 from app.providers.metatrader import DEFAULT_BRIDGE_DIR
+from app.services import data_quality, sessions
 from app.workers import broker_offset
 
 #: The provider these bars are recorded under. Separate from yfinance on
@@ -246,8 +249,9 @@ def ingest(
     skipped_settled = 0
     files = 0
     failures: list[str] = []
-    #: Half-written lines skipped. Counted rather than silent: a file that is
-    #: mostly torn is a bridge problem, and a count is what shows that.
+    quality_reports: list[dict[str, Any]] = []
+    #: Half-written or non-finite rows skipped. Counted rather than silent: a
+    #: file that is mostly torn is a bridge problem, and a count shows that.
     torn = 0
 
     for path in sorted(root.glob(f"molido_bars_*_{timeframe.value}.csv")):
@@ -260,30 +264,44 @@ def ingest(
             instrument = _instrument(session, symbol)
             rows: list[dict[str, Any]] = []
             with path.open(newline="", encoding="utf-8") as handle:
-                for row in csv.DictReader(handle):
+                reader = csv.DictReader(handle)
+                required_columns = {"event_time", "open", "high", "low", "close"}
+                if not required_columns.issubset(set(reader.fieldnames or [])):
+                    missing = ", ".join(sorted(required_columns - set(reader.fieldnames or [])))
+                    raise ValueError(f"missing required columns: {missing}")
+                for row in reader:
                     # Read in the terminal's clock, then moved to UTC by the
                     # measured offset. Stamping it as UTC directly is what put
                     # every bar three hours in the future.
-                    stamp = (
-                        datetime.strptime(
-                            row["event_time"].strip(), STAMP_FORMAT
-                        ).replace(tzinfo=UTC)
-                        - shift
-                    )
-                    # A short row is dropped, not fatal. The bridge writes
-                    # while the terminal is appending, so the last line of a
-                    # file is sometimes half-written - and a whole symbol's
-                    # history refused because of one torn line is a series
-                    # that never arrives. The four prices are required
-                    # together: a bar missing its high is not a bar.
                     try:
+                        stamp = (
+                            datetime.strptime(
+                                row["event_time"].strip(), STAMP_FORMAT
+                            ).replace(tzinfo=UTC)
+                            - shift
+                        )
                         prices = {
                             "open": float(row["open"]),
                             "high": float(row["high"]),
                             "low": float(row["low"]),
                             "close": float(row["close"]),
                         }
-                    except (TypeError, ValueError, KeyError):
+                        volume_raw = (row.get("volume") or "").strip()
+                        volume = float(volume_raw) if volume_raw else None
+                        spread_raw = (row.get("spread") or "").strip()
+                        spread = float(spread_raw) if spread_raw else None
+                    except (AttributeError, TypeError, ValueError, KeyError):
+                        # A torn final line must not discard every good bar in
+                        # the same symbol file.
+                        torn += 1
+                        continue
+
+                    numeric_values = list(prices.values())
+                    if volume is not None:
+                        numeric_values.append(volume)
+                    if spread is not None:
+                        numeric_values.append(spread)
+                    if not all(math.isfinite(value) for value in numeric_values):
                         torn += 1
                         continue
 
@@ -296,7 +314,8 @@ def ingest(
                             "revision": 1,
                             "ingested_at": moment,
                             **prices,
-                            "volume": float(row.get("volume") or 0.0),
+                            "volume": volume,
+                            "spread": spread,
                             "quality_score": 1.0,
                             "source_ref": f"metatrader:{symbol}:{timeframe.value}",
                         }
@@ -307,42 +326,103 @@ def ingest(
             failures.append(f"{symbol}: {type(problem).__name__}")
             continue
 
-        newest_stored = stored_newest.get(instrument.id)
-        if newest_stored is not None:
-            floor = newest_stored - keep_back
-            fresh = [row for row in rows if row["event_time"] >= floor]
-            skipped_settled += len(rows) - len(fresh)
-            rows = fresh
-
         if not rows:
             continue
 
-        # The rows go as parameters, not baked into the statement. `.values(rows)`
-        # built a fresh INSERT with ~13 bind parameters per bar - half a million
-        # across a cycle - and compiled each one from scratch: profiled on
-        # production at 133 s of a 227 s ingest, against 50 s actually
-        # executing. One statement compiled once, rows sent in batches, writes
-        # the same rows under the same conflict rule.
-        statement = pg_insert(Bar)
-        statement = statement.on_conflict_do_update(
-            index_elements=[
-                Bar.instrument_id,
-                Bar.timeframe,
-                Bar.provider_id,
-                Bar.event_time,
-                Bar.revision,
-            ],
-            set_={
-                "open": statement.excluded.open,
-                "high": statement.excluded.high,
-                "low": statement.excluded.low,
-                "close": statement.excluded.close,
-                "volume": statement.excluded.volume,
-                "ingested_at": statement.excluded.ingested_at,
-            },
+        # Assess the broker's own bars before they enter the shared feature and
+        # decision pipeline. Public-feed quality does not certify broker prices.
+        rows.sort(key=lambda item: item["event_time"])
+        raw_bars = [
+            RawBar(
+                event_time=row["event_time"],
+                open=row["open"],
+                high=row["high"],
+                low=row["low"],
+                close=row["close"],
+                volume=row["volume"],
+                spread=row["spread"],
+                source_ref=row["source_ref"],
+            )
+            for row in rows
+        ]
+        calendar = sessions.build_calendar(
+            session,
+            instrument,
+            start=min(bar.event_time for bar in raw_bars).date(),
+            end=max(bar.event_time for bar in raw_bars).date(),
         )
-        session.execute(statement, rows)
-        written += len(rows)
+        report = data_quality.evaluate_bars(raw_bars, timeframe, calendar)
+        quality_scores = data_quality.bar_quality_scores(raw_bars, report.findings)
+        for row in rows:
+            row["quality_score"] = quality_scores.get(row["event_time"], 1.0)
+
+        newest_stored = stored_newest.get(instrument.id)
+        fresh_rows = rows
+        if newest_stored is not None:
+            floor = newest_stored - keep_back
+            fresh_rows = [row for row in rows if row["event_time"] >= floor]
+            skipped_settled += len(rows) - len(fresh_rows)
+
+        if fresh_rows:
+            # The rows go as parameters, not baked into the statement. One
+            # statement is compiled once and the broker's quality score is
+            # refreshed together with the latest prices.
+            statement = pg_insert(Bar)
+            statement = statement.on_conflict_do_update(
+                index_elements=[
+                    Bar.instrument_id,
+                    Bar.timeframe,
+                    Bar.provider_id,
+                    Bar.event_time,
+                    Bar.revision,
+                ],
+                set_={
+                    "open": statement.excluded.open,
+                    "high": statement.excluded.high,
+                    "low": statement.excluded.low,
+                    "close": statement.excluded.close,
+                    "volume": statement.excluded.volume,
+                    "spread": statement.excluded.spread,
+                    "quality_score": statement.excluded.quality_score,
+                    "ingested_at": statement.excluded.ingested_at,
+                },
+            )
+            session.execute(statement, fresh_rows)
+            written += len(fresh_rows)
+
+        data_quality.persist_findings(
+            session,
+            instrument_id=instrument.id,
+            provider_id=provider.id,
+            timeframe=timeframe,
+            findings=report.findings,
+            detected_at=moment,
+        )
+        data_quality.apply_bar_quality_scores(
+            session,
+            instrument_id=instrument.id,
+            provider_id=provider.id,
+            timeframe=timeframe,
+            scores=quality_scores,
+        )
+        coverage_start, coverage_end = data_quality.coverage_window(raw_bars)
+        dataset = data_quality.update_dataset_quality(
+            session,
+            instrument_id=instrument.id,
+            provider_id=provider.id,
+            timeframe=timeframe,
+            report=report,
+            coverage_start=coverage_start,
+            coverage_end=coverage_end,
+        )
+        quality_reports.append(
+            {
+                "symbol": symbol,
+                "score": round(report.score, 3),
+                "training_eligible": dataset.is_training_eligible,
+                "findings": report.count_by_issue(),
+            }
+        )
 
     session.commit()
     return {
@@ -350,6 +430,7 @@ def ingest(
         "skipped_settled": skipped_settled,
         "files": files,
         "torn_rows": torn,
+        "quality_reports": quality_reports,
         "provider": PROVIDER_CODE,
         "clock_offset": offset.as_dict(),
         "failures": failures,

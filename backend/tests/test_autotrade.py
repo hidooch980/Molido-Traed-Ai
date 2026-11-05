@@ -11,6 +11,7 @@ the one no layer above can undo.
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import select
@@ -157,7 +158,11 @@ def operational_gate_open(monkeypatch):
     reasons that are true of the test machine and about nothing under test.
     Opened by default; `TestOrderAuthorizationIsTheLastGate` closes it on
     purpose and exercises the real function."""
-    monkeypatch.setattr(autotrade, "_cycle_authorization", lambda *a, **k: None)
+    monkeypatch.setattr(
+        autotrade,
+        "_cycle_authorization",
+        lambda *a, **k: SimpleNamespace(order_authorized=True, blocking_reasons=()),
+    )
 
 
 NEWS_NOW = datetime(2026, 8, 18, 12, 0, tzinfo=UTC)
@@ -2585,6 +2590,62 @@ class TestAnAccountCanBeConfinedToItsOwnList:
         assert report["orders"] == 1
 
 
+class TestSilencedBrainsDoNotInfluenceConsensus:
+    """A brain removed from voting must not remain as timeframe context."""
+
+    def test_a_silenced_h1_opinion_cannot_veto_a_fast_frame(self, session, monkeypatch):
+        decide(
+            session,
+            symbol="EURUSD",
+            timeframe="H1",
+            strategy="time-series-momentum",
+            decision="short",
+        )
+        decide(
+            session,
+            symbol="EURUSD",
+            timeframe="M5",
+            strategy="trend-following",
+            decision="long",
+        )
+        monkeypatch.setattr(
+            autotrade,
+            "_silenced_brains",
+            lambda *_args, **_kwargs: frozenset({"time-series-momentum"}),
+        )
+
+        by_timeframe = {}
+        votes = autotrade._fresh_votes(session, NOW, by_timeframe)
+
+        assert ("EURUSD", "short") not in votes
+        assert ("EURUSD", "H1") not in by_timeframe
+        assert votes[("EURUSD", "long")] == {"trend-following"}
+        assert by_timeframe[("EURUSD", "M5")] == {"long"}
+
+    def test_a_silenced_strategy_cannot_initiate_an_order(self, session, live, monkeypatch):
+        monkeypatch.setattr(autotrade, "_consensus_required", lambda: 1)
+        monkeypatch.setattr(
+            autotrade,
+            "_strategy_for",
+            lambda _login: (frozenset({"trend-following"}), ""),
+        )
+        monkeypatch.setattr(
+            autotrade,
+            "_silenced_brains",
+            lambda *_args, **_kwargs: frozenset({"trend-following"}),
+        )
+        decide(session, symbol="EURUSD", strategy="trend-following")
+        broker = FakeBroker()
+
+        report = autotrade.run_cycle(
+            session, now=NOW, broker=broker, bridge=FakeBridge()
+        )
+
+        assert report["orders"] == 0
+        assert broker.submitted == []
+        assert any("disabled fleet-wide" in reason for reason in report["skipped"])
+
+
 class TestAPropRegisteredAccountIsWeekendLockedWithoutTheEnvVar:
     """`_is_prop_account` reaches the challenge registry directly, so a
     registered account is weekend-locked from the moment it is registered -
@@ -3418,12 +3479,11 @@ class TestOrderAuthorizationIsTheLastGate:
         assert "disk_headroom" in rows[0].summary
         assert rows[0].entry_hash  # chained like everything else
 
-    def test_a_gatherer_that_raises_does_not_halt_a_cycle_the_gates_approved(
+    def test_a_gatherer_failure_fails_closed_and_sends_no_order(
         self, session, live, real_gate, monkeypatch
     ):
-        """Every reader inside the gatherer already fails closed as a failed
-        check; this guards the gatherer itself. A crash there is logged and
-        the cycle proceeds on the gates that did run."""
+        """If the authorization posture cannot be evaluated, approval is
+        unknown and must never be inferred from the other gates."""
         from app.ops import posture as posture_module
 
         def explode(*a, **k):
@@ -3435,8 +3495,9 @@ class TestOrderAuthorizationIsTheLastGate:
 
         report = autotrade.run_cycle(session, now=NOW, broker=broker, bridge=FakeBridge())
 
-        assert broker.submitted != []
-        assert "refused" not in report or not report.get("refused")
+        assert broker.submitted == []
+        assert report["orders"] == 0
+        assert "order authorization unavailable" in report["refused"]
 
     def test_the_real_gatherer_runs_against_this_session(self, session, live, real_gate):
         """No fakes: the gatherer reads this empty database and an absent

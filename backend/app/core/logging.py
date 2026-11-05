@@ -20,16 +20,20 @@ _trace_id: ContextVar[str | None] = ContextVar("trace_id", default=None)
 _tenant_id: ContextVar[str | None] = ContextVar("tenant_id", default=None)
 
 _SENSITIVE_KEYS = {
-    "password",
-    "secret",
-    "token",
-    "api_key",
-    "apikey",
-    "authorization",
-    "credential",
-    "broker_password",
-    "investor_password",
+    "password", "passwd", "pwd", "secret", "token", "api_key", "apikey",
+    "authorization", "credential", "broker_password", "investor_password",
+    "private_key", "access_key", "key_hash", "session_cookie", "client_secret",
 }
+_WITHHELD = "***"
+
+
+def _sensitive_key(name: Any) -> bool:
+    normalized = str(name).lower().replace("-", "_").replace(".", "_")
+    return (
+        any(part in normalized for part in _SENSITIVE_KEYS)
+        or normalized.endswith("_key")
+        or normalized.startswith("key_")
+    )
 
 
 def new_trace_id() -> str:
@@ -53,10 +57,13 @@ def current_trace_id() -> str | None:
 def _scrub(value: Any) -> Any:
     if isinstance(value, dict):
         return {
-            k: ("***" if k.lower() in _SENSITIVE_KEYS else _scrub(v)) for k, v in value.items()
+            k: (_WITHHELD if _sensitive_key(k) else _scrub(v))
+            for k, v in value.items()
         }
     if isinstance(value, list):
         return [_scrub(v) for v in value]
+    if isinstance(value, tuple):
+        return tuple(_scrub(v) for v in value)
     return value
 
 

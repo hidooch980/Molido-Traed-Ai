@@ -17,7 +17,9 @@ from app.db.session import get_db
 from app.main import app
 from app.models.journal import ARM_CONTROL, ARM_RULE, JournalEntry
 
-NOW = datetime(2026, 9, 3, 12, 0, tzinfo=UTC)
+# The route reads a rolling history window from the real clock. A fixed
+# September timestamp ages out and breaks these tests without a code change.
+NOW = datetime.now(UTC)
 
 
 @pytest.fixture()

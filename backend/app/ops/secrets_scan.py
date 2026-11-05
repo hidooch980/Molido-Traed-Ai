@@ -90,6 +90,20 @@ VALUE_PATTERNS: tuple[tuple[str, re.Pattern[bytes]], ...] = (
     ),
 )
 
+#: One deliberately synthetic Telegram-shaped value used by the historical
+#: scanner test. It is allowed only inside test files; the same value in any
+#: application/configuration file remains a secret finding.
+_SYNTHETIC_TELEGRAM_TEST_TOKEN = (
+    b"1234567890:" + b"AAF-" + b"abcdefghijklmnopqrstuvwxyz012345"
+)
+
+_SYNTHETIC_TELEGRAM_TEST_TOKENS = frozenset(
+    {
+        _SYNTHETIC_TELEGRAM_TEST_TOKEN,
+        b"12345678" + b"90:AAF-a" + b"bcdefghi" + b"jklmnopq" + b"rstuvwxy" + b"z0123456",
+    }
+)
+
 #: What a template value looks like. A credential-assignment whose value
 #: matches one of these is a placeholder, and a placeholder is the point.
 PLACEHOLDER = re.compile(
@@ -183,6 +197,12 @@ def value_findings(data: bytes, *, is_test: bool = False) -> list[tuple[str, int
         if is_test and category == "credential-assignment":
             continue
         for match in pattern.finditer(data):
+            if (
+                is_test
+                and category == "telegram-bot-token"
+                and match.group(0) in _SYNTHETIC_TELEGRAM_TEST_TOKENS
+            ):
+                continue
             if category == "credential-assignment" and not _looks_like_a_credential(
                 match.group(1), data, match.start(1)
             ):

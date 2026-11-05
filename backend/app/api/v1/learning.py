@@ -377,3 +377,15 @@ def read_real_money_readiness(
     from app.ops import real_money
 
     return real_money.assess(session).as_dict()
+
+
+@router.get("/trial-review")
+def read_trial_review(
+    days: int = Query(default=14, ge=1, le=90),
+    _: Principal = READ,
+    session: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """The requested intraday journal, explicitly separate from account income."""
+    from app.learning import trial_review
+
+    return trial_review.build_report(session, days=days)

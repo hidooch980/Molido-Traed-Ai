@@ -36,7 +36,7 @@ import time
 # read the journal.
 from datetime import datetime, timezone
 
-UTC = timezone.utc
+UTC = timezone.utc  # noqa: UP017 - the host agent supports Python 3.10
 
 #: Written by the API container, read here. A directory rather than a socket so
 #: the permission model is the filesystem's, which both sides already agree on.

@@ -5,6 +5,7 @@ import { api } from "@/lib/api";
 import { getT } from "@/lib/locale";
 
 export const dynamic = "force-dynamic";
+const TIMEFRAMES = ["M1", "M5", "M10", "M15", "M30", "H1"] as const;
 
 /**
  * TradingView, both directions it can go without a broker partnership:
@@ -28,7 +29,7 @@ export default async function TradingViewPage({
 
   const selectedId = params.instrument ?? instruments.data[0]?.id;
   const selected = instruments.data.find((x) => x.id === selectedId);
-  const timeframe = params.timeframe === "M15" ? "M15" : "H1";
+  const timeframe = TIMEFRAMES.find((tf) => tf === params.timeframe) ?? "H1";
   const bars = selectedId ? await api.bars(selectedId, timeframe, 500) : null;
 
   const open = book.ok ? book.data.positions : [];
@@ -91,7 +92,7 @@ export default async function TradingViewPage({
           }`}
           actions={
             <div className="flex gap-1.5">
-              {(["H1", "M15"] as const).map((tf) => (
+              {TIMEFRAMES.map((tf) => (
                 <a
                   key={tf}
                   href={`/tradingview?instrument=${selectedId}&timeframe=${tf}`}

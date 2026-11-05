@@ -253,6 +253,9 @@ class Settings(BaseSettings):
     #: this is safe to widen.
     forward_timeframes: str = "D1,H1,M15,M5,M1"
 
+    # Opt in on the trial deployment; existing terminals keep their workload.
+    broker_timeframes: str = "H1,M15,M5"
+
     # Collector (the long-running data-gathering worker)
     collector_provider: str = "yfinance"
     collector_interval_seconds: int = 900

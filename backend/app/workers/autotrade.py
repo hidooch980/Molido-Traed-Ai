@@ -2033,7 +2033,12 @@ def run_cycle(
         feed_age_bars=_feed_age_bars(published, moment),
         sender=sender,
     )
-    if authorization is not None and not authorization.order_authorized:
+    if authorization is None:
+        return _report(
+            mode=mode,
+            refused="order authorization unavailable: posture could not be gathered",
+        )
+    if not authorization.order_authorized:
         return _report(
             mode=mode,
             refused="order authorization: " + "; ".join(authorization.blocking_reasons),
@@ -2143,7 +2148,8 @@ def run_cycle(
     # what tell agreement from contradiction, and contradiction is worth
     # acting on even when one brain is enough to act.
     sides_by_timeframe: dict[tuple[str, str], set[str]] = {}
-    votes = _fresh_votes(session, moment, sides_by_timeframe)
+    silenced = _silenced_brains(session, moment)
+    votes = _fresh_votes(session, moment, sides_by_timeframe, silenced=silenced)
     # Read once. It is one aggregate over the journal and it does not change
     # inside a cycle - and it is this account's own brains' edge, not the
     # fleet's.
@@ -2182,6 +2188,16 @@ def run_cycle(
     from app.brain import portfolio as portfolio_brain
 
     for entry in candidates:
+        if entry.strategy in silenced:
+            refuse(
+                entry,
+                f"{entry.strategy} is disabled fleet-wide by the performance "
+                "gate (at least 15 resolved positions, negative net R and "
+                "negative result versus its control); it remains recorded "
+                "for research but cannot initiate an order",
+            )
+            continue
+
         # Resolved before the per-symbol cap, because the cap is about the
         # instrument the account will actually carry: a GCFUT decision and
         # an XAUUSD position are the same exposure under two names.
@@ -2786,6 +2802,8 @@ def _fresh_votes(
     session: Session,
     moment: datetime,
     by_timeframe: dict[tuple[str, str], set[str]] | None = None,
+    *,
+    silenced: frozenset[str] | None = None,
 ) -> dict[tuple[str, str], set[str]]:
     """(symbol, side) -> the brains with a fresh decision saying exactly that.
 
@@ -2807,7 +2825,8 @@ def _fresh_votes(
         )
     ).all()
 
-    silenced = _silenced_brains(session, moment)
+    if silenced is None:
+        silenced = _silenced_brains(session, moment)
     votes: dict[tuple[str, str], set[str]] = {}
     # Filled for the caller when one is supplied: which sides exist on
     # each timeframe, which is a different question from how many brains
@@ -2819,8 +2838,12 @@ def _fresh_votes(
             minutes=MAX_DECISION_AGE_MINUTES + _bar_minutes(row)
         ):
             continue
-        if row.strategy not in silenced:
-            votes.setdefault((row.symbol, row.decision), set()).add(row.strategy)
+        # A silenced brain is excluded from every consensus surface.
+        # Letting it remain in timeframe context after removing its vote
+        # made a disabled H1 opinion veto an otherwise valid fast-frame entry.
+        if row.strategy in silenced:
+            continue
+        votes.setdefault((row.symbol, row.decision), set()).add(row.strategy)
         by_timeframe.setdefault((row.symbol, row.timeframe), set()).add(
             row.decision
         )
@@ -3116,11 +3139,10 @@ def _cycle_authorization(
 ) -> Any:
     """The cycle's order-authorization decision, audited.
 
-    Returns None only when the posture itself could not be gathered - and
-    says so in the log - so a broken reader does not silently halt a cycle
-    that the gates above had already approved. Every individual reader
-    inside `posture.gather` already fails closed as an undeterminable check;
-    this guards the gatherer, not the checks.
+    Returns None when the posture cannot be gathered. Unknown authorization
+    is not approval: the caller must fail closed and refuse the cycle. Every
+    individual reader inside `posture.gather` already fails closed; this
+    guard preserves that property when the gatherer itself raises.
     """
     from app.ops import posture as posture_module
 
@@ -3135,7 +3157,7 @@ def _cycle_authorization(
             data_age_bars=feed_age_bars,
             broker_adapter=sender,
         )
-    except Exception as problem:  # noqa: BLE001 - reported, and the cycle continues on its own gates
+    except Exception as problem:  # noqa: BLE001 - unknown authorization must fail closed
         log.warning(
             "autotrade.authorization_unavailable",
             problem=type(problem).__name__,

@@ -94,25 +94,45 @@ ALARMING: frozenset[AuditEventType] = frozenset(
 #: Keys that must never reach a payload. Checked rather than trusted, because
 #: the caller who passes one is not doing it deliberately - they are passing a
 #: dict through from somewhere else and have not looked inside it.
-FORBIDDEN = ("password", "token", "secret", "key_hash", "nonce", "cookie", "authorization")
+FORBIDDEN = (
+    "password", "passwd", "pwd", "token", "secret", "api_key", "apikey",
+    "key_hash", "private_key", "access_key", "credential", "nonce",
+    "cookie", "authorization",
+)
+WITHHELD = "<withheld: looked like a credential>"
+
+
+def _sensitive_name(name: Any) -> bool:
+    """Match credential field names without catching ordinary words like monkey."""
+    normalized = str(name).lower().replace("-", "_").replace(".", "_")
+    return (
+        any(word in normalized for word in FORBIDDEN)
+        or normalized.endswith("_key")
+        or normalized.startswith("key_")
+    )
+
+
+def _clean_value(value: Any) -> Any:
+    """Redact recursively so nested payloads and arrays cannot bypass the guard."""
+    if isinstance(value, dict):
+        return {
+            name: (WITHHELD if _sensitive_name(name) else _clean_value(item))
+            for name, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_clean_value(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_clean_value(item) for item in value)
+    return value
 
 
 def _clean(detail: dict[str, Any] | None) -> dict[str, Any]:
-    """Drop anything that looks like a credential, loudly.
+    """Redact credential-shaped keys at every nesting level.
 
-    A dropped field is replaced by a marker rather than removed silently, so
-    the reader of a payload can tell "nothing was passed" from "something was
-    passed and refused".
+    A withheld field remains visible as a marker, so the reader can distinguish
+    "nothing was passed" from "something was passed and refused".
     """
-    if not detail:
-        return {}
-    safe: dict[str, Any] = {}
-    for name, value in detail.items():
-        if any(word in name.lower() for word in FORBIDDEN):
-            safe[name] = "<withheld: looked like a credential>"
-        else:
-            safe[name] = value
-    return safe
+    return _clean_value(detail or {})
 
 
 def record(

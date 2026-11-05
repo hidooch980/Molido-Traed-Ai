@@ -82,6 +82,103 @@ class QualityReport:
         return dict(Counter(f.issue.value for f in self.findings))
 
 
+#: Defects that make an individual price row unsafe for a live decision.
+#: Staleness is handled by the feed-freshness gate; transport ordering is not a
+#: defect in the sorted series that is ultimately stored.
+LIVE_BLOCKING_ISSUES: frozenset[DataQualityIssue] = frozenset(
+    {
+        DataQualityIssue.INVALID_OHLC_RELATION,
+        DataQualityIssue.NON_POSITIVE_PRICE,
+        DataQualityIssue.PROVIDER_CONFLICT,
+    }
+)
+
+
+def bar_quality_scores(
+    bars: list[RawBar], findings: list[Finding]
+) -> dict[datetime, float]:
+    """Assign a conservative, per-timestamp score without repairing prices.
+
+    Dataset scores and per-bar scores answer different questions. A gap can
+    lower the dataset score without making either adjacent candle false; an
+    invalid OHLC row must be marked unusable on its own.
+    """
+    scores = {bar.event_time: 1.0 for bar in bars}
+    penalties = {
+        Severity.INFO: 0.0,
+        Severity.WARNING: 0.05,
+        Severity.ERROR: 0.25,
+        Severity.CRITICAL: 1.0,
+    }
+    for finding in findings:
+        if finding.issue in {
+            DataQualityIssue.MISSING_CANDLE,
+            DataQualityIssue.STALE_DATA,
+        }:
+            continue
+        lower, upper = sorted((finding.window_start, finding.window_end))
+        affected = [
+            stamp for stamp in scores if lower <= stamp <= upper
+        ]
+        if not affected and finding.window_start == finding.window_end:
+            if finding.window_start in scores:
+                affected = [finding.window_start]
+        # A structural/provider defect that is explicitly designated as
+        # live-blocking must make the affected candle unusable regardless of
+        # its aggregate severity label. Severity weights remain useful for
+        # non-blocking quality degradation, but must never soften a hard gate.
+        if finding.issue in LIVE_BLOCKING_ISSUES:
+            for stamp in affected:
+                scores[stamp] = 0.0
+            continue
+        penalty = penalties[finding.severity]
+        for stamp in affected:
+            scores[stamp] = max(0.0, min(scores[stamp], 1.0 - penalty))
+    return {stamp: round(score, 3) for stamp, score in scores.items()}
+
+
+def apply_bar_quality_scores(
+    session: Session,
+    *,
+    instrument_id: uuid.UUID,
+    provider_id: uuid.UUID,
+    timeframe: Timeframe,
+    scores: dict[datetime, float],
+) -> int:
+    """Update the newest stored revision for each assessed timestamp.
+
+    Older revisions keep their original assessment: point-in-time reads must
+    not let a later correction rewrite the quality history of an earlier one.
+    """
+    if not scores:
+        return 0
+    from app.models.market_data import Bar
+
+    rows = session.scalars(
+        select(Bar)
+        .where(
+            Bar.instrument_id == instrument_id,
+            Bar.provider_id == provider_id,
+            Bar.timeframe == timeframe,
+            Bar.event_time.in_(list(scores)),
+        )
+        .order_by(Bar.event_time, Bar.revision)
+    )
+    newest: dict[datetime, Any] = {}
+    for row in rows:
+        newest[row.event_time] = row
+    changed = 0
+    for stamp, row in newest.items():
+        score = scores[stamp]
+        if float(row.quality_score) != score:
+            row.quality_score = score
+            changed += 1
+    if changed:
+        session.flush()
+    return changed
+
+
+
 # --------------------------------------------------------------------- checks
 def _check_structure(bars: list[RawBar]) -> list[Finding]:
     """Per-bar sanity: prices positive, OHLC relations coherent."""

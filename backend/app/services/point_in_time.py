@@ -24,14 +24,15 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import Select, and_, func, select
+from sqlalchemy import Select, and_, exists, func, or_, select
 from sqlalchemy.orm import Session, aliased
 
 from app.core.config import get_settings
-from app.core.enums import Timeframe
+from app.core.enums import DataQualityIssue, Timeframe
 from app.core.errors import InsufficientDataError, LookaheadViolationError, ValidationFailedError
-from app.models.ingestion import DatasetQuality
+from app.models.ingestion import DataQualityFinding, DatasetQuality
 from app.models.market_data import Bar
+from app.services.data_quality import LIVE_BLOCKING_ISSUES
 
 
 @dataclass(frozen=True)
@@ -102,6 +103,49 @@ def _visible_bars_query(
         conditions.append(Bar.provider_id == provider_id)
     if start is not None:
         conditions.append(Bar.event_time >= start)
+
+    # A bad candle or a provider conflict must not reach live features merely
+    # because the caller did not request the stricter training-eligibility gate.
+    # Findings are time-aware: a later audit cannot rewrite what was knowable
+    # before it, and a correction only readmits data after it is verified.
+    lower_first = and_(
+        DataQualityFinding.window_start <= Bar.event_time,
+        DataQualityFinding.window_end >= Bar.event_time,
+    )
+    lower_second = and_(
+        DataQualityFinding.window_end <= Bar.event_time,
+        DataQualityFinding.window_start >= Bar.event_time,
+    )
+    finding_window = or_(lower_first, lower_second)
+    provider_conflict = and_(
+        DataQualityFinding.issue == DataQualityIssue.PROVIDER_CONFLICT.value,
+        finding_window,
+    )
+    provider_row_defect = and_(
+        DataQualityFinding.issue.in_(
+            [
+                issue.value
+                for issue in LIVE_BLOCKING_ISSUES
+                if issue is not DataQualityIssue.PROVIDER_CONFLICT
+            ]
+        ),
+        DataQualityFinding.provider_id == Bar.provider_id,
+        finding_window,
+    )
+    active_blocking_finding = exists(
+        select(1).where(
+            DataQualityFinding.instrument_id == Bar.instrument_id,
+            DataQualityFinding.timeframe == Bar.timeframe,
+            DataQualityFinding.issue.in_([issue.value for issue in LIVE_BLOCKING_ISSUES]),
+            DataQualityFinding.detected_at <= as_of,
+            or_(
+                DataQualityFinding.resolved_at.is_(None),
+                DataQualityFinding.resolved_at > as_of,
+            ),
+            or_(provider_conflict, provider_row_defect),
+        )
+    )
+    conditions.append(~active_blocking_finding)
 
     if lookback is not None:
         # Built from `conditions` as it stands, before this clause joins them:

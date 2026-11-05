@@ -46,3 +46,8 @@ logs/
 !.claude/skills/molido-*/
 !.claude/skills/impeccable/
 !.claude/skills/ponytail/
+
+# Locally compiled MT5 bridge artifacts
+*.ex5
+*.ex4
+/build/mt5/
