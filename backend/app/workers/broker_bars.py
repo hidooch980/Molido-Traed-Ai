@@ -264,7 +264,12 @@ def ingest(
             instrument = _instrument(session, symbol)
             rows: list[dict[str, Any]] = []
             with path.open(newline="", encoding="utf-8") as handle:
-                for row in csv.DictReader(handle):
+                reader = csv.DictReader(handle)
+                required_columns = {"event_time", "open", "high", "low", "close"}
+                if not required_columns.issubset(set(reader.fieldnames or [])):
+                    missing = ", ".join(sorted(required_columns - set(reader.fieldnames or [])))
+                    raise ValueError(f"missing required columns: {missing}")
+                for row in reader:
                     # Read in the terminal's clock, then moved to UTC by the
                     # measured offset. Stamping it as UTC directly is what put
                     # every bar three hours in the future.
