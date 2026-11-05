@@ -81,6 +81,7 @@ class QualityReport:
     def count_by_issue(self) -> dict[str, int]:
         return dict(Counter(f.issue.value for f in self.findings))
 
+
 #: Defects that make an individual price row unsafe for a live decision.
 #: Staleness is handled by the feed-freshness gate; transport ordering is not a
 #: defect in the sorted series that is ultimately stored.
