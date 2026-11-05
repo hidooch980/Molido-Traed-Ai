@@ -56,8 +56,8 @@ def test_quality_score_update_only_changes_newest_revision(session, instrument, 
 
     stamp = BASE_TIME
     first = make_bars(1)[0]
-    insert_bar(session, instrument.id, provider.id, event_time=stamp, close=first.close, revision=1)
-    insert_bar(session, instrument.id, provider.id, event_time=stamp, close=first.close + 0.001, revision=2)
+    insert_bar(session, instrument.id, provider.id, event_time=stamp, ingested_at=stamp, close=first.close, revision=1)
+    insert_bar(session, instrument.id, provider.id, event_time=stamp, ingested_at=stamp, close=first.close + 0.001, revision=2)
 
     changed = data_quality.apply_bar_quality_scores(
         session,
