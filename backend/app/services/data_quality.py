@@ -123,6 +123,14 @@ def bar_quality_scores(
         if not affected and finding.window_start == finding.window_end:
             if finding.window_start in scores:
                 affected = [finding.window_start]
+        # A structural/provider defect that is explicitly designated as
+        # live-blocking must make the affected candle unusable regardless of
+        # its aggregate severity label. Severity weights remain useful for
+        # non-blocking quality degradation, but must never soften a hard gate.
+        if finding.issue in LIVE_BLOCKING_ISSUES:
+            for stamp in affected:
+                scores[stamp] = 0.0
+            continue
         penalty = penalties[finding.severity]
         for stamp in affected:
             scores[stamp] = max(0.0, min(scores[stamp], 1.0 - penalty))
