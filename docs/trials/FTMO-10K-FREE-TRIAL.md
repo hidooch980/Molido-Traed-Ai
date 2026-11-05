@@ -92,6 +92,7 @@ record. The public health endpoint proves connectivity, not order flow or profit
 - `/api/v1/learning/journal`
 - `/api/v1/learning/calibration`
 - `/api/v1/learning/real-money`
+- `/api/v1/learning/trial-review?days=14`
 - `/api/v1/decisions/readiness`
 
 The readiness fix clusters simultaneous matched decisions, keeps feeds and
