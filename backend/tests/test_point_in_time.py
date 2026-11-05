@@ -34,6 +34,68 @@ def _seed(session, instrument, provider, count=10, ingested_at=None):
         )
 
 
+def test_active_ohlc_finding_excludes_bad_bar_from_live_reads(session, instrument, provider):
+    from app.core.enums import DataQualityIssue, Severity
+    from app.models.ingestion import DataQualityFinding
+
+    _seed(session, instrument, provider, count=5)
+    bad_time = BASE_TIME + timedelta(hours=2)
+    session.add(
+        DataQualityFinding(
+            instrument_id=instrument.id,
+            provider_id=provider.id,
+            timeframe=Timeframe.H1.value,
+            issue=DataQualityIssue.INVALID_OHLC_RELATION.value,
+            severity=Severity.ERROR,
+            window_start=bad_time,
+            window_end=bad_time,
+            detected_at=BASE_TIME + timedelta(hours=1),
+            affected_rows=1,
+            details={},
+        )
+    )
+    session.flush()
+
+    bars = get_bars(
+        session, instrument.id, Timeframe.H1, BASE_TIME + timedelta(hours=5),
+        provider_id=provider.id,
+    )
+
+    assert bad_time not in {bar.event_time for bar in bars}
+    assert len(bars) == 4
+
+
+def test_resolved_quality_finding_does_not_block_after_resolution(session, instrument, provider):
+    from app.core.enums import DataQualityIssue, Severity
+    from app.models.ingestion import DataQualityFinding
+
+    _seed(session, instrument, provider, count=3)
+    stamp = BASE_TIME
+    session.add(
+        DataQualityFinding(
+            instrument_id=instrument.id,
+            provider_id=provider.id,
+            timeframe=Timeframe.H1.value,
+            issue=DataQualityIssue.INVALID_OHLC_RELATION.value,
+            severity=Severity.ERROR,
+            window_start=stamp,
+            window_end=stamp,
+            detected_at=BASE_TIME + timedelta(minutes=30),
+            resolved_at=BASE_TIME + timedelta(hours=2),
+            affected_rows=1,
+            details={},
+        )
+    )
+    session.flush()
+
+    bars = get_bars(
+        session, instrument.id, Timeframe.H1, BASE_TIME + timedelta(hours=4),
+        provider_id=provider.id,
+    )
+
+    assert stamp in {bar.event_time for bar in bars}
+
+
 def test_unclosed_bar_is_invisible(session, instrument, provider):
     """A bar that opened before as_of but has not closed is future data."""
     _seed(session, instrument, provider, count=5)
