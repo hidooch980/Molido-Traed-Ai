@@ -162,7 +162,7 @@ class TestBrokerQualityGate:
 
         assert result["ingested"] >= 3
         assert result["torn_rows"] == 1
-        assert result["quality_reports"][0]["symbol"] == "XAUUSD"
+        assert any(item["symbol"] == "XAUUSD" for item in result["quality_reports"])
 
     def test_invalid_ohlc_is_flagged_and_scored_not_trusted(self, session, bridge):
         from app.models.ingestion import DatasetQuality
@@ -177,8 +177,14 @@ class TestBrokerQualityGate:
 
         result = broker_bars.ingest(session, directory=bridge.directory, now=NOW)
 
-        assert result["quality_reports"][0]["findings"]["invalid_ohlc_relation"] >= 1
-        quality = session.query(DatasetQuality).filter_by(timeframe=Timeframe.H1.value).one()
+        xau_report = next(item for item in result["quality_reports"] if item["symbol"] == "XAUUSD")
+        assert xau_report["findings"]["invalid_ohlc_relation"] >= 1
+        quality = (
+            session.query(DatasetQuality)
+            .join(Instrument, Instrument.id == DatasetQuality.instrument_id)
+            .filter(Instrument.symbol == "XAUUSD", DatasetQuality.timeframe == Timeframe.H1.value)
+            .one()
+        )
         assert quality.is_training_eligible is False
         bad = (
             session.query(Bar)
