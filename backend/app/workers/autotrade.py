@@ -2143,7 +2143,8 @@ def run_cycle(
     # what tell agreement from contradiction, and contradiction is worth
     # acting on even when one brain is enough to act.
     sides_by_timeframe: dict[tuple[str, str], set[str]] = {}
-    votes = _fresh_votes(session, moment, sides_by_timeframe)
+    silenced = _silenced_brains(session, moment)
+    votes = _fresh_votes(session, moment, sides_by_timeframe, silenced=silenced)
     # Read once. It is one aggregate over the journal and it does not change
     # inside a cycle - and it is this account's own brains' edge, not the
     # fleet's.
@@ -2182,6 +2183,16 @@ def run_cycle(
     from app.brain import portfolio as portfolio_brain
 
     for entry in candidates:
+        if entry.strategy in silenced:
+            refuse(
+                entry,
+                f"{entry.strategy} is disabled fleet-wide by the performance "
+                "gate (at least 15 resolved positions, negative net R and "
+                "negative result versus its control); it remains recorded "
+                "for research but cannot initiate an order",
+            )
+            continue
+
         # Resolved before the per-symbol cap, because the cap is about the
         # instrument the account will actually carry: a GCFUT decision and
         # an XAUUSD position are the same exposure under two names.
@@ -2786,6 +2797,8 @@ def _fresh_votes(
     session: Session,
     moment: datetime,
     by_timeframe: dict[tuple[str, str], set[str]] | None = None,
+    *,
+    silenced: frozenset[str] | None = None,
 ) -> dict[tuple[str, str], set[str]]:
     """(symbol, side) -> the brains with a fresh decision saying exactly that.
 
@@ -2807,7 +2820,8 @@ def _fresh_votes(
         )
     ).all()
 
-    silenced = _silenced_brains(session, moment)
+    if silenced is None:
+        silenced = _silenced_brains(session, moment)
     votes: dict[tuple[str, str], set[str]] = {}
     # Filled for the caller when one is supplied: which sides exist on
     # each timeframe, which is a different question from how many brains
