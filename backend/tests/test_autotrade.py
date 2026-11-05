@@ -11,6 +11,7 @@ the one no layer above can undo.
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import select
@@ -157,7 +158,11 @@ def operational_gate_open(monkeypatch):
     reasons that are true of the test machine and about nothing under test.
     Opened by default; `TestOrderAuthorizationIsTheLastGate` closes it on
     purpose and exercises the real function."""
-    monkeypatch.setattr(autotrade, "_cycle_authorization", lambda *a, **k: None)
+    monkeypatch.setattr(
+        autotrade,
+        "_cycle_authorization",
+        lambda *a, **k: SimpleNamespace(order_authorized=True, blocking_reasons=()),
+    )
 
 
 NEWS_NOW = datetime(2026, 8, 18, 12, 0, tzinfo=UTC)
