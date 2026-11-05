@@ -93,6 +93,10 @@ VALUE_PATTERNS: tuple[tuple[str, re.Pattern[bytes]], ...] = (
 #: One deliberately synthetic Telegram-shaped value used by the historical
 #: scanner test. It is allowed only inside test files; the same value in any
 #: application/configuration file remains a secret finding.
+_SYNTHETIC_TELEGRAM_TEST_TOKEN = (
+    b"1234567890:" + b"AAF-" + b"abcdefghijklmnopqrstuvwxyz012345"
+)
+
 _SYNTHETIC_TELEGRAM_TEST_TOKENS = frozenset(
     {
         _SYNTHETIC_TELEGRAM_TEST_TOKEN,
