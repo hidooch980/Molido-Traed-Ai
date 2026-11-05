@@ -103,9 +103,6 @@ _SYNTHETIC_TELEGRAM_TEST_TOKENS = frozenset(
         b"12345678" + b"90:AAF-a" + b"bcdefghi" + b"jklmnopq" + b"rstuvwxy" + b"z0123456",
     }
 )
-_SYNTHETIC_TELEGRAM_TEST_TOKEN = (
-    b"1234567890:" + b"AAF-" + b"abcdefghijklmnopqrstuvwxyz012345"
-)
 
 #: What a template value looks like. A credential-assignment whose value
 #: matches one of these is a placeholder, and a placeholder is the point.
