@@ -2819,8 +2819,12 @@ def _fresh_votes(
             minutes=MAX_DECISION_AGE_MINUTES + _bar_minutes(row)
         ):
             continue
-        if row.strategy not in silenced:
-            votes.setdefault((row.symbol, row.decision), set()).add(row.strategy)
+        # A silenced brain is excluded from every consensus surface.
+        # Letting it remain in timeframe context after removing its vote
+        # made a disabled H1 opinion veto an otherwise valid fast-frame entry.
+        if row.strategy in silenced:
+            continue
+        votes.setdefault((row.symbol, row.decision), set()).add(row.strategy)
         by_timeframe.setdefault((row.symbol, row.timeframe), set()).add(
             row.decision
         )
