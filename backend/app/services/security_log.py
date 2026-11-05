@@ -105,7 +105,7 @@ WITHHELD = "<withheld: looked like a credential>"
 def _sensitive_name(name: Any) -> bool:
     """Match credential field names without catching ordinary words like monkey."""
     normalized = str(name).lower().replace("-", "_").replace(".", "_")
-    return any(word in normalized for word in FORBIDDEN) or normalized.endswith("_key") or normalized.startswith("key_")
+    return (\n        any(word in normalized for word in FORBIDDEN)\n        or normalized.endswith("_key")\n        or normalized.startswith("key_")\n    )
 
 
 def _clean_value(value: Any) -> Any:
