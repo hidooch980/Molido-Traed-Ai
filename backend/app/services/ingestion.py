@@ -448,6 +448,7 @@ def ingest_ohlcv(
         end=end.date(),
     )
     report = data_quality.evaluate_bars(normalized_all, timeframe, calendar)
+    quality_scores = data_quality.bar_quality_scores(normalized_all, report.findings)
     data_quality.persist_findings(
         session,
         instrument_id=instrument.id,
@@ -455,6 +456,13 @@ def ingest_ohlcv(
         timeframe=timeframe,
         findings=report.findings,
         run_id=run.id,
+    )
+    data_quality.apply_bar_quality_scores(
+        session,
+        instrument_id=instrument.id,
+        provider_id=provider_row.id,
+        timeframe=timeframe,
+        scores=quality_scores,
     )
     coverage_start, coverage_end = data_quality.coverage_window(normalized_all)
     data_quality.update_dataset_quality(
