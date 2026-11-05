@@ -2585,6 +2585,39 @@ class TestAnAccountCanBeConfinedToItsOwnList:
         assert report["orders"] == 1
 
 
+class TestSilencedBrainsDoNotInfluenceConsensus:
+    """A brain removed from voting must not remain as timeframe context."""
+
+    def test_a_silenced_h1_opinion_cannot_veto_a_fast_frame(self, session, monkeypatch):
+        decide(
+            session,
+            symbol="EURUSD",
+            timeframe="H1",
+            strategy="time-series-momentum",
+            decision="short",
+        )
+        decide(
+            session,
+            symbol="EURUSD",
+            timeframe="M5",
+            strategy="trend-following",
+            decision="long",
+        )
+        monkeypatch.setattr(
+            autotrade,
+            "_silenced_brains",
+            lambda *_args, **_kwargs: frozenset({"time-series-momentum"}),
+        )
+
+        by_timeframe = {}
+        votes = autotrade._fresh_votes(session, NOW, by_timeframe)
+
+        assert ("EURUSD", "short") not in votes
+        assert ("EURUSD", "H1") not in by_timeframe
+        assert votes[("EURUSD", "long")] == {"trend-following"}
+        assert by_timeframe[("EURUSD", "M5")] == {"long"}
+
+
 class TestAPropRegisteredAccountIsWeekendLockedWithoutTheEnvVar:
     """`_is_prop_account` reaches the challenge registry directly, so a
     registered account is weekend-locked from the moment it is registered -
