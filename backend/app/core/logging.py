@@ -29,7 +29,11 @@ _WITHHELD = "***"
 
 def _sensitive_key(name: Any) -> bool:
     normalized = str(name).lower().replace("-", "_").replace(".", "_")
-    return (\n        any(part in normalized for part in _SENSITIVE_KEYS)\n        or normalized.endswith("_key")\n        or normalized.startswith("key_")\n    )
+    return (
+        any(part in normalized for part in _SENSITIVE_KEYS)
+        or normalized.endswith("_key")
+        or normalized.startswith("key_")
+    )
 
 
 def new_trace_id() -> str:
