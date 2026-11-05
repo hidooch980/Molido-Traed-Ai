@@ -376,3 +376,28 @@ class TestTheLockoutIsQueryable:
             == login_guard.SUBJECT_THRESHOLD
         )
         assert body["thresholds"]["longest_account_wait_seconds"] <= 900
+
+
+def test_nested_and_compound_credential_fields_are_withheld(session):
+    from app.core.logging import _scrub
+
+    secrets = {
+        "bot_token": "bot-secret-value-123",
+        "api-key": "api-secret-value-456",
+        "ssh_key": "ssh-secret-value-789",
+    }
+    security_log.record(
+        session,
+        AuditEventType.SIGN_IN_FAILED,
+        summary="nested redaction",
+        detail={"metadata": [{"safe": "kept", **secrets}]},
+    )
+    stored = repr(events(session)[0].payload)
+    assert all(value not in stored for value in secrets.values())
+    assert "kept" in stored
+    assert stored.count("withheld") == len(secrets)
+
+    structured = _scrub({"metadata": [secrets], "ordinary": "visible"})
+    rendered = repr(structured)
+    assert all(value not in rendered for value in secrets.values())
+    assert "visible" in rendered
