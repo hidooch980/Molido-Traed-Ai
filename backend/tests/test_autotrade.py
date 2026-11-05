@@ -2617,6 +2617,29 @@ class TestSilencedBrainsDoNotInfluenceConsensus:
         assert votes[("EURUSD", "long")] == {"trend-following"}
         assert by_timeframe[("EURUSD", "M5")] == {"long"}
 
+    def test_a_silenced_strategy_cannot_initiate_an_order(self, session, live, monkeypatch):
+        monkeypatch.setattr(autotrade, "_consensus_required", lambda: 1)
+        monkeypatch.setattr(
+            autotrade,
+            "_strategy_for",
+            lambda _login: (frozenset({"trend-following"}), ""),
+        )
+        monkeypatch.setattr(
+            autotrade,
+            "_silenced_brains",
+            lambda *_args, **_kwargs: frozenset({"trend-following"}),
+        )
+        decide(session, symbol="EURUSD", strategy="trend-following")
+        broker = FakeBroker()
+
+        report = autotrade.run_cycle(
+            session, now=NOW, broker=broker, bridge=FakeBridge()
+        )
+
+        assert report["orders"] == 0
+        assert broker.submitted == []
+        assert any("disabled fleet-wide" in reason for reason in report["skipped"])
+
 
 class TestAPropRegisteredAccountIsWeekendLockedWithoutTheEnvVar:
     """`_is_prop_account` reaches the challenge registry directly, so a
