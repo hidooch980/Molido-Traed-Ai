@@ -3474,12 +3474,11 @@ class TestOrderAuthorizationIsTheLastGate:
         assert "disk_headroom" in rows[0].summary
         assert rows[0].entry_hash  # chained like everything else
 
-    def test_a_gatherer_that_raises_does_not_halt_a_cycle_the_gates_approved(
+    def test_a_gatherer_failure_fails_closed_and_sends_no_order(
         self, session, live, real_gate, monkeypatch
     ):
-        """Every reader inside the gatherer already fails closed as a failed
-        check; this guards the gatherer itself. A crash there is logged and
-        the cycle proceeds on the gates that did run."""
+        """If the authorization posture cannot be evaluated, approval is
+        unknown and must never be inferred from the other gates."""
         from app.ops import posture as posture_module
 
         def explode(*a, **k):
@@ -3491,8 +3490,9 @@ class TestOrderAuthorizationIsTheLastGate:
 
         report = autotrade.run_cycle(session, now=NOW, broker=broker, bridge=FakeBridge())
 
-        assert broker.submitted != []
-        assert "refused" not in report or not report.get("refused")
+        assert broker.submitted == []
+        assert report["orders"] == 0
+        assert "order authorization unavailable" in report["refused"]
 
     def test_the_real_gatherer_runs_against_this_session(self, session, live, real_gate):
         """No fakes: the gatherer reads this empty database and an absent
