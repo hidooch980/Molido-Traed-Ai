@@ -33,6 +33,52 @@ def test_clean_series_has_no_blocking_findings():
     assert report.score > 0.95
 
 
+def test_per_bar_scores_mark_structural_defects_unusable():
+    bars = make_bars(3)
+    finding = data_quality.Finding(
+        issue=DataQualityIssue.INVALID_OHLC_RELATION,
+        severity=Severity.ERROR,
+        window_start=bars[1].event_time,
+        window_end=bars[1].event_time,
+        expected="coherent OHLC",
+        observed="high below low",
+    )
+
+    scores = data_quality.bar_quality_scores(bars, [finding])
+
+    assert scores[bars[0].event_time] == 1.0
+    assert scores[bars[1].event_time] == 0.75
+    assert scores[bars[2].event_time] == 1.0
+
+
+def test_quality_score_update_only_changes_newest_revision(session, instrument, provider):
+    from app.models.market_data import Bar
+
+    stamp = BASE_TIME
+    first = make_bars(1)[0]
+    insert_bar(session, instrument.id, provider.id, event_time=stamp, close=first.close, revision=1)
+    insert_bar(session, instrument.id, provider.id, event_time=stamp, close=first.close + 0.001, revision=2)
+
+    changed = data_quality.apply_bar_quality_scores(
+        session,
+        instrument_id=instrument.id,
+        provider_id=provider.id,
+        timeframe=Timeframe.H1,
+        scores={stamp: 0.75},
+    )
+
+    rows = list(
+        session.scalars(
+            select(Bar)
+            .where(Bar.instrument_id == instrument.id, Bar.event_time == stamp)
+            .order_by(Bar.revision)
+        )
+    )
+    assert changed == 1
+    assert float(rows[0].quality_score) == 1.0
+    assert float(rows[1].quality_score) == 0.75
+
+
 def test_empty_dataset_scores_zero_not_one():
     """No data is not perfect data."""
     report = data_quality.evaluate_bars([], Timeframe.H1)
