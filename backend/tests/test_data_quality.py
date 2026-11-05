@@ -16,7 +16,7 @@ from sqlalchemy import select
 from app.core.enums import DataQualityIssue, Severity, Timeframe
 from app.providers.base import RawBar
 from app.services import data_quality
-from tests.conftest import BASE_TIME, make_bars
+from tests.conftest import BASE_TIME, insert_bar, make_bars
 
 
 def _issues(report) -> set[str]:
