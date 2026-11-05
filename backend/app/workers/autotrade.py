@@ -2033,7 +2033,12 @@ def run_cycle(
         feed_age_bars=_feed_age_bars(published, moment),
         sender=sender,
     )
-    if authorization is not None and not authorization.order_authorized:
+    if authorization is None:
+        return _report(
+            mode=mode,
+            refused="order authorization unavailable: posture could not be gathered",
+        )
+    if not authorization.order_authorized:
         return _report(
             mode=mode,
             refused="order authorization: " + "; ".join(authorization.blocking_reasons),
@@ -3134,11 +3139,10 @@ def _cycle_authorization(
 ) -> Any:
     """The cycle's order-authorization decision, audited.
 
-    Returns None only when the posture itself could not be gathered - and
-    says so in the log - so a broken reader does not silently halt a cycle
-    that the gates above had already approved. Every individual reader
-    inside `posture.gather` already fails closed as an undeterminable check;
-    this guards the gatherer, not the checks.
+    Returns None when the posture cannot be gathered. Unknown authorization
+    is not approval: the caller must fail closed and refuse the cycle. Every
+    individual reader inside `posture.gather` already fails closed; this
+    guard preserves that property when the gatherer itself raises.
     """
     from app.ops import posture as posture_module
 
@@ -3153,7 +3157,7 @@ def _cycle_authorization(
             data_age_bars=feed_age_bars,
             broker_adapter=sender,
         )
-    except Exception as problem:  # noqa: BLE001 - reported, and the cycle continues on its own gates
+    except Exception as problem:  # noqa: BLE001 - unknown authorization must fail closed
         log.warning(
             "autotrade.authorization_unavailable",
             problem=type(problem).__name__,
