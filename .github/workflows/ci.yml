@@ -54,12 +54,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - run: pip install "ruff>=0.7"
       - name: Lint the whole repository
         run: ruff check .
+      - name: Scan checkout and reachable Git history for credential-shaped values
+        run: python3 backend/app/ops/secrets_scan.py --root . --history
       - name: The updater guard's own tests
         # A stubbed systemctl and a temporary tree of fake prefixes; nothing
         # is started, stopped or deleted. It is the only test of the one
