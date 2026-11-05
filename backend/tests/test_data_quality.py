@@ -47,7 +47,7 @@ def test_per_bar_scores_mark_structural_defects_unusable():
     scores = data_quality.bar_quality_scores(bars, [finding])
 
     assert scores[bars[0].event_time] == 1.0
-    assert scores[bars[1].event_time] == 0.75
+    assert scores[bars[1].event_time] == 0.0
     assert scores[bars[2].event_time] == 1.0
 
 
