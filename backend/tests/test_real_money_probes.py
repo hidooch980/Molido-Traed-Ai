@@ -179,10 +179,14 @@ class TestTerminalsAlive:
 
         assert real_money._terminals_alive().passed is True
 
-    def test_an_unknown_age_is_not_treated_as_stale(self, terminals):
+    def test_an_unknown_heartbeat_age_cannot_certify_freshness(self, terminals):
         terminals(**{"term-a": FakeBridge(age_seconds=None)})
 
-        assert real_money._terminals_alive().passed is True
+        finding = real_money._terminals_alive()
+
+        assert finding.passed is False
+        assert "no measurable heartbeat age" in finding.detail
+        assert "unknown rather than zero" in finding.detail
 
     def test_an_unreadable_bridge_is_a_defect_not_a_crash(self, terminals):
         terminals(**{"term-a": FakeBridge(raises=OSError("no such directory"))})
