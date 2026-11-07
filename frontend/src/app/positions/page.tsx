@@ -139,9 +139,11 @@ export default async function PositionsPage() {
                   <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
                     <Stat
                       label={t("positions.net")}
-                      value={`${(realised.data.net ?? 0) > 0 ? "+" : ""}${(
-                        realised.data.net ?? 0
-                      ).toFixed(2)}`}
+                      value={
+                        realised.data.net == null
+                          ? "—"
+                          : `${realised.data.net > 0 ? "+" : ""}${realised.data.net.toFixed(2)}`
+                      }
                       tone={
                         (realised.data.net ?? 0) === 0
                           ? undefined
@@ -153,17 +155,27 @@ export default async function PositionsPage() {
                     />
                     <Stat
                       label={t("positions.trades")}
-                      value={String(realised.data.trades ?? 0)}
+                      value={realised.data.trades == null ? "—" : String(realised.data.trades)}
                     />
                     <Stat
                       label={t("positions.swap")}
-                      value={(realised.data.swap ?? 0).toFixed(2)}
+                      value={realised.data.swap == null ? "—" : realised.data.swap.toFixed(2)}
                     />
                     <Stat
                       label={t("positions.commission")}
-                      value={(realised.data.commission ?? 0).toFixed(2)}
+                      value={realised.data.commission == null ? "—" : realised.data.commission.toFixed(2)}
                     />
                   </div>
+                  {!realised.data.fees_available && (
+                    <p className="text-xs ink-3 leading-relaxed">
+                      {t("positions.feesMissing")}
+                    </p>
+                  )}
+                  {realised.data.history_complete !== true && (
+                    <p className="text-xs ink-3 leading-relaxed">
+                      {t("positions.historyUnverified")}
+                    </p>
+                  )}
                   {realised.data.by_symbol.length > 0 && (
                     <div className="scroll-x">
                       <table className="data">

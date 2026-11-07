@@ -7,7 +7,9 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node tests/test_live_render.cjs",
+    "prebuild": "npm test"
   },
   "dependencies": {
     "lightweight-charts": "4.2.3",
