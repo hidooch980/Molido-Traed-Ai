@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { startPolling, receiptTime } from "@/lib/polling";
 
 /**
  * Open positions and floating P&L, refreshed while the page is open.
@@ -40,19 +41,25 @@ type Position = {
 
 type Live = {
   stamped_at: string;
-  positions: { positions?: Position[]; floating?: number } | null;
-  realised: { net?: number | null; available?: boolean } | null;
+  positions: { available?: boolean; positions?: Position[]; floating?: number | null } | null;
+  realised: {
+    net?: number | null;
+    available?: boolean;
+    window_days?: number;
+    fees_available?: boolean;
+    history_complete?: boolean | null;
+  } | null;
   unreachable: string[];
 };
 
 function money(value: number | null | undefined): string {
-  if (value === null || value === undefined || Number.isNaN(value)) return "—";
+  if (value === null || value === undefined || !Number.isFinite(value)) return "—";
   const sign = value > 0 ? "+" : "";
   return `${sign}${value.toFixed(2)}`;
 }
 
 function tone(value: number | null | undefined): string {
-  if (value === null || value === undefined || value === 0) return "text-slate-400";
+  if (value === null || value === undefined || !Number.isFinite(value) || value === 0) return "text-slate-400";
   return value > 0 ? "text-emerald-400" : "text-rose-400";
 }
 
@@ -64,40 +71,47 @@ export function LiveTrading({ initial }: { initial?: Live }) {
   useEffect(() => {
     let alive = true;
 
-    async function pull() {
+    async function pull(signal: AbortSignal) {
       try {
-        const answer = await fetch("/live-feed", { cache: "no-store" });
+        const answer = await fetch("/live-feed", { cache: "no-store", signal, credentials: "same-origin" });
         if (!answer.ok) throw new Error(`HTTP ${answer.status}`);
         const body = (await answer.json()) as Live;
-        if (!alive) return;
+        receiptTime(body.stamped_at);
+        if (!Array.isArray(body.unreachable)) throw new Error("invalid live response");
+        if (!alive || signal.aborted) return;
         setData(body);
         setFailed(null);
       } catch (problem) {
-        if (!alive) return;
-        // The last good numbers stay on screen, because a blank table is a
-        // worse answer than an old one - but the age below them keeps
-        // counting, so nobody reads them as current.
-        setFailed(problem instanceof Error ? problem.message : "unreachable");
+        if (!alive || signal.aborted) return;
+        throw problem;
       }
     }
 
-    pull();
-    const poll = setInterval(pull, POLL_MS);
+    const stopPoll = startPolling(pull, { intervalMs: POLL_MS, onError: problem => {
+      if (alive) setFailed(problem instanceof Error ? problem.message : "unreachable");
+    } });
     // Ticks independently of the poll so the age keeps climbing when the poll
     // is the thing that stopped.
     const clock = setInterval(() => setNow(Date.now()), 1_000);
     return () => {
       alive = false;
-      clearInterval(poll);
+      stopPoll();
       clearInterval(clock);
     };
   }, []);
 
   const positions = data?.positions?.positions ?? [];
-  const floating =
-    data?.positions?.floating ??
-    positions.reduce((total, row) => total + (row.profit ?? 0), 0);
-  const ageMs = data ? now - new Date(data.stamped_at).getTime() : null;
+  const positionsAvailable =
+    data?.positions?.available !== false && Array.isArray(data?.positions?.positions);
+  const reportedFloating = data?.positions?.floating;
+  const floating = !positionsAvailable
+    ? null
+    : typeof reportedFloating === "number" && Number.isFinite(reportedFloating)
+      ? reportedFloating
+      : positions.every(row => typeof row.profit === "number" && Number.isFinite(row.profit))
+        ? positions.reduce((total, row) => total + row.profit!, 0)
+        : null;
+  const ageMs = data ? Math.max(0, now - new Date(data.stamped_at).getTime()) : null;
   const stale = ageMs !== null && ageMs > STALE_AFTER_MS;
 
   return (
@@ -126,10 +140,15 @@ export function LiveTrading({ initial }: { initial?: Live }) {
         </div>
         <div className="rounded-lg border border-slate-800 p-3">
           <div className="text-xs text-slate-400">پوزیشن باز</div>
-          <div className="text-2xl font-semibold tabular-nums">{positions.length}</div>
+          <div className="text-2xl font-semibold tabular-nums">{positionsAvailable ? positions.length : "—"}</div>
         </div>
         <div className="rounded-lg border border-slate-800 p-3">
-          <div className="text-xs text-slate-400">محقق‌شده امروز</div>
+          <div className="text-xs text-slate-400">
+            نتیجهٔ ثبت‌شده
+            {data?.realised?.window_days != null
+              ? ` (${data.realised.window_days} روز اخیر)`
+              : ""}
+          </div>
           <div
             className={`text-2xl font-semibold tabular-nums ${tone(
               data?.realised?.net ?? null,
@@ -137,6 +156,16 @@ export function LiveTrading({ initial }: { initial?: Live }) {
           >
             {data?.realised?.available === false ? "منتشر نشده" : money(data?.realised?.net)}
           </div>
+          {data?.realised?.available && data.realised.history_complete !== true && (
+            <p className="mt-1 text-xs text-slate-400">
+              کامل بودن تاریخچه تأیید نشده است.
+            </p>
+          )}
+          {data?.realised?.available && !data.realised.fees_available && (
+            <p className="mt-1 text-xs text-slate-400">
+              کامل بودن هزینه‌های ثبت‌شده تأیید نشده است.
+            </p>
+          )}
         </div>
       </div>
 
@@ -146,7 +175,9 @@ export function LiveTrading({ initial }: { initial?: Live }) {
         </p>
       ) : null}
 
-      {positions.length === 0 ? (
+      {!positionsAvailable ? (
+        <p className="text-sm text-amber-400">وضعیت پوزیشن‌ها خوانده نشده است.</p>
+      ) : positions.length === 0 ? (
         <p className="text-sm text-slate-400">هیچ پوزیشن بازی نیست.</p>
       ) : (
         <div className="overflow-x-auto">

@@ -8,11 +8,14 @@ on the day and every page would show only what was still open.
 Deals rather than orders. An order is a request; a deal is what the account was
 actually charged or paid, which is what a P&L is made of.
 
-**Net, not profit.** The terminal stores profit, swap and commission as three
-separate numbers, and a page that shows only the first shows a figure the
-account never saw. Swap on a position held overnight and commission on entry
-are both real money. Every total here is net of all three, and the parts are
-published beside it so a surprising net can be explained rather than believed.
+The numeric `net` field preserves the publisher's subtotal for compatibility.
+Legacy exporters include profit, swap and commission but omit DEAL_FEE. Fee
+availability is reported separately; absent fees are unknown, not zero. Even
+when fees exist, this file alone does not prove complete account history.
+
+Entry charges remain in the monetary totals and event details, but are not
+closed deals and must not inflate trade counts or the exit-event hit rate.
+A partial exit is still one exit event, not necessarily a completed position.
 
 Absent is not zero. Until the expert publishes the file - it needs a recompile
 and a terminal restart, which is a thing to do on a closed market - this
@@ -24,6 +27,7 @@ about trading.
 from __future__ import annotations
 
 import json
+import math
 import pathlib
 from collections import defaultdict
 from datetime import UTC, datetime, timedelta
@@ -45,6 +49,17 @@ def _parse(stamp: str, *, offset_hours: float) -> datetime | None:
     except (ValueError, AttributeError):
         return None
     return naive.replace(tzinfo=UTC) - timedelta(hours=offset_hours)
+
+
+def _fee(value: Any) -> float | None:
+    """Only an explicitly published finite number establishes a fee value."""
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return number if math.isfinite(number) else None
 
 
 def read(
@@ -114,6 +129,8 @@ def read(
                 "profit": row.get("profit"),
                 "swap": row.get("swap"),
                 "commission": row.get("commission"),
+                "fee": _fee(row.get("fee")),
+                "is_charge": bool(row.get("is_charge", False)),
                 "net": row.get("net"),
                 "closed_at": closed_at.isoformat() if closed_at else None,
             }
@@ -128,9 +145,10 @@ def read(
         symbol = str(deal["symbol"] or "?")
         net = float(deal["net"] or 0.0)
         grouped[symbol]["net"] += net
-        grouped[symbol]["trades"] += 1
-        if net > 0:
-            grouped[symbol]["wins"] += 1
+        if not deal["is_charge"]:
+            grouped[symbol]["trades"] += 1
+            if net > 0:
+                grouped[symbol]["wins"] += 1
 
     by_symbol = sorted(
         (
@@ -155,20 +173,31 @@ def read(
     )
 
     net = round(sum(float(d["net"] or 0.0) for d in deals), 2)
+    charge_events = sum(1 for deal in deals if deal["is_charge"])
+    missing_fee_events = sum(1 for deal in deals if deal["fee"] is None)
+    fees_available = bool(deals) and missing_fee_events == 0
 
     return {
         "available": True,
         "deals": deals,
         "by_symbol": by_symbol,
         "net": net,
-        "trades": len(deals),
+        "trades": len(deals) - charge_events,
+        "deal_events": len(deals),
+        "charge_events": charge_events,
+        "fee": round(sum(d["fee"] for d in deals), 2) if fees_available else None,
+        "fees_available": fees_available,
+        "missing_fee_events": missing_fee_events,
+        "history_complete": None,
         "gross": round(sum(float(d["profit"] or 0.0) for d in deals), 2),
         "swap": round(sum(float(d["swap"] or 0.0) for d in deals), 2),
         "commission": round(sum(float(d["commission"] or 0.0) for d in deals), 2),
         "published_at": body.get("published_at"),
         "window_days": body.get("window_days"),
         "note": (
-            "net of swap and commission, which the terminal stores separately. "
-            "A total that counts only profit is a number the account never saw"
+            "Published deal-event subtotal; entry charges affect money totals, "
+            "not exit-event counts or hit rates. Missing fees are unknown, not zero. "
+            "History completeness and broker reconciliation are not verified. "
+            "A total that counts only profit is a number the account never saw."
         ),
     }

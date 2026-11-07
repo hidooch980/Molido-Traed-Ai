@@ -1233,6 +1233,14 @@ export interface RealisedView {
   available: boolean;
   reason?: string | null;
   net: number | null;
+
+  deal_events?: number;
+  charge_events?: number;
+  missing_fee_events?: number;
+  fee?: number | null;
+  /** Fee fields are finite; this does not establish complete history. */
+  fees_available?: boolean;
+  history_complete?: boolean | null;
   trades?: number;
   gross?: number;
   swap?: number;
