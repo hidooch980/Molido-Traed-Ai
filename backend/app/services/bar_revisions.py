@@ -5,7 +5,6 @@ receive a new revision. Concurrent inserts never overwrite an existing version.
 """
 
 from collections import defaultdict
-from collections.abc import Mapping
 from datetime import UTC, datetime
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Any, cast
@@ -13,6 +12,7 @@ from typing import Any, cast
 from sqlalchemy import Numeric, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+from sqlalchemy.engine import RowMapping
 from sqlalchemy.orm import Session, aliased
 
 from app.models.market_data import Bar
@@ -99,7 +99,7 @@ def append_only_bars(session: Session, rows: list[dict[str, Any]]) -> int:
         for _attempt in range(3):
             if not remaining:
                 break
-            latest: dict[datetime, Mapping[str, Any]] = {}
+            latest: dict[datetime, RowMapping] = {}
             stamps = list(remaining)
             for start in range(0, len(stamps), 400):
                 found = session.execute(
