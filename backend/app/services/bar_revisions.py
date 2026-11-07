@@ -6,7 +6,7 @@ receive a new revision. Concurrent inserts never overwrite an existing version.
 
 from collections import defaultdict
 from datetime import UTC, datetime
-from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Any
 
 from sqlalchemy import func, select
@@ -94,7 +94,7 @@ def append_only_bars(session: Session, rows: list[dict[str, Any]]) -> int:
     total = 0
     for (instrument_id, provider_id, timeframe), by_stamp in groups.items():
         remaining = dict(by_stamp)
-        for attempt in range(3):
+        for _attempt in range(3):
             if not remaining:
                 break
             latest = {}

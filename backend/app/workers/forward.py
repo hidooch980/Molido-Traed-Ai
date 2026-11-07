@@ -137,7 +137,8 @@ def snapshot(
         return {}, None
 
     instant = _instant(
-        session, instruments, timeframe=timeframe, ceiling=ceiling, provider_id=provider_id, known_at=known_at
+        session, instruments, timeframe=timeframe, ceiling=ceiling,
+        provider_id=provider_id, known_at=known_at
     )
     if instant is None:
         return {}, None

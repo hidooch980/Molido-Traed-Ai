@@ -224,7 +224,11 @@ def public_closes(
     ]
     if since is not None:
         conditions.append(Bar.event_time >= since)
-    rows = session.execute(select(Bar.event_time, Bar.close).where(*conditions).order_by(Bar.event_time, Bar.revision)).all()
+    rows = session.execute(
+        select(Bar.event_time, Bar.close)
+        .where(*conditions)
+        .order_by(Bar.event_time, Bar.revision)
+    ).all()
     return {when: float(close) for when, close in rows}
 
 

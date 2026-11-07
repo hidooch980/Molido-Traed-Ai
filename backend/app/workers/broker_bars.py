@@ -38,8 +38,8 @@ from sqlalchemy.orm import Session
 from app.core.enums import AssetClass, Timeframe
 from app.models.instruments import Instrument, Provider
 from app.models.market_data import Bar
-from app.services.bar_revisions import append_only_bars
 from app.providers.metatrader import DEFAULT_BRIDGE_DIR
+from app.services.bar_revisions import append_only_bars
 from app.workers import broker_offset
 
 #: The provider these bars are recorded under. Separate from yfinance on
