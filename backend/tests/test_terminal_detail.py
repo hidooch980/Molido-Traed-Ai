@@ -17,7 +17,8 @@ from app.db.session import get_db
 from app.main import app
 from app.models.journal import ARM_CONTROL, ARM_RULE, JournalEntry
 
-NOW = datetime(2026, 9, 3, 12, 0, tzinfo=UTC)
+# Journal fixtures must stay inside the route's rolling thirty-day window.
+NOW = datetime.now(UTC).replace(second=0, microsecond=0)
 
 
 @pytest.fixture()
