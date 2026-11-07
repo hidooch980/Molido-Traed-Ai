@@ -5,11 +5,12 @@ receive a new revision. Concurrent inserts never overwrite an existing version.
 """
 
 from collections import defaultdict
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
-from typing import Any
+from typing import Any, cast
 
-from sqlalchemy import func, select
+from sqlalchemy import Numeric, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session, aliased
@@ -49,7 +50,8 @@ def _number(name: str, value: Any) -> Decimal | None:
         number = Decimal(str(value))
         if not number.is_finite():
             raise ValueError("A bar value must be finite")
-        scale = Bar.__table__.c[name].type.scale
+        scale = cast(Numeric, Bar.__table__.c[name].type).scale
+        assert scale is not None
         return number.quantize(Decimal(1).scaleb(-scale), rounding=ROUND_HALF_UP)
     except InvalidOperation as exc:
         raise ValueError("A bar value cannot be represented") from exc
@@ -72,7 +74,7 @@ def append_only_bars(session: Session, rows: list[dict[str, Any]]) -> int:
     if dialect not in ("postgresql", "sqlite"):
         raise ValueError("Append-only bars require PostgreSQL or SQLite")
     insert = pg_insert if dialect == "postgresql" else sqlite_insert
-    groups = defaultdict(dict)
+    groups: dict[tuple[Any, Any, str], dict[datetime, dict[str, Any]]] = defaultdict(dict)
     # Validate and deduplicate the whole incoming batch before writing anything.
     for raw in rows:
         row = dict(raw)
@@ -97,7 +99,7 @@ def append_only_bars(session: Session, rows: list[dict[str, Any]]) -> int:
         for _attempt in range(3):
             if not remaining:
                 break
-            latest = {}
+            latest: dict[datetime, Mapping[str, Any]] = {}
             stamps = list(remaining)
             for start in range(0, len(stamps), 400):
                 found = session.execute(
@@ -108,8 +110,8 @@ def append_only_bars(session: Session, rows: list[dict[str, Any]]) -> int:
                         Bar.event_time.in_(stamps[start:start+400]),
                     ).order_by(Bar.revision.desc())
                 ).mappings()
-                for old in found:
-                    latest.setdefault(_aware(old["event_time"]), old)
+                for previous_row in found:
+                    latest.setdefault(_aware(previous_row["event_time"]), previous_row)
             pending = []
             for stamp, row in list(remaining.items()):
                 old = latest.get(stamp)
