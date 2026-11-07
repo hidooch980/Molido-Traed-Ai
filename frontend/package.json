@@ -30,6 +30,7 @@
     "source-map-js": "1.2.2",
     "next": {
       "postcss": "$postcss"
-    }
+    },
+    "postcss-selector-parser": "6.1.5"
   }
 }
