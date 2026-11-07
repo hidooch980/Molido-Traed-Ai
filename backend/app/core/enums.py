@@ -17,6 +17,7 @@ class Timeframe(StrEnum):
     M15 = "M15"
     M30 = "M30"
     H1 = "H1"
+    H3 = "H3"
     H4 = "H4"
     D1 = "D1"
     W1 = "W1"
@@ -38,6 +39,7 @@ _TIMEFRAME_DELTAS: dict[Timeframe, timedelta] = {
     Timeframe.M15: timedelta(minutes=15),
     Timeframe.M30: timedelta(minutes=30),
     Timeframe.H1: timedelta(hours=1),
+    Timeframe.H3: timedelta(hours=3),
     Timeframe.H4: timedelta(hours=4),
     Timeframe.D1: timedelta(days=1),
     Timeframe.W1: timedelta(weeks=1),

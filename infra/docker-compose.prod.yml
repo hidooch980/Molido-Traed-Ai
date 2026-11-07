@@ -278,7 +278,8 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
-    command: ["arq", "app.workers.collector.WorkerSettings"]
+    command: ["arq", "app.workers.collector_release.WorkerSettings"]
+    stop_grace_period: 1530s
     # Overrides the image's healthcheck, which curls :8000. This worker has
     # never listened on a port, so that probe reported `unhealthy` for its
     # entire life while writing fifty-four bars a cycle with zero failures -

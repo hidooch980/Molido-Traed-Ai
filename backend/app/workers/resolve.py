@@ -57,6 +57,7 @@ from app.core.enums import Timeframe
 from app.models.instruments import Instrument, Provider
 from app.models.journal import JournalEntry
 from app.models.market_data import Bar
+from app.services.bar_revisions import latest_bar_query
 
 #: Bars to wait before giving up on an entry. The same horizon the measurement
 #: used - a forward series scored over a different window is a different
@@ -321,8 +322,7 @@ def resolve_open(
         scale = entry.timeframe or timeframe.value
 
         bars = session.scalars(
-            select(Bar)
-            .where(
+            latest_bar_query(
                 Bar.instrument_id == instrument.id,
                 Bar.timeframe == scale,
                 # The series the decision was taken on, never the other one.
@@ -330,9 +330,9 @@ def resolve_open(
                 # being measured is a fiftieth of it.
                 Bar.provider_id == provider_id,
                 Bar.event_time > entry.opened_at,
-                Bar.event_time <= moment,
+                Bar.event_time <= moment - Timeframe(scale).delta,
+                Bar.ingested_at <= moment,
             )
-            .order_by(Bar.event_time)
             .limit(HORIZON)
         ).all()
 

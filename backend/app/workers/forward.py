@@ -97,6 +97,7 @@ def snapshot(
     as_of: datetime | None = None,
     provider_code: str = SOURCE_PUBLIC,
     lookback: int = LOOKBACK,
+    event_cutoff: datetime | None = None,
 ) -> tuple[dict[str, dict[str, Any]], datetime | None]:
     """The last `LOOKBACK` closed bars for every instrument, and their instant.
 
@@ -104,7 +105,13 @@ def snapshot(
     from whatever each instrument last published would rank an instrument's
     Tuesday against another's Wednesday, and call the difference a signal.
     """
-    ceiling = (as_of or datetime.now(UTC)).astimezone(UTC)
+    from app.services.point_in_time import _require_utc
+
+    known_at = _require_utc(as_of or datetime.now(UTC), "as_of")
+    # Event timestamps label bar opens; only closed, already received bars exist.
+    ceiling = known_at - timeframe.delta
+    if event_cutoff is not None:
+        ceiling = min(ceiling, _require_utc(event_cutoff, "event_cutoff"))
     # Active only. Two truncated duplicates of live symbols - left behind by an
     # old symbol-normalising bug - were still being ranked against the real
     # ones, and one was picked on the first live cycle. Deactivating them is
@@ -130,7 +137,8 @@ def snapshot(
         return {}, None
 
     instant = _instant(
-        session, instruments, timeframe=timeframe, ceiling=ceiling, provider_id=provider_id
+        session, instruments, timeframe=timeframe, ceiling=ceiling,
+        provider_id=provider_id, known_at=known_at
     )
     if instant is None:
         return {}, None
@@ -146,7 +154,7 @@ def snapshot(
         return {}, instant
 
     def newest_bars(ids: list[uuid.UUID], start: datetime | None) -> list[Any]:
-        bounds = [Bar.event_time <= cutoff]
+        bounds = [Bar.event_time <= cutoff, Bar.ingested_at <= known_at]
         if start is not None:
             bounds.append(Bar.event_time >= start)
         latest_revision = (
@@ -238,6 +246,7 @@ def _instant(
     timeframe: Timeframe,
     ceiling: datetime,
     provider_id: uuid.UUID,
+    known_at: datetime,
 ) -> datetime | None:
     """The most recent moment where enough instruments actually have a bar.
 
@@ -262,6 +271,7 @@ def _instant(
             Bar.timeframe == timeframe.value,
             Bar.provider_id == provider_id,
             Bar.event_time <= ceiling,
+            Bar.ingested_at <= known_at,
         ]
         if floor is not None:
             conditions.append(Bar.event_time >= floor)
@@ -285,6 +295,7 @@ def _instant(
             Bar.timeframe == timeframe.value,
             Bar.provider_id == provider_id,
             Bar.event_time <= ceiling,
+            Bar.ingested_at <= known_at,
         ]
         if floor is not None:
             conditions.append(Bar.event_time >= floor)
@@ -354,6 +365,7 @@ def _record_candidates(
     built: dict[str, dict[str, Any]],
     *,
     at: datetime,
+    known_at: datetime,
     timeframe: Timeframe,
     price_source: str,
     account_key: str | None,
@@ -387,7 +399,8 @@ def _record_candidates(
         deep, _ = snapshot(
             session,
             timeframe=timeframe,
-            as_of=at,
+            as_of=known_at,
+            event_cutoff=at,
             provider_code=price_source,
             lookback=deep_need,
         )
@@ -425,6 +438,7 @@ def _record_candidates(
                     account_key=account_key,
                     before={
                         "rule": name,
+                        "observed_at": known_at.isoformat(),
                         # Absent rather than 0.5 when a rule reports no
                         # strength. A made-up middle would enter the
                         # reliability curve as though it were evidence.
@@ -457,6 +471,28 @@ def _record_candidates(
 #: structural and permanent. Two is the first amount that means something.
 MAX_FEED_LAG_BARS = 2
 
+#: Bars of open-market time past its close after which a broker series is
+#: too old to decide on. The live-bars pass's own threshold, plus its grace.
+STALE_AFTER_BARS = 3.0
+
+
+def _market_lag_bars(
+    session: Session, latest: datetime, timeframe: Timeframe, as_of: datetime | None
+) -> float | None:
+    """How many bars of market time have passed since the newest bar closed."""
+    from app.workers import live_bars
+
+    if timeframe.is_calendar_based:
+        return None
+    moment = (as_of or datetime.now(UTC)).astimezone(UTC)
+    shift = live_bars.infer_shift(session, moment)
+    if shift is None:
+        return None
+    stamp = latest if latest.tzinfo is not None else latest.replace(tzinfo=UTC)
+    lag = live_bars.open_seconds(stamp + timeframe.delta, moment, shift)
+    grace = live_bars.PUBLISH_GRACE.total_seconds()
+    return max(0.0, lag - grace) / timeframe.delta.total_seconds()
+
 
 def record_cycle(
     session: Session,
@@ -474,8 +510,9 @@ def record_cycle(
     """
 
     from app.learning import rules as rules_module
+    moment = (as_of or datetime.now(UTC)).astimezone(UTC)
     built, latest = snapshot(
-        session, timeframe=timeframe, as_of=as_of, provider_code=price_source
+        session, timeframe=timeframe, as_of=moment, provider_code=price_source
     )
     if latest is None:
         return {
@@ -551,6 +588,8 @@ def record_cycle(
                 # Only a public bar newer than this series' own can put it
                 # behind; with none, the answer is "not behind" either way.
                 Bar.event_time > latest,
+                Bar.event_time <= moment - timeframe.delta,
+                Bar.ingested_at <= moment,
             )
         )
         if public_newest is not None:
@@ -570,6 +609,29 @@ def record_cycle(
                     "considered": len(built),
                     "feed_lag_bars": round(behind / timeframe.delta, 2),
                 }
+
+    # And a broker series that has stopped on the clock must not be decided on.
+    #
+    # The check above compares the two feeds, so it stays quiet when both
+    # stop together - a public feed that is also late, a holiday the public
+    # source keeps quoting through. This one measures the series' newest bar
+    # against the clock in open-market time on the broker's own week, so a
+    # Friday close read on a Saturday is still current and a Tuesday morning
+    # three bars behind is not. It fails open: with no derived daily bar to
+    # read the broker's clock from, it says nothing rather than guess.
+    if price_source != SOURCE_PUBLIC:
+        lag_bars = _market_lag_bars(session, latest, timeframe, as_of)
+        if lag_bars is not None and lag_bars > STALE_AFTER_BARS:
+            return {
+                "recorded": 0,
+                "reason": (
+                    f"the {price_source} {timeframe.value} series is {lag_bars:.1f} bars "
+                    f"of market time old (newest {latest.isoformat()}), more than "
+                    f"{STALE_AFTER_BARS:g}, so no decision is taken on it"
+                ),
+                "considered": len(built),
+                "market_lag_bars": round(lag_bars, 2),
+            }
 
     # An instrument the market has already answered must not be decided on.
     #
@@ -603,6 +665,8 @@ def record_cycle(
             # nothing older needs reading - and without a time constant the
             # planner opened all 265 chunks: 4.7 s planning, 2.2 s running.
             Bar.event_time > latest,
+            Bar.event_time <= moment - timeframe.delta,
+            Bar.ingested_at <= moment,
         )
         .group_by(Instrument.symbol)
     ).all()
@@ -661,6 +725,7 @@ def record_cycle(
                 account_key=account_key,
                 before={
                     "rule": "cross-sectional-stretch",
+                    "observed_at": moment.isoformat(),
                     "stretch": round(pick.stretch, 4),
                     # How strongly the rule wanted this one, 0..1.
                     #
@@ -720,6 +785,7 @@ def record_cycle(
         session,
         built,
         at=latest,
+        known_at=moment,
         timeframe=timeframe,
         price_source=price_source,
         account_key=account_key,

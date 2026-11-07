@@ -78,6 +78,11 @@ class Offset:
     error_pips: float | None
     runner_up_pips: float | None
     reason: str | None = None
+    #: Broker-stamped first bar this offset is true for, or None for the whole
+    #: file. Set when the broker's clock moved (daylight saving) inside the
+    #: published window: bars before it were on the old clock and are already
+    #: stored at the right instants, so they must not be re-filed at the new one.
+    valid_from: datetime | None = None
 
     @property
     def known(self) -> bool:
@@ -91,6 +96,7 @@ class Offset:
             "error_pips": self.error_pips,
             "runner_up_pips": self.runner_up_pips,
             "reason": self.reason,
+            "valid_from": None if self.valid_from is None else self.valid_from.isoformat(),
             "note": (
                 "measured by aligning the broker series against the public one, "
                 "not read from a constant. Most brokers move with daylight "
@@ -218,7 +224,11 @@ def public_closes(
     ]
     if since is not None:
         conditions.append(Bar.event_time >= since)
-    rows = session.execute(select(Bar.event_time, Bar.close).where(*conditions)).all()
+    rows = session.execute(
+        select(Bar.event_time, Bar.close)
+        .where(*conditions)
+        .order_by(Bar.event_time, Bar.revision)
+    ).all()
     return {when: float(close) for when, close in rows}
 
 
@@ -246,10 +256,113 @@ def measure(
             Bar.instrument_id == instrument.id,
             Bar.timeframe == timeframe,
             Bar.provider_id == broker_provider,
-        )
+        ).order_by(Bar.event_time, Bar.revision)
     ).all()
 
     return align(
         public_closes(session, symbol=symbol, timeframe=timeframe),
         {when: float(close) for when, close in rows},
+    )
+
+
+#: How far the newest closed bar may sit from a whole-hour offset of the wall
+#: clock and still count as a live reading. Wider than the bridge's publish lag
+#: (seconds to about a minute), far narrower than half an hour. Narrow is not
+#: enough on its own: a stale bar still lands on a whole hour for ten minutes
+#: of every hour, which is what `market_shut` and `DST_STEP_HOURS` are for.
+LIVE_TOLERANCE = timedelta(minutes=5)
+
+#: A broker clock moves by one hour at a daylight-saving change and by nothing
+#: else in normal operation.
+DST_STEP_HOURS = 1
+
+#: FX is shut from Friday's New York close to Sunday's reopen. The close is
+#: 21:00 UTC in US summer time and 22:00 UTC in winter, the reopen the same
+#: hours on Sunday; the window starts an hour early and ends at the later
+#: reopen so both seasons are covered.
+#:
+#: Why it matters (2026-10-30/31): after Friday's close the newest M1 bar stays
+#: put while the wall clock runs on. Once an hour, for ten minutes, the stale
+#: close sits within LIVE_TOLERANCE of a whole hour, and live_hours read that as
+#: the broker's clock: +1h at 21:54 UTC Friday, then -4h ... -12h through
+#: Saturday morning. Every bar ingested in those minutes was written at the
+#: wrong instant - 167 XAUUSD M5 bars on a Saturday, 38 symbols in all.
+FRIDAY, SATURDAY, SUNDAY = 4, 5, 6
+WEEKEND_FROM_HOUR = 20  # Friday, UTC
+WEEKEND_UNTIL_HOUR = 22  # Sunday, UTC
+
+
+def market_shut(now: datetime) -> bool:
+    """True while FX is closed for the weekend, when no bar is a clock."""
+    moment = _aware(now)
+    day, hour = moment.weekday(), moment.hour
+    return (
+        (day == FRIDAY and hour >= WEEKEND_FROM_HOUR)
+        or day == SATURDAY
+        or (day == SUNDAY and hour < WEEKEND_UNTIL_HOUR)
+    )
+
+
+def in_fx_weekend(moment: datetime) -> bool:
+    """True from Friday 21:00 UTC to Sunday 21:00 UTC.
+
+    Covers the FX close in both summer (21:00 UTC) and winter (22:00 UTC) and
+    ends before either Sunday open. A live reading implying a newest close in
+    this window can only come from a frozen Friday bar, so it is refused; the
+    alignment stands, and that offset only re-files bars already stored.
+    """
+    moment = _aware(moment).astimezone(UTC)
+    day, hour = moment.weekday(), moment.hour
+    return (day == 4 and hour >= 21) or day == 5 or (day == 6 and hour < 21)
+
+
+def live_hours(latest_close: Any, now: datetime) -> int | None:
+    """The offset the terminal's clock shows right now, or None.
+
+    `latest_close` is the broker-stamped close of the newest closed bar (its
+    open plus one bar). While the market trades that close is a few seconds
+    behind the wall clock in the broker's zone, so the gap rounds to a whole
+    hour. When it does not - market shut, terminal stalled - there is no
+    reading, and the alignment stands.
+    """
+    if latest_close is None or market_shut(now):
+        return None
+    gap = _aware(latest_close) - _aware(now)
+    hours = round(gap / timedelta(hours=1))
+    if abs(gap - timedelta(hours=hours)) > LIVE_TOLERANCE:
+        return None
+    if hours not in CANDIDATES:
+        return None
+    return hours
+
+
+def current(aligned: Offset, latest_close: Any, now: datetime) -> Offset:
+    """The aligned offset, corrected by the live clock when the two disagree.
+
+    Alignment fits the whole published window, usually ten days of H1. On the
+    weekend a broker moves with daylight saving (RoboForex: GMT+3 summer,
+    GMT+2 winter) most of that window still carries the old offset, so the fit
+    keeps returning it for days and every fresh bar looks an hour old. The live
+    clock sees the change on the first bar after the switch.
+    """
+    live = live_hours(latest_close, now)
+    if live is None or live == aligned.hours:
+        return aligned
+    if aligned.hours is not None and abs(live - aligned.hours) != DST_STEP_HOURS:
+        # A daylight-saving move is one hour. Any other disagreement is a stale
+        # bar that happens to sit a whole number of hours behind the wall
+        # clock (a holiday, a stalled terminal), not a new broker clock.
+        return aligned
+    if in_fx_weekend(_aware(latest_close) - timedelta(hours=live)):
+        return aligned
+    was = "unknown" if aligned.hours is None else f"{aligned.hours:+d}h"
+    return Offset(
+        hours=live,
+        overlap=aligned.overlap,
+        error_pips=aligned.error_pips,
+        runner_up_pips=aligned.runner_up_pips,
+        reason=(
+            f"live clock reads {live:+d}h while the window alignment reads {was}; "
+            "the live clock wins (daylight-saving change or broker move)"
+        ),
     )
