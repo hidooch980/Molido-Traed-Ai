@@ -764,13 +764,14 @@ class TestAFeedThatHasFallenBehindTheOtherIsRefused:
 
         for symbol in sorted(RANKED_UNIVERSE)[:30]:
             instrument = session.query(Instrument).filter_by(symbol=symbol).one()
-            for i in range(forward.LOOKBACK):
+            # Keep LOOKBACK closed bars even when `upto` labels a forming bar.
+            for i in range(forward.LOOKBACK + 1):
                 session.add(
                     Bar(
                         instrument_id=instrument.id,
                         timeframe=Timeframe.H1.value,
                         provider_id=row.id,
-                        event_time=upto - timedelta(hours=forward.LOOKBACK - 1 - i),
+                        event_time=upto - timedelta(hours=forward.LOOKBACK - i),
                         revision=1,
                         ingested_at=upto,
                         open=100.0,

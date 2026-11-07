@@ -12,7 +12,7 @@ adjacent to what it will do.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy import select
@@ -143,10 +143,11 @@ def broker_bars_for(session, symbol: str) -> int:
     from app.models.instruments import Provider
 
     return (
-        session.query(Bar)
+        session.query(Bar.event_time)
         .join(Instrument, Instrument.id == Bar.instrument_id)
         .join(Provider, Provider.id == Bar.provider_id)
         .filter(Instrument.symbol == symbol, Provider.code == broker_bars.PROVIDER_CODE)
+        .distinct()
         .count()
     )
 
@@ -236,20 +237,24 @@ class TestRepublishingDoesNotMultiplyTheSeries:
 
         assert broker_bars_for(session, "XAUUSD") == 3
 
-    def test_a_revised_price_overwrites(self, session, bridge):
+    def test_a_revised_price_preserves_the_previous_observation(self, session, bridge):
         bridge(base=2300.0)
         broker_bars.ingest(session, directory=bridge.directory, now=NOW)
         bridge(base=2400.0)
-        broker_bars.ingest(session, directory=bridge.directory, now=NOW)
+        broker_bars.ingest(session, directory=bridge.directory, now=NOW + timedelta(seconds=1))
 
-        first = (
+        revisions = (
             session.query(Bar)
             .join(Instrument, Instrument.id == Bar.instrument_id)
             .filter(Instrument.symbol == "XAUUSD")
-            .order_by(Bar.event_time)
-            .first()
+            .order_by(Bar.event_time, Bar.revision)
+            .all()
         )
-        assert float(first.open) == 2400.0
+        assert len(revisions) == 6
+        assert (revisions[0].revision, float(revisions[0].open)) == (1, 2300.0)
+        assert (revisions[1].revision, float(revisions[1].open)) == (2, 2400.0)
+        assert revisions[0].ingested_at == NOW
+        assert revisions[1].ingested_at == NOW + timedelta(seconds=1)
 
 
 class TestSettledBarsAreNotRewritten:
