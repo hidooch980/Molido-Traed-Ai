@@ -284,7 +284,7 @@ def derive(
         return {"derived": 0, "reason": "no broker bars are stored yet"}
     derived = _provider_id(session, DERIVED_PROVIDER, create=True)
 
-    instruments = dict(session.execute(select(Instrument.id, Instrument.symbol)).all())
+    instruments = dict(session.execute(select(Instrument.id, Instrument.symbol)).tuples().all())
     wanted = set(instruments)
     if only_symbols is not None:
         names = set(only_symbols)
@@ -305,7 +305,7 @@ def derive(
                 Bar.event_time >= floor,
             )
             .group_by(Bar.instrument_id)
-        ).all()
+        ).tuples().all()
     )
     starts: dict[Any, datetime] = {}
     for instrument_id in wanted:
