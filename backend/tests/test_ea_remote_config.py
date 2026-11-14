@@ -9,7 +9,8 @@ import re
 from app.services import ea_config
 
 EA = pathlib.Path(__file__).resolve().parents[2] / "infra" / "mql5" / "MolidoBridge.mq5"
-SRC = EA.read_text(encoding="utf-8")
+RUNTIME = EA.parent / "MolidoRuntime.mqh"
+SRC = RUNTIME.read_text(encoding="utf-8") if RUNTIME.is_file() else EA.read_text(encoding="utf-8")
 
 
 def _remote_section() -> str:
@@ -17,30 +18,38 @@ def _remote_section() -> str:
 
 
 def test_checksum_file_matches_the_expert():
-    recorded = (EA.parent / "MolidoBridge.mq5.sha256").read_text().split()[0]
-    assert recorded == hashlib.sha256(EA.read_bytes()).hexdigest()
+    for name in ("MolidoBridge.mq5", "MolidoRuntime.mqh"):
+        path = EA.parent / name
+        recorded = (EA.parent / f"{name}.sha256").read_text().split()[0]
+        assert recorded == hashlib.sha256(path.read_bytes()).hexdigest(), name
 
 
 def test_version_define_matches_property():
-    define = re.search(r'#define MOLIDO_EA_VERSION "([0-9.]+)"', SRC).group(1)
-    prop = re.search(r'#property version\s+"([0-9.]+)"', SRC).group(1)
+    wrapper = EA.read_text(encoding="utf-8")
+    define = re.search(r'#define MOLIDO_EA_VERSION\s+"([0-9.]+)"', wrapper).group(1)
+    prop = re.search(r'#property version\s+"([0-9.]+)"', wrapper).group(1)
     assert define == prop == ea_config.ea_release()["ea_latest_version"]
 
 
 def test_guards_stay_hard_coded():
     assert "input bool   AllowTrading    = true;" in SRC
     assert "input bool   AllowRealAccount = false;" in SRC
-    assert "input long ExpectedLogin = 68531270;" in SRC
+    assert 'input string AllowedLogins     = "68531270";' in SRC
+    assert 'input string AllowedRealLogins = "";' in SRC
+    assert "AccountProfile = MOLIDO_DEFAULT_PROFILE" in SRC
+    assert "AutoSymbolMode      = MOLIDO_DEFAULT_AUTO;" in SRC
     assert "EnableDemoScalper   = true;" in SRC
     assert "ScalperKillSwitch   = false;" in SRC
     assert "MaxLots         = 2.00;" in SRC
     remote = _remote_section()
-    for guard in ("AllowTrading", "AllowRealAccount", "ExpectedLogin",
-                  "EnableDemoScalper", "ScalperKillSwitch"):
+    for guard in ("AllowTrading", "AllowRealAccount", "AllowedLogins",
+                  "AllowedRealLogins", "AccountProfile", "EnableDemoScalper",
+                  "ScalperKillSwitch", "AutoSymbolMode"):
         assert re.search(rf"\b{guard}\s*=", remote) is None
         assert f'JsonValue(body, "{guard}' not in remote
     for name in ("g_AllowTrading", "g_AllowRealAccount", "g_ExpectedLogin",
-                 "g_EnableDemoScalper", "g_ScalperKillSwitch"):
+                 "g_AllowedLogins", "g_AllowedRealLogins", "g_AccountProfile",
+                 "g_EnableDemoScalper", "g_ScalperKillSwitch", "g_AutoSymbolMode"):
         assert name not in SRC
 
 
@@ -58,8 +67,9 @@ def test_config_payload(monkeypatch):
     assert out["symbols_csv"] == "EURUSD,XAUUSD,GBPUSD."
     assert out["refresh_seconds"] == 5 and out["bar_count"] == 5000
     assert out["guards_remote_controllable"] is False
-    assert not {"AllowTrading", "AllowRealAccount", "ExpectedLogin",
-                "EnableDemoScalper", "ScalperKillSwitch"} & set(out)
+    assert not {"AllowTrading", "AllowRealAccount", "AllowedLogins",
+                "AllowedRealLogins", "AccountProfile", "EnableDemoScalper",
+                "ScalperKillSwitch", "AutoSymbolMode"} & set(out)
     assert out["ea_sha256"] == hashlib.sha256(EA.read_bytes()).hexdigest()
     assert "68531270:0.5:2:0:2:2:scalper" in out["demo_risk_caps_csv"]
 
@@ -89,19 +99,26 @@ def test_endpoint_needs_broker_permission_and_returns_config(session, monkeypatc
 
 
 def test_demo_scalper_is_included_and_checksummed():
-    for name in ("MolidoDemoScalper.mqh", "MolidoNews.mqh", "MolidoDashboard.mqh"):
+    for name in ("MolidoShared.mqh", "MolidoRuntime.mqh", "MolidoDemoScalper.mqh", "MolidoNews.mqh", "MolidoSmart.mqh",
+                 "MolidoProtect.mqh", "MolidoUniverse.mqh", "MolidoDashboard.mqh"):
         mqh = EA.parent / name
         assert mqh.is_file(), name
-        assert f'#include "{name}"' in SRC
+        if name != "MolidoRuntime.mqh":
+            assert f'#include "{name}"' in SRC
         recorded = (EA.parent / f"{name}.sha256").read_text().split()[0]
         assert recorded == hashlib.sha256(mqh.read_bytes()).hexdigest()
-    assert '#property version   "1.42"' in SRC
+    assert '#property version     "1.43"' in EA.read_text(encoding="utf-8")
+    assert '#define MOLIDO_EA_VERSION       "1.43"' in EA.read_text(encoding="utf-8") or 'MOLIDO_EA_VERSION "1.43"' in SRC
     assert "NEWS_AVOID" in SRC and "NEWS_TRADE" in SRC
     assert "RISK_PRESET_FTMO" in SRC
     remote = _remote_section()
     assert 'JsonValue(body, "NewsMode")' not in remote
     assert 'JsonValue(body, "RiskPreset")' not in remote
     assert 'JsonValue(body, "AllowRealAccount")' not in remote
+    assert 'JsonValue(body, "AccountProfile")' not in remote
+    assert 'JsonValue(body, "AllowedLogins")' not in remote
+    assert 'JsonValue(body, "AutoSymbolMode")' not in remote
+    assert 'JsonValue(body, "DashFontScale")' not in remote
 
 
 def test_demo_risk_caps_are_clamped_and_demo_only(monkeypatch):
@@ -114,9 +131,42 @@ def test_demo_risk_caps_are_clamped_and_demo_only(monkeypatch):
     assert "not-a-login" not in csv
     monkeypatch.setenv("MOLIDO_EA_DEMO_RISK_CAPS", "99:0.2:1:0:0.5:1:scalper")
     monkeypatch.setenv("MOLIDO_EA_NEWS_EVENTS", "2026.11.14 20:30|USD|HIGH|NFP")
+    monkeypatch.setenv("MOLIDO_EA_CONSENSUS", "XAUUSD:buy:2026.11.14 22:00;bad:nope")
+    monkeypatch.setenv("MOLIDO_EA_RANKING", "XAUUSD:120;EURUSD:80;BAD NAME:1")
     out = ea_config.config()
     assert "99:0.2:1:0:0.5:1:scalper" in out["demo_risk_caps_csv"]
     assert "68531270:" in out["demo_risk_caps_csv"]
     assert out["news_events_csv"].endswith("NFP")
+    assert "XAUUSD:buy:" in out["consensus_csv"] and "bad" not in out["consensus_csv"]
+    assert out["ranking_csv"] == "XAUUSD:100;EURUSD:80"
     assert out["guards_remote_controllable"] is False
     assert "AllowRealAccount" not in out and "AllowTrading" not in out
+
+
+def test_split_eas_have_unique_magics():
+    root = EA.parent
+    eas = {
+        "MolidoBridge.mq5": 685317,
+        "Molido_Demo.mq5": 685401,
+        "Molido_Prop.mq5": 685402,
+        "Molido_Live.mq5": 685403,
+        "Molido_Scalper.mq5": 685404,
+        "Molido_News.mq5": 685405,
+        "Molido_Trend.mq5": 685406,
+        "Molido_AutoPortfolio.mq5": 685407,
+    }
+    seen = set()
+    for name, magic in eas.items():
+        text = (root / name).read_text(encoding="utf-8")
+        assert f"#define MOLIDO_MAGIC            {magic}" in text, name
+        assert '#include "MolidoRuntime.mqh"' in text
+        assert magic not in seen
+        seen.add(magic)
+        recorded = (root / f"{name}.sha256").read_text().split()[0]
+        assert recorded == hashlib.sha256((root / name).read_bytes()).hexdigest()
+    shared = (root / "MolidoShared.mqh").read_text(encoding="utf-8")
+    assert "IsMolidoMagic" in shared and "Molido.Coord." in shared
+    assert "PROFILE_PROP_FTMO" in (root / "Molido_Prop.mq5").read_text(encoding="utf-8")
+    assert "PROFILE_LIVE_REAL" in (root / "Molido_Live.mq5").read_text(encoding="utf-8")
+    assert "STRAT_TREND" in (root / "Molido_Trend.mq5").read_text(encoding="utf-8")
+    assert "STRAT_AUTO" in (root / "Molido_AutoPortfolio.mq5").read_text(encoding="utf-8")

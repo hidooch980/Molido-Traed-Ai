@@ -2,8 +2,8 @@
 
 Only tunables are served: symbol list, refresh period, bar counts, and the
 latest EA version with its checksum and download URL. The EA's safety inputs
-(AllowTrading, AllowRealAccount, ExpectedLogin, EnableDemoScalper,
-ScalperKillSwitch) are not part of this payload
+(AllowTrading, AllowRealAccount, AllowedLogins, AllowedRealLogins,
+AccountProfile, EnableDemoScalper, ScalperKillSwitch) are not part of this payload
 and the EA has no code path that would read them from it.
 
 Everything is environment-driven; an unset value is omitted so the EA keeps its
@@ -16,6 +16,8 @@ own setting:
     MOLIDO_EA_DOWNLOAD_URL       where the updater fetches the .mq5
     MOLIDO_EA_DEMO_RISK_CAPS     per-demo-login caps (login:risk:daily:dd:lots:pos:preset)
     MOLIDO_EA_NEWS_EVENTS        optional calendar rows (time|CCY|HIGH|name;...)
+    MOLIDO_EA_CONSENSUS          optional veto rows (SYMBOL:buy|sell|wait|block:until)
+    MOLIDO_EA_RANKING            optional rocket/agent ranks (SYMBOL:0-100;...)
 """
 
 from __future__ import annotations
@@ -29,7 +31,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 EA_FILE = pathlib.Path(__file__).resolve().parents[3] / "infra" / "mql5" / "MolidoBridge.mq5"
-_VERSION = re.compile(r'#define MOLIDO_EA_VERSION "([0-9.]+)"')
+_VERSION = re.compile(r'#define MOLIDO_EA_VERSION\s+"([0-9.]+)"')
 _SYMBOL = re.compile(r"^[A-Za-z0-9._#-]{1,32}$")
 LIMITS = {"refresh_seconds": (5, 300), "bar_count": (50, 5000), "intraday_bar_count": (50, 2000),
           "tick_count": (0, 1000)}
@@ -105,6 +107,49 @@ def demo_risk_caps_csv(raw: str | None = None) -> str:
 
 
 
+_CONSENSUS_SIDE = {"buy", "sell", "wait", "block"}
+
+
+def consensus_csv(raw: str | None = None) -> str:
+    """Sanitize server consensus rows. This is a veto only; it cannot loosen filters."""
+    text = raw if raw is not None else os.environ.get("MOLIDO_EA_CONSENSUS", "")
+    rows: list[str] = []
+    for row in text.replace(",", ";").split(";"):
+        row = row.strip()
+        if not row:
+            continue
+        parts = row.split(":", 2)
+        if len(parts) < 2:
+            continue
+        symbol, side = parts[0].strip().upper(), parts[1].strip().lower()
+        until = parts[2].strip() if len(parts) > 2 else ""
+        if not _SYMBOL.match(symbol) or side not in _CONSENSUS_SIDE:
+            continue
+        rows.append(f"{symbol}:{side}:{until}" if until else f"{symbol}:{side}")
+    return ";".join(rows)
+
+
+def ranking_csv(raw: str | None = None) -> str:
+    """Sanitize optional agent/Rocket ranks. Bonus only; cannot loosen EA filters."""
+    text = raw if raw is not None else os.environ.get("MOLIDO_EA_RANKING", "")
+    rows: list[str] = []
+    for row in text.replace(",", ";").split(";"):
+        row = row.strip()
+        if not row or ":" not in row:
+            continue
+        name, _, val = row.partition(":")
+        symbol = name.strip().upper()
+        if not _SYMBOL.match(symbol):
+            continue
+        try:
+            score = float(val.strip())
+        except ValueError:
+            continue
+        score = max(0.0, min(100.0, score))
+        rows.append(f"{symbol}:{score:g}")
+    return ";".join(rows)
+
+
 def config(session: Session | None = None, *, running_version: str | None = None) -> dict[str, Any]:
     out: dict[str, Any] = {"schema": 1}
     symbols = _symbols(session)
@@ -123,6 +168,12 @@ def config(session: Session | None = None, *, running_version: str | None = None
     news = os.environ.get("MOLIDO_EA_NEWS_EVENTS", "").strip()
     if news:
         out["news_events_csv"] = news
+    consensus = consensus_csv()
+    if consensus:
+        out["consensus_csv"] = consensus
+    ranks = ranking_csv()
+    if ranks:
+        out["ranking_csv"] = ranks
     out["config_version"] = hashlib.sha256(
         repr(sorted((k, v) for k, v in out.items())).encode()).hexdigest()[:16]
     out["guards_remote_controllable"] = False

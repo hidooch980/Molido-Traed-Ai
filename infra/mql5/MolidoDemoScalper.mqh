@@ -12,13 +12,15 @@
 //| the Risk Brain is final. Every decision is logged.               |
 //|                                                                  |
 //| Mirrors backend/app/agents/demo_scalper.py. Does not run on a    |
-//| real or contest account, even if AllowRealAccount is later set.  |
+//| real account unless LIVE_REAL is explicitly unlocked (allowlist  |
+//| AllowedRealLogins, default empty, plus AllowRealAccount=true).   |
 //+------------------------------------------------------------------+
 #ifndef MOLIDO_DEMO_SCALPER_MQH
 #define MOLIDO_DEMO_SCALPER_MQH
 
+#include "MolidoShared.mqh"
+
 #define DEMO_SCALPER_LOGIN      68531270
-#define DEMO_SCALPER_MAGIC      685317
 #define DEMO_HARD_MAX_LOTS      2.0
 #define DEMO_RISK_PCT           0.5
 #define DEMO_DAILY_LOSS_PCT     2.0
@@ -64,6 +66,20 @@ datetime g_demo_entries_day = 0;
 
 bool DemoNewsGateNewEntries();
 bool DemoNewsTradeActive();
+bool DemoDailyPnlPct(double &pnl_pct);
+bool ProfileIsProp();
+bool ProfileTargetReached();
+double ProfileProfitPct(double &start_eq);
+double PropClampedRiskPct();
+bool DemoSmartAllowEntry(const string symbol, const string side, string &why);
+void DemoManagePositions();
+bool DemoProtectAllowEntry(const string symbol, const string side, string &why);
+void DemoProtectOnTick();
+bool AutoRescan();
+void AutoRefreshIfDue();
+void DemoJournalShot(const string kind, const string symbol, const ulong ticket);
+double DemoSafeModeFactor();
+bool DemoSafeModeStopped();
 
 string g_last_verdict        = "—";
 string g_last_reason         = "";
@@ -139,9 +155,89 @@ void ApplyDemoRiskCaps(const string csv)
 double DemoActiveRiskPct()
   {
    DemoCaps cap;
+   double hard = HARD_MAX_RISK_PCT;
+   double base = DEMO_RISK_PCT;
+   if(ProfileIsProp())
+      base = PropClampedRiskPct();
    if(DemoCapsFor(AccountInfoInteger(ACCOUNT_LOGIN), cap))
-      return(MathMin(cap.risk_pct, HARD_MAX_RISK_PCT));
-   return(MathMin(DEMO_RISK_PCT, HARD_MAX_RISK_PCT));
+     {
+      double v = MathMin(cap.risk_pct, hard);
+      if(ProfileIsProp())
+         v = MathMin(v, base);
+      return(v);
+     }
+   return(MathMin(base, hard));
+  }
+
+bool ProfileIsFtmo()
+  {
+   return(AccountProfile == PROFILE_PROP_FTMO);
+  }
+
+bool ProfileIsProp()
+  {
+   return(AccountProfile == PROFILE_PROP_FTMO || AccountProfile == PROFILE_PROP_GENERIC);
+  }
+
+bool ProfileForceNewsAvoid()
+  {
+   return(ProfileIsProp() && PropForceNewsAvoid);
+  }
+
+bool ProfileUsesWeekendHold()
+  {
+   return(ProfileIsProp() && PropNoWeekendHold);
+  }
+
+string ProfileName()
+  {
+   if(AccountProfile == PROFILE_PROP_FTMO)
+      return("FTMO");
+   if(AccountProfile == PROFILE_PROP_GENERIC)
+      return("PROP");
+   if(AccountProfile == PROFILE_LIVE_REAL)
+      return("LIVE");
+   if(RiskPreset == RISK_PRESET_FTMO)
+      return("Demo/FTMO");
+   return("DEMO");
+  }
+
+double ProfileProfitTargetPct()
+  {
+   if(AccountProfile == PROFILE_PROP_FTMO)
+     {
+      double v = PropProfitTargetPct;
+      if(v < 0.0) v = 0.0;
+      if(v > 30.0) v = 30.0;
+      return(v);
+     }
+   if(AccountProfile == PROFILE_PROP_GENERIC)
+     {
+      double v = PropGenericProfitTargetPct;
+      if(v < 0.0) v = 0.0;
+      if(v > 50.0) v = 50.0;
+      return(v);
+     }
+   return(0.0);
+  }
+
+int ProfileMinTradingDays()
+  {
+   if(AccountProfile == PROFILE_PROP_FTMO)
+     {
+      int v = PropMinTradingDays;
+      if(v < 0) v = 0;
+      if(v > 30) v = 30;
+      return(v);
+     }
+   if(AccountProfile == PROFILE_PROP_GENERIC)
+     {
+      int v = PropGenericMinTradingDays;
+      if(v < 0) v = 0;
+      if(v > 30) v = 30;
+      return(v);
+     }
+   return(0);
   }
 
 double DemoActiveDailyPct()
@@ -149,8 +245,15 @@ double DemoActiveDailyPct()
    DemoCaps cap;
    if(DemoCapsFor(AccountInfoInteger(ACCOUNT_LOGIN), cap))
       return(MathMin(cap.daily_pct, HARD_MAX_DAILY_PCT));
-   if(RiskPreset == RISK_PRESET_FTMO)
+   if(AccountProfile == PROFILE_PROP_FTMO || RiskPreset == RISK_PRESET_FTMO)
       return(MathMin(FTMO_DAILY_LOSS_PCT, HARD_MAX_DAILY_PCT));
+   if(AccountProfile == PROFILE_PROP_GENERIC)
+     {
+      double v = PropGenericDailyLossPct;
+      if(v < 0.1) v = 0.1;
+      if(v > HARD_MAX_DAILY_PCT) v = HARD_MAX_DAILY_PCT;
+      return(v);
+     }
    return(MathMin(DEMO_DAILY_LOSS_PCT, HARD_MAX_DAILY_PCT));
   }
 
@@ -159,8 +262,15 @@ double DemoActiveMaxDdPct()
    DemoCaps cap;
    if(DemoCapsFor(AccountInfoInteger(ACCOUNT_LOGIN), cap))
       return(MathMin(cap.max_dd_pct, HARD_MAX_DD_PCT));
-   if(RiskPreset == RISK_PRESET_FTMO)
+   if(AccountProfile == PROFILE_PROP_FTMO || RiskPreset == RISK_PRESET_FTMO)
       return(MathMin(FTMO_MAX_DD_PCT, HARD_MAX_DD_PCT));
+   if(AccountProfile == PROFILE_PROP_GENERIC)
+     {
+      double v = PropGenericMaxDdPct;
+      if(v < 0.0) v = 0.0;
+      if(v > HARD_MAX_DD_PCT) v = HARD_MAX_DD_PCT;
+      return(v);
+     }
    return(0.0);
   }
 
@@ -242,6 +352,297 @@ bool DemoMaxDdPct(double &dd_pct, double &start_eq)
    return(true);
   }
 
+double ProfileProfitPct(double &start_eq)
+  {
+   start_eq = 0.0;
+   if(!DemoLoadStartEquity(start_eq) || start_eq <= 0.0)
+      return(0.0);
+   double eq = AccountInfoDouble(ACCOUNT_EQUITY);
+   return(100.0 * (eq - start_eq) / start_eq);
+  }
+
+bool ProfileTargetReached()
+  {
+   double target = ProfileProfitTargetPct();
+   if(target <= 0.0)
+      return(false);
+   double start_eq = 0.0;
+   return(ProfileProfitPct(start_eq) >= target);
+  }
+
+double PropClampedRiskPct()
+  {
+   double v = PropRiskPct;
+   if(v < 0.05) v = 0.05;
+   if(v > HARD_MAX_RISK_PCT) v = HARD_MAX_RISK_PCT;
+   return(v);
+  }
+
+double PropDailyBufferFracClamped()
+  {
+   double v = PropDailyBufferFrac;
+   if(v < 0.50) v = 0.50;
+   if(v > 1.0) v = 1.0;
+   return(v);
+  }
+
+double PropDdBufferFracClamped()
+  {
+   double v = PropDdBufferFrac;
+   if(v < 0.50) v = 0.50;
+   if(v > 1.0) v = 1.0;
+   return(v);
+  }
+
+double DemoEffectiveDailyStopPct()
+  {
+   double cap = DemoActiveDailyPct();
+   if(ProfileIsProp())
+      return(cap * PropDailyBufferFracClamped());
+   return(cap);
+  }
+
+double DemoEffectiveDdStopPct()
+  {
+   double cap = DemoActiveMaxDdPct();
+   if(cap <= 0.0)
+      return(0.0);
+   if(ProfileIsProp())
+      return(cap * PropDdBufferFracClamped());
+   return(cap);
+  }
+
+double ProfileTargetProgress()
+  {
+   double target = ProfileProfitTargetPct();
+   if(target <= 0.0)
+      return(0.0);
+   double start_eq = 0.0;
+   return(ProfileProfitPct(start_eq) / target);
+  }
+
+double ProfilePaceFactor()
+  {
+   if(!ProfileIsProp())
+      return(1.0);
+   if(ProfileTargetReached())
+      return(0.0);
+   double p = ProfileTargetProgress();
+   double tight = PropPaceTightFrac;
+   double start = PropPaceStartFrac;
+   if(tight < 0.55) tight = 0.55;
+   if(tight > 0.99) tight = 0.99;
+   if(start < 0.40) start = 0.40;
+   if(start > tight) start = tight;
+   if(p >= tight)
+      return(0.25);
+   if(p >= start)
+      return(0.50);
+   return(1.0);
+  }
+
+bool ProfileConsistencyBlocked(string &why)
+  {
+   why = "";
+   if(!ProfileIsProp())
+      return(false);
+   double target = ProfileProfitTargetPct();
+   double share = PropConsistencyDayShare;
+   if(target <= 0.0 || share <= 0.0)
+      return(false);
+   if(share > 100.0) share = 100.0;
+   double day_pct = 0.0;
+   if(!DemoDailyPnlPct(day_pct))
+      return(false);
+   if(day_pct <= 0.0)
+      return(false);
+   double cap_today = target * (share / 100.0);
+   if(day_pct >= cap_today)
+     {
+      why = "consistency: today's profit " + DoubleToString(day_pct, 2) +
+            "% reached " + DoubleToString(share, 0) + "% of the target";
+      return(true);
+     }
+   return(false);
+  }
+
+bool ProfileNearDdBreach(const double planned_risk_pct, string &why)
+  {
+   why = "";
+   if(!ProfileIsProp())
+      return(false);
+   double daily = 0.0;
+   if(!DemoDailyPnlPct(daily))
+     {
+      why = "missing daily P/L near DD check";
+      return(true);
+     }
+   double loss = -MathMin(0.0, daily);
+   double daily_stop = DemoEffectiveDailyStopPct();
+   if(loss >= daily_stop)
+     {
+      why = "daily DD buffer reached (" +
+            DoubleToString(PropDailyBufferFracClamped() * 100.0, 0) + "% of the daily limit)";
+      return(true);
+     }
+   double dd = 0.0, start_eq = 0.0;
+   double dd_stop = DemoEffectiveDdStopPct();
+   if(dd_stop > 0.0)
+     {
+      if(!DemoMaxDdPct(dd, start_eq))
+        {
+         why = "missing drawdown near DD check";
+         return(true);
+        }
+      if(dd >= dd_stop)
+        {
+         why = "overall DD buffer reached (" +
+               DoubleToString(PropDdBufferFracClamped() * 100.0, 0) + "% of max DD)";
+         return(true);
+        }
+     }
+   double room = daily_stop - loss;
+   if(dd_stop > 0.0)
+     {
+      double dd_room = dd_stop - dd;
+      if(dd_room < room)
+         room = dd_room;
+     }
+   if(planned_risk_pct > 0.0 && room <= planned_risk_pct * 1.25)
+     {
+      why = "too close to a DD breach for this risk";
+      return(true);
+     }
+   return(false);
+  }
+
+string ProfileChallengeState()
+  {
+   if(!ProfileIsProp())
+      return(ProfileName());
+   if(ProfileTargetReached())
+      return("TARGET HIT");
+   string why;
+   if(ProfileNearDdBreach(PropClampedRiskPct(), why))
+      return("NEAR DD");
+   if(ProfileConsistencyBlocked(why))
+      return("CONSISTENCY");
+   if(ProfilePaceFactor() < 1.0)
+      return("PACING");
+   return("ON TRACK");
+  }
+
+int ProfileTradingDays()
+  {
+   double start_eq = 0.0;
+   datetime from = 0;
+   if(DemoLoadStartEquity(start_eq))
+      from = TimeCurrent() - 120 * 86400;
+   //--- Fall back to a 120-day window if the start file has no timestamp.
+   if(!HistorySelect(from, TimeCurrent() + 1))
+      return(0);
+   int days[];
+   ArrayResize(days, 0);
+   int n = 0;
+   int total = HistoryDealsTotal();
+   for(int i = 0; i < total; i++)
+     {
+      ulong ticket = HistoryDealGetTicket(i);
+      if(ticket == 0)
+         continue;
+      if((long)HistoryDealGetInteger(ticket, DEAL_MAGIC) != DEMO_SCALPER_MAGIC)
+         continue;
+      datetime t = (datetime)HistoryDealGetInteger(ticket, DEAL_TIME);
+      MqlDateTime dt;
+      TimeToStruct(t, dt);
+      int key = dt.year * 1000 + dt.day_of_year;
+      bool seen = false;
+      for(int k = 0; k < n; k++)
+         if(days[k] == key)
+           {
+            seen = true;
+            break;
+           }
+      if(seen)
+         continue;
+      ArrayResize(days, n + 1);
+      days[n] = key;
+      n++;
+     }
+   return(n);
+  }
+
+bool ProfileInWeekendHoldWindow()
+  {
+   if(!ProfileUsesWeekendHold())
+      return(false);
+   MqlDateTime dt;
+   TimeToStruct(TimeGMT(), dt);
+   if(dt.day_of_week == 6)
+      return(true);
+   if(dt.day_of_week == 0 && dt.hour < 22)
+      return(true);
+   if(dt.day_of_week == 5 && dt.hour >= 21)
+      return(true);
+   return(false);
+  }
+
+void ProfileWeekendFlatten()
+  {
+   if(!ProfileInWeekendHoldWindow())
+      return;
+   if(!DemoAccountOk())
+      return;
+   if(!DemoTerminalTradable())
+      return;
+   static uint last_ms = 0;
+   uint now = GetTickCount();
+   if(last_ms != 0 && (now - last_ms) < 5000)
+      return;
+   last_ms = now;
+   int total = PositionsTotal();
+   for(int i = total - 1; i >= 0; i--)
+     {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket == 0 || !PositionSelectByTicket(ticket))
+         continue;
+      if((long)PositionGetInteger(POSITION_MAGIC) != DEMO_SCALPER_MAGIC)
+         continue;
+      string symbol = PositionGetString(POSITION_SYMBOL);
+      long kind = PositionGetInteger(POSITION_TYPE);
+      double volume = PositionGetDouble(POSITION_VOLUME);
+      if(volume <= 0.0)
+         continue;
+      MqlTradeRequest req;
+      MqlTradeResult  res;
+      ZeroMemory(req);
+      ZeroMemory(res);
+      req.action = TRADE_ACTION_DEAL;
+      req.symbol = symbol;
+      req.volume = volume;
+      req.position = ticket;
+      req.deviation = MaxSlippagePts;
+      req.magic = DEMO_SCALPER_MAGIC;
+      req.comment = "molido-weekend";
+      if(kind == POSITION_TYPE_BUY)
+        {
+         req.type = ORDER_TYPE_SELL;
+         req.price = SymbolInfoDouble(symbol, SYMBOL_BID);
+        }
+      else
+        {
+         req.type = ORDER_TYPE_BUY;
+         req.price = SymbolInfoDouble(symbol, SYMBOL_ASK);
+        }
+      req.type_filling = MolidoFilling(symbol);
+      if(req.price <= 0.0)
+         continue;
+      if(OrderSend(req, res))
+         Print("MolidoScalper: weekend flatten ", symbol, " ticket ", ticket,
+               " retcode ", res.retcode);
+     }
+  }
+
 void DemoScalperStatus(string &status, string &reason)
   {
    status = "ARMED";
@@ -261,7 +662,9 @@ void DemoScalperStatus(string &status, string &reason)
    if(!DemoAccountOk())
      {
       status = "blocked";
-      reason = "not an allowed demo login";
+      reason = (AccountProfile == PROFILE_LIVE_REAL
+                ? "LIVE_REAL hard-locked"
+                : "login not in allowlist");
       return;
      }
    if(DemoKillEngaged())
@@ -284,14 +687,14 @@ void DemoScalperStatus(string &status, string &reason)
       return;
      }
    double loss = -MathMin(0.0, daily);
-   if(loss >= DemoActiveDailyPct())
+   if(loss >= DemoEffectiveDailyStopPct())
      {
       status = "blocked";
-      reason = "daily loss cap";
+      reason = (ProfileIsProp() ? "daily DD buffer" : "daily loss cap");
       return;
      }
    double dd = 0.0, start = 0.0;
-   if(DemoActiveMaxDdPct() > 0.0)
+   if(DemoEffectiveDdStopPct() > 0.0)
      {
       if(!DemoMaxDdPct(dd, start))
         {
@@ -299,12 +702,37 @@ void DemoScalperStatus(string &status, string &reason)
          reason = "missing drawdown data";
          return;
         }
-      if(dd >= DemoActiveMaxDdPct())
+      if(dd >= DemoEffectiveDdStopPct())
         {
          status = "blocked";
-         reason = "max drawdown cap";
+         reason = (ProfileIsProp() ? "overall DD buffer" : "max drawdown cap");
          return;
         }
+     }
+   string cwhy = "";
+   if(ProfileConsistencyBlocked(cwhy))
+     {
+      status = "blocked";
+      reason = cwhy;
+      return;
+     }
+   if(ProfileTargetReached())
+     {
+      status = "blocked";
+      reason = "profit target reached";
+      return;
+     }
+   if(ProfileInWeekendHoldWindow())
+     {
+      status = "blocked";
+      reason = "weekend hold window";
+      return;
+     }
+   if(DemoSafeModeStopped())
+     {
+      status = "blocked";
+      reason = "safe mode until tomorrow";
+      return;
      }
   }
 
@@ -372,13 +800,30 @@ bool DemoAccountOk()
   {
    long mode  = AccountInfoInteger(ACCOUNT_TRADE_MODE);
    long login = AccountInfoInteger(ACCOUNT_LOGIN);
-   if(mode != ACCOUNT_TRADE_MODE_DEMO)
+   if(login <= 0)
       return(false);
-   if(login == DEMO_SCALPER_LOGIN)
-      return(true);
-   DemoCaps cap;
-   //--- Other demos are allowed only when the server config listed them.
-   return(DemoCapsFor(login, cap));
+   if(AccountProfile == PROFILE_LIVE_REAL)
+     {
+      //--- Hard lock: never trade a real account unless every unlock is set.
+      if(mode != ACCOUNT_TRADE_MODE_REAL)
+         return(false);
+      if(!AllowRealAccount)
+         return(false);
+      return(LoginInRealAllowlist(login));
+     }
+   //--- DEMO and PROP profiles never trade a real-money account.
+   if(mode == ACCOUNT_TRADE_MODE_REAL)
+      return(false);
+   if(AccountProfile == PROFILE_DEMO)
+     {
+      if(mode != ACCOUNT_TRADE_MODE_DEMO)
+         return(false);
+      return(LoginInAllowlist(login));
+     }
+   //--- Prop challenges are demo or contest, never real.
+   if(mode != ACCOUNT_TRADE_MODE_DEMO && mode != ACCOUNT_TRADE_MODE_CONTEST)
+      return(false);
+   return(LoginInAllowlist(login));
   }
 
 //+------------------------------------------------------------------+
@@ -389,6 +834,35 @@ bool DemoKillEngaged()
    if(FileIsExist(DEMO_KILL_FILE, FILE_COMMON))
       return(true);
    return(false);
+  }
+
+void DemoKillSet(const bool on)
+  {
+   if(on)
+     {
+      int handle = FileOpen(DEMO_KILL_FILE, FILE_WRITE | FILE_TXT | FILE_ANSI | FILE_COMMON);
+      if(handle == INVALID_HANDLE)
+        {
+         Print("MolidoScalper: cannot write kill switch file (", GetLastError(), ")");
+         return;
+        }
+      FileWriteString(handle, "kill\n");
+      FileClose(handle);
+      Print("MolidoScalper: kill switch file engaged from the dashboard");
+      return;
+     }
+   if(ScalperKillSwitch)
+     {
+      Print("MolidoScalper: cannot clear kill; ScalperKillSwitch input is on");
+      return;
+     }
+   if(FileIsExist(DEMO_KILL_FILE, FILE_COMMON))
+     {
+      if(!FileDelete(DEMO_KILL_FILE, FILE_COMMON))
+         Print("MolidoScalper: could not delete kill switch file (", GetLastError(), ")");
+      else
+         Print("MolidoScalper: kill switch file cleared from the dashboard");
+     }
   }
 
 //+------------------------------------------------------------------+
@@ -480,7 +954,7 @@ bool DemoDailyPnlPct(double &pnl_pct)
 //+------------------------------------------------------------------+
 int DemoOpenCount()
   {
-   return(PositionsTotal());
+   return(CoordOpenCount());
   }
 
 //+------------------------------------------------------------------+
@@ -604,7 +1078,9 @@ ENUM_DEMO_VERDICT DemoReview(const string symbol, const string side,
 
    if(!DemoAccountOk())
      {
-      reasons = "not an allowed demo account";
+      reasons = (AccountProfile == PROFILE_LIVE_REAL
+                 ? "LIVE_REAL hard-locked (AllowRealAccount + AllowedRealLogins)"
+                 : "login not in allowlist or wrong trade mode");
       return(DEMO_BLOCK);
      }
    if(DemoKillEngaged())
@@ -703,33 +1179,62 @@ ENUM_DEMO_VERDICT DemoReview(const string symbol, const string side,
         }
      }
 
+   if(ProfileTargetReached())
+     {
+      reasons = "profit target reached - new entries blocked";
+      return(DEMO_BLOCK);
+     }
+   if(ProfileInWeekendHoldWindow())
+     {
+      reasons = "weekend hold window - no new entries";
+      return(DEMO_BLOCK);
+     }
+
    double loss = -MathMin(0.0, daily_pnl_pct);
    double daily_cap = DemoActiveDailyPct();
-   if(loss >= daily_cap)
+   double daily_stop = DemoEffectiveDailyStopPct();
+   if(loss >= daily_stop)
      {
-      reasons = "daily loss " + DoubleToString(loss, 2) + "% reached limit " +
-                DoubleToString(daily_cap, 2) + "%";
+      reasons = "daily loss " + DoubleToString(loss, 2) + "% reached buffer " +
+                DoubleToString(daily_stop, 2) + "% (limit " + DoubleToString(daily_cap, 2) + "%)";
       return(DEMO_BLOCK);
      }
 
    double dd_pct = 0.0, start_eq = 0.0;
-   if(DemoActiveMaxDdPct() > 0.0)
+   double dd_stop = DemoEffectiveDdStopPct();
+   if(dd_stop > 0.0)
      {
       if(!DemoMaxDdPct(dd_pct, start_eq))
         {
          reasons = "missing: overall drawdown";
          return(DEMO_BLOCK);
         }
-      if(dd_pct >= DemoActiveMaxDdPct())
+      if(dd_pct >= dd_stop)
         {
-         reasons = "max drawdown " + DoubleToString(dd_pct, 2) + "% reached limit " +
-                   DoubleToString(DemoActiveMaxDdPct(), 2) + "%";
+         reasons = "drawdown " + DoubleToString(dd_pct, 2) + "% reached buffer " +
+                   DoubleToString(dd_stop, 2) + "% (limit " +
+                   DoubleToString(DemoActiveMaxDdPct(), 2) + "%)";
          return(DEMO_BLOCK);
         }
      }
 
+   string cwhy = "";
+   if(ProfileConsistencyBlocked(cwhy))
+     {
+      reasons = cwhy;
+      return(DEMO_BLOCK);
+     }
+
    size_factor = 1.0;
-   if(loss >= DEMO_REDUCE_FRACTION * daily_cap)
+   size_factor *= ProfilePaceFactor();
+   if(size_factor <= 0.0)
+     {
+      reasons = "profit target reached - new entries blocked";
+      return(DEMO_BLOCK);
+     }
+   if(size_factor < 1.0)
+      reasons = "profit-target pacing x" + DoubleToString(size_factor, 2);
+   if(loss >= DEMO_REDUCE_FRACTION * daily_stop)
      {
       size_factor *= DEMO_REDUCE_FACTOR;
       reasons = "daily loss " + DoubleToString(loss, 2) + "% past reduce threshold";
@@ -765,7 +1270,30 @@ ENUM_DEMO_VERDICT DemoReview(const string symbol, const string side,
       return(DEMO_BLOCK);
      }
 
+   double safe = DemoSafeModeFactor();
+   if(safe <= 0.0 || DemoSafeModeStopped())
+     {
+      reasons = "safe mode: stop until next day after consecutive losses";
+      return(DEMO_BLOCK);
+     }
+   size_factor *= safe;
+   if(size_factor <= 0.0)
+     {
+      reasons = "safe mode reduced size to zero";
+      return(DEMO_BLOCK);
+     }
    risk_pct = NormalizeDouble(DemoActiveRiskPct() * size_factor, 4);
+   string ddwhy = "";
+   if(ProfileNearDdBreach(risk_pct, ddwhy))
+     {
+      reasons = ddwhy;
+      return(DEMO_BLOCK);
+     }
+   if(!CoordCanOpen(DemoActiveMaxPositions()))
+     {
+      reasons = "account-wide position cap reached (coordinator)";
+      return(DEMO_BLOCK);
+     }
    if(size_factor < 1.0)
       return(DEMO_REDUCE);
    reasons = (reasons == "" ? "all checks passed" : reasons);
@@ -775,6 +1303,8 @@ ENUM_DEMO_VERDICT DemoReview(const string symbol, const string side,
 //+------------------------------------------------------------------+
 bool DemoParseSymbols()
   {
+   if((AutoSymbolMode || StrategyMode == STRAT_AUTO) && AutoRescan())
+      return(true);
    g_demo_n = 0;
    string names[];
    int count = StringSplit(ScalperSymbols, ',', names);
@@ -800,17 +1330,24 @@ bool DemoScalperOnInit()
      {
       if(!DemoAccountOk())
         {
-         Print("MolidoScalper: refusing to start trading - not an allowed DEMO account ",
-               "(mode=", AccountInfoInteger(ACCOUNT_TRADE_MODE),
-               " login=", AccountInfoInteger(ACCOUNT_LOGIN), ")");
-         return(false);
+         Print("MolidoScalper: trading locked - profile=", ProfileName(),
+               " mode=", AccountInfoInteger(ACCOUNT_TRADE_MODE),
+               " login=", AccountInfoInteger(ACCOUNT_LOGIN),
+               (AccountProfile == PROFILE_LIVE_REAL
+                ? " (LIVE_REAL stays hard-locked until AllowRealAccount=true and the login is in AllowedRealLogins)"
+                : " (login must be in AllowedLogins; real accounts are refused)"));
+         //--- Keep the expert running so the dashboard can show the lock.
         }
+      else
+         Print("MolidoScalper: profile ", ProfileName(),
+               " login ", AccountInfoInteger(ACCOUNT_LOGIN), " allowed");
      }
    if(EnableDemoScalper)
      {
       if(!DemoParseSymbols())
         {
-         Print("MolidoScalper: EnableDemoScalper is on but ScalperSymbols is empty");
+         Print("MolidoScalper: EnableDemoScalper is on but no symbols were selected ",
+               "(AutoSymbolMode found none and ScalperSymbols is empty)");
          return(false);
         }
       for(int i = 0; i < g_demo_n; i++)
@@ -908,6 +1445,55 @@ bool DemoSignal(const string symbol, string &side, double &entry, double &sl,
    return(true);
   }
 
+bool DemoTrendSignal(const string symbol, string &side, double &entry, double &sl,
+                     double &tp, double &spread, double &atr, string &why)
+  {
+   side = "";
+   entry = sl = tp = spread = atr = 0.0;
+   why = "";
+   atr = DemoAtr(symbol, PERIOD_M15, DEMO_ATR_PERIOD);
+   if(atr <= 0.0)
+     {
+      why = "missing: M15 ATR";
+      return(false);
+     }
+   double m15_e20 = DemoEma(symbol, PERIOD_M15, 20, 1);
+   double m15_e50 = DemoEma(symbol, PERIOD_M15, 50, 1);
+   double h1_e20  = DemoEma(symbol, PERIOD_H1, 20, 1);
+   double h1_e50  = DemoEma(symbol, PERIOD_H1, 50, 1);
+   double close1  = iClose(symbol, PERIOD_M15, 1);
+   double open1   = iOpen(symbol, PERIOD_M15, 1);
+   if(m15_e20 <= 0.0 || m15_e50 <= 0.0 || h1_e20 <= 0.0 || h1_e50 <= 0.0 || close1 <= 0.0)
+     {
+      why = "missing: M15/H1 trend EMAs";
+      return(false);
+     }
+   MqlTick tick;
+   if(!SymbolInfoTick(symbol, tick) || tick.ask <= 0.0 || tick.bid <= 0.0 || tick.ask < tick.bid)
+     {
+      why = "missing: bid/ask";
+      return(false);
+     }
+   spread = tick.ask - tick.bid;
+   bool up = (h1_e20 > h1_e50 && m15_e20 > m15_e50 && close1 > m15_e20 && close1 > open1);
+   bool dn = (h1_e20 < h1_e50 && m15_e20 < m15_e50 && close1 < m15_e20 && close1 < open1);
+   if(up == dn)
+     {
+      why = "no M15/H1 trend alignment";
+      return(false);
+     }
+   side  = up ? "buy" : "sell";
+   entry = up ? tick.ask : tick.bid;
+   sl    = up ? entry - 1.5 * atr : entry + 1.5 * atr;
+   tp    = up ? entry + 2.5 * atr : entry - 2.5 * atr;
+   if(sl <= 0.0 || tp <= 0.0)
+     {
+      why = "computed stop or target invalid";
+      return(false);
+     }
+   return(true);
+  }
+
 //+------------------------------------------------------------------+
 bool DemoSend(const string symbol, const string side, const double lots,
               const double sl, const double tp)
@@ -935,8 +1521,13 @@ bool DemoSend(const string symbol, const string side, const double lots,
       return(false);
    if(!DemoAccountOk() || !DemoTradingAllowed() || !DemoTerminalTradable())
       return(false);
+   if(!CoordCanOpen(DemoActiveMaxPositions()))
+      return(false);
+   if(!CoordLock())
+      return(false);
 
    bool sent = OrderSend(request, result);
+   CoordUnlock();
    if(!sent || (result.retcode != TRADE_RETCODE_DONE && result.retcode != TRADE_RETCODE_PLACED))
      {
       Print("MolidoScalper: OrderSend failed retcode ", result.retcode, " ", result.comment);
@@ -950,6 +1541,7 @@ bool DemoSend(const string symbol, const string side, const double lots,
    Print("MolidoScalper: filled ", side, " ", DoubleToString(lots, 2), " ", symbol,
          " ticket ", result.order);
    g_demo_entries_today++;
+   DemoJournalShot("open", symbol, result.order);
    return(true);
   }
 
@@ -965,7 +1557,23 @@ void DemoEvaluateSymbol(const string raw_name)
 
    string side, why;
    double entry, sl, tp, spread, atr;
-   if(!DemoSignal(symbol, side, entry, sl, tp, spread, atr, why))
+   bool got = false;
+   if(StrategyMode == STRAT_TREND)
+      got = DemoTrendSignal(symbol, side, entry, sl, tp, spread, atr, why);
+   else
+      got = DemoSignal(symbol, side, entry, sl, tp, spread, atr, why);
+   if(!got)
+     {
+      DemoLog(symbol, side, DEMO_BLOCK, why, 0, entry, sl, tp, spread, atr, 0, 0, 0);
+      return;
+     }
+
+   if(!DemoSmartAllowEntry(symbol, side, why))
+     {
+      DemoLog(symbol, side, DEMO_BLOCK, why, 0, entry, sl, tp, spread, atr, 0, 0, 0);
+      return;
+     }
+   if(!DemoProtectAllowEntry(symbol, side, why))
      {
       DemoLog(symbol, side, DEMO_BLOCK, why, 0, entry, sl, tp, spread, atr, 0, 0, 0);
       return;
@@ -1025,15 +1633,30 @@ void DemoScalperOnTick()
   {
    if(!EnableDemoScalper)
       return;
+   if(DemoAccountOk())
+     {
+      DemoManagePositions();
+      ProfileWeekendFlatten();
+      DemoProtectOnTick();
+     }
+   else
+      DemoProtectOnTick();
    if(!AllowTrading)
       return;
    if(!DemoAccountOk())
       return;
    if(DemoNewsGateNewEntries())
       return;
+   if(StrategyMode == STRAT_NEWS)
+     {
+      DemoNewsTradeActive();
+      return;
+     }
    if(DemoNewsTradeActive())
       return;
 
+   if(AutoSymbolMode || StrategyMode == STRAT_AUTO)
+      AutoRefreshIfDue();
    if(g_demo_n <= 0 && !DemoParseSymbols())
       return;
 
@@ -1043,7 +1666,8 @@ void DemoScalperOnTick()
       string resolved;
       if(!DemoResolveSymbol(symbol, resolved))
          continue;
-      datetime bar = iTime(resolved, ScalperTF, 0);
+      ENUM_TIMEFRAMES tf = (StrategyMode == STRAT_TREND ? PERIOD_M15 : ScalperTF);
+      datetime bar = iTime(resolved, tf, 0);
       if(bar == 0)
          continue;
       if(!g_demo_primed[i])

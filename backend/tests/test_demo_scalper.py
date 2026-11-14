@@ -19,10 +19,28 @@ from app.agents.demo_scalper import (
     FTMO_DAILY_LOSS_PCT,
     FTMO_MAX_DD_PCT,
     account_is_allowed,
+    atr_percentile,
+    auto_symbol_score,
+    consensus_allows,
+    correlation_conflict,
+    in_loss_cooldown,
     in_news_avoid_window,
+    live_real_unlocked,
+    login_in_allowlist,
     news_breakout_side,
+    partial_tp_volume,
+    pick_top_symbols,
+    prop_consistency_hit,
+    prop_daily_stop,
+    prop_near_dd,
+    prop_pace_factor,
+    regime_allows,
     review_demo_trade,
+    safe_mode_action,
+    session_allows,
     size_lots,
+    trend_confirms,
+    weekend_hold_window,
 )
 from app.agents.risk_gate import RiskContext, Verdict
 
@@ -163,9 +181,15 @@ def test_mql_mirrors_python_constants():
     assert "#define DEMO_MIN_RR             1.2" in src
     assert "#define DEMO_SPREAD_ATR_FRAC    0.15" in src
     assert "#define DEMO_MAX_ENTRIES_DAY    8" in src
-    mq5 = (root / "MolidoBridge.mq5").read_text(encoding="utf-8")
+    mq5 = (root / "MolidoRuntime.mqh").read_text(encoding="utf-8")
     assert "ACCOUNT_TRADE_MODE_DEMO" in src
-    assert "ExpectedLogin = 68531270" in mq5
+    assert 'AllowedLogins     = "68531270"' in mq5
+    assert "AutoSymbolMode      = MOLIDO_DEFAULT_AUTO" in mq5
+    assert "AccountProfile = MOLIDO_DEFAULT_PROFILE" in mq5
+    assert (root / "MolidoSmart.mqh").is_file()
+    assert (root / "MolidoProtect.mqh").is_file()
+    assert (root / "MolidoUniverse.mqh").is_file()
+    assert "ChartScreenShot" in (root / "MolidoProtect.mqh").read_text(encoding="utf-8")
     assert "MaxLots         = 2.00" in mq5
     assert "EnableDemoScalper" in mq5
     news = (root / "MolidoNews.mqh").read_text(encoding="utf-8")
@@ -203,3 +227,71 @@ def test_news_avoid_window_and_breakout():
     lots = size_lots(balance=BALANCE, risk_pct=0.25, sl_distance=5.0,
                      tick_size=0.01, tick_value=1.0)
     assert lots == 1.0
+
+def test_allowlist_and_live_real_hard_lock():
+    assert login_in_allowlist(DEMO_LOGIN, "68531270")
+    assert login_in_allowlist(42, "68531270, 42")
+    assert not login_in_allowlist(99, "68531270")
+    assert not live_real_unlocked(profile="LIVE_REAL", trade_mode=ACCOUNT_TRADE_MODE_REAL,
+                                  allow_real=False, real_allowlist="", login=DEMO_LOGIN)
+    assert not live_real_unlocked(profile="LIVE_REAL", trade_mode=ACCOUNT_TRADE_MODE_REAL,
+                                  allow_real=True, real_allowlist="", login=111)
+    assert live_real_unlocked(profile="LIVE_REAL", trade_mode=ACCOUNT_TRADE_MODE_REAL,
+                              allow_real=True, real_allowlist="111", login=111)
+    assert not account_is_allowed(ACCOUNT_TRADE_MODE_REAL, 111, profile="LIVE_REAL",
+                                  allow_real=True, real_allowlist="")
+    assert account_is_allowed(ACCOUNT_TRADE_MODE_CONTEST, DEMO_LOGIN,
+                              profile="PROP_FTMO", allowlist="68531270")
+    assert not account_is_allowed(ACCOUNT_TRADE_MODE_REAL, DEMO_LOGIN, profile="DEMO")
+
+
+def test_smart_filters_and_consensus_never_loosen():
+    hist = [1.0] * 20 + [2.0] * 20
+    assert 40 <= atr_percentile(1.5, hist) <= 70
+    assert regime_allows(40, 22)
+    assert not regime_allows(None, 22)
+    assert session_allows(13, 2)  # London+NY overlap, Tuesday
+    assert not session_allows(3, 2)
+    assert not session_allows(13, 0)
+    assert trend_confirms("buy", 2, 1, 2, 1)
+    assert not trend_confirms("buy", 2, 1, 1, 2)
+    assert in_loss_cooldown(1000, 1000 - 10 * 60, 30)
+    assert not in_loss_cooldown(1000, 1000 - 31 * 60, 30)
+    assert consensus_allows("buy", "buy", fresh=True, require=False)
+    assert not consensus_allows("buy", "sell", fresh=True, require=False)
+    assert not consensus_allows("buy", None, fresh=False, require=True)
+    assert consensus_allows("buy", None, fresh=False, require=False)
+    assert weekend_hold_window(5, 21) and not weekend_hold_window(3, 12)
+
+
+def test_protect_features_and_auto_symbol_score():
+    assert safe_mode_action(2) == "reduce"
+    assert safe_mode_action(3) == "stop"
+    assert safe_mode_action(1) == "off"
+    assert partial_tp_volume(0.20, 50, 0.01, 0.01) == 0.10
+    assert partial_tp_volume(0.01, 50, 0.01, 0.01) is None
+    assert correlation_conflict("buy", "GBPUSD", [("EURUSD", "buy")])
+    assert not correlation_conflict("buy", "GBPUSD", [("EURUSD", "sell")])
+    assert not correlation_conflict("buy", "USDJPY", [("EURUSD", "buy")])
+    tight = auto_symbol_score(spread_atr=0.03, in_session=True, trend_aligned=True,
+                              weekly_pnl=10.0, rocket=80.0, adx=25)
+    loose = auto_symbol_score(spread_atr=0.20, in_session=False, trend_aligned=False,
+                              weekly_pnl=-5.0, rocket=100.0, adx=8)
+    assert tight > loose
+    # A perfect rocket rank cannot lift a poor local symbol above a healthy one.
+    assert tight > auto_symbol_score(spread_atr=0.20, in_session=False, trend_aligned=False,
+                                     weekly_pnl=None, rocket=100.0, adx=8)
+    assert pick_top_symbols([("EURUSD.r", 50), ("XAUUSD", 90), ("GBPUSD", 70)], 2) == ["XAUUSD", "GBPUSD"]
+
+
+def test_prop_challenge_pacing_and_buffers():
+    assert prop_daily_stop(5.0) == 4.0
+    assert prop_pace_factor(0.5) == 1.0
+    assert prop_pace_factor(0.7) == 0.5
+    assert prop_pace_factor(0.9) == 0.25
+    assert prop_pace_factor(1.0) == 0.0
+    assert prop_consistency_hit(4.0, 10.0, 40)
+    assert not prop_consistency_hit(3.9, 10.0, 40)
+    assert prop_near_dd(dd=8.1, dd_limit=10.0, risk=0.25)
+    assert prop_near_dd(dd=7.8, dd_limit=10.0, risk=0.25)  # remaining 0.2 < 1.25*0.25
+    assert not prop_near_dd(dd=1.0, dd_limit=10.0, risk=0.25)

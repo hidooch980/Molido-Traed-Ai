@@ -100,7 +100,7 @@ try {
   }
   Copy-Item $tmp $target -Force
 
-  $includes = @("MolidoDemoScalper.mqh","MolidoNews.mqh","MolidoDashboard.mqh")
+  $includes = @("MolidoShared.mqh","MolidoRuntime.mqh","MolidoDemoScalper.mqh","MolidoNews.mqh","MolidoSmart.mqh","MolidoProtect.mqh","MolidoUniverse.mqh","MolidoDashboard.mqh")
   $incBackups = @()
   foreach ($incName in $includes) {
     $incUrl = $SourceUrl -replace [regex]::Escape($name), $incName
@@ -121,7 +121,28 @@ try {
     Copy-Item $incTmp $incTarget -Force
   }
 
-  if (Compile $target) { Log "installed $new"; exit 0 }
+  $experts = @("MolidoBridge.mq5","Molido_Demo.mq5","Molido_Prop.mq5","Molido_Live.mq5","Molido_Scalper.mq5","Molido_News.mq5","Molido_Trend.mq5","Molido_AutoPortfolio.mq5")
+  foreach ($eaName in $experts) {
+    if ($eaName -eq $name) { continue }
+    $eaUrl = $SourceUrl -replace [regex]::Escape($name), $eaName
+    $eaSumUrl = $eaUrl + ".sha256"
+    $eaTarget = Join-Path $ExpertsDir $eaName
+    $eaTmp = Join-Path $WorkDir ("download-" + $eaName)
+    Invoke-WebRequest -Uri $eaUrl -OutFile $eaTmp -UseBasicParsing
+    $eaSumLine = (Invoke-WebRequest -Uri $eaSumUrl -UseBasicParsing).Content
+    if ($eaSumLine -is [byte[]]) { $eaSumLine = [Text.Encoding]::ASCII.GetString($eaSumLine) }
+    $eaPublished = ($eaSumLine.Trim() -split '\s+')[0].ToLower()
+    $eaActual = (Get-FileHash -Path $eaTmp -Algorithm SHA256).Hash.ToLower()
+    if ($eaActual -ne $eaPublished) { throw "EA checksum mismatch for $eaName : file $eaActual, published $eaPublished" }
+    Copy-Item $eaTmp $eaTarget -Force
+  }
+
+  $allOk = $true
+  foreach ($eaName in $experts) {
+    $eaTarget = Join-Path $ExpertsDir $eaName
+    if (-not (Compile $eaTarget)) { Log "compile failed: $eaName"; $allOk = $false }
+  }
+  if ($allOk) { Log "installed $new"; exit 0 }
 
   Log "compile failed - restoring the previous version"
   if ($backup) { Copy-Item $backup $target -Force }

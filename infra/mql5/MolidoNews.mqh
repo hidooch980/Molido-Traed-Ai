@@ -35,6 +35,8 @@ int NewsMinImportanceValue()
 
 string NewsModeName()
   {
+   if(ProfileForceNewsAvoid())
+      return("NEWS_AVOID (prop)");
    return(NewsMode == NEWS_TRADE ? "NEWS_TRADE" : "NEWS_AVOID");
   }
 
@@ -386,7 +388,7 @@ bool DemoNewsGateNewEntries()
          g_news_tighten_for = ev.time;
         }
       //--- NEWS_TRADE still avoids new regular entries until the release.
-      if(NewsMode == NEWS_TRADE && TimeGMT() >= ev.time)
+      if(NewsMode == NEWS_TRADE && !ProfileForceNewsAvoid() && TimeGMT() >= ev.time)
          return(false);
       static datetime last_logged = 0;
       if(last_logged != ev.time)
@@ -403,7 +405,7 @@ bool DemoNewsGateNewEntries()
 
 bool DemoNewsTradeActive()
   {
-   if(NewsMode != NEWS_TRADE)
+   if(NewsMode != NEWS_TRADE || ProfileForceNewsAvoid())
       return(false);
    if(!DemoNewsTradeOnce())
       return(false);

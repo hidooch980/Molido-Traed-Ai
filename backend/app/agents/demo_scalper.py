@@ -59,12 +59,50 @@ def demo_limits() -> RiskLimits:
     )
 
 
+def login_in_allowlist(login: int | None, csv: str) -> bool:
+    """True when login appears in a comma/semicolon allowlist."""
+    if login is None or not csv:
+        return False
+    try:
+        acc = int(login)
+    except (TypeError, ValueError):
+        return False
+    if acc <= 0:
+        return False
+    for part in csv.replace(";", ",").split(","):
+        token = part.strip()
+        if token.lstrip("-").isdigit() and int(token) == acc:
+            return True
+    return False
+
+
+def live_real_unlocked(
+    *,
+    profile: str,
+    trade_mode: int | None,
+    allow_real: bool,
+    real_allowlist: str,
+    login: int | None,
+) -> bool:
+    """LIVE_REAL stays hard-locked unless every unlock is set by the user."""
+    if profile != "LIVE_REAL" or not allow_real:
+        return False
+    if trade_mode is None or int(trade_mode) != ACCOUNT_TRADE_MODE_REAL:
+        return False
+    return login_in_allowlist(login, real_allowlist)
+
+
 def account_is_allowed(
     trade_mode: int | None,
     login: int | None,
     allowed_logins: set[int] | None = None,
+    *,
+    profile: str = "DEMO",
+    allowlist: str = "68531270",
+    allow_real: bool = False,
+    real_allowlist: str = "",
 ) -> bool:
-    """Demo only. 68531270 is always allowed; other demos need server caps."""
+    """DEMO/PROP need the demo allowlist. LIVE_REAL is hard-locked by default."""
     if trade_mode is None or login is None:
         return False
     try:
@@ -72,11 +110,23 @@ def account_is_allowed(
         acc = int(login)
     except (TypeError, ValueError):
         return False
-    if mode != ACCOUNT_TRADE_MODE_DEMO:
+    if profile == "LIVE_REAL":
+        return live_real_unlocked(
+            profile=profile, trade_mode=mode, allow_real=allow_real,
+            real_allowlist=real_allowlist, login=acc,
+        )
+    if mode == ACCOUNT_TRADE_MODE_REAL:
         return False
-    if acc == DEMO_LOGIN:
+    if profile == "DEMO" and mode != ACCOUNT_TRADE_MODE_DEMO:
+        return False
+    if profile in {"PROP_FTMO", "PROP_GENERIC"} and mode not in {
+        ACCOUNT_TRADE_MODE_DEMO, ACCOUNT_TRADE_MODE_CONTEST,
+    }:
+        return False
+    if login_in_allowlist(acc, allowlist):
         return True
-    return bool(allowed_logins) and acc in allowed_logins
+    # Backward-compatible extra demo logins (explicit set, still never real).
+    return mode == ACCOUNT_TRADE_MODE_DEMO and bool(allowed_logins) and acc in allowed_logins
 
 
 def in_news_avoid_window(now_ts: float, event_ts: float, avoid_minutes: int) -> bool:
@@ -215,3 +265,146 @@ __all__ = [
     "review_demo_trade",
     "size_lots",
 ]
+
+def atr_percentile(current: float, history: list[float]) -> float | None:
+    if current <= 0 or len(history) < 30:
+        return None
+    below = sum(1 for value in history if value <= current)
+    return 100.0 * below / len(history)
+
+
+def regime_allows(atr_pct: float | None, adx: float | None, *, atr_min=20, atr_max=80, adx_min=18) -> bool:
+    if atr_pct is None or adx is None:
+        return False
+    return atr_min <= atr_pct <= atr_max and adx >= adx_min
+
+
+def session_allows(hour_gmt: int, weekday: int, london=(7, 16), ny=(12, 21)) -> bool:
+    """weekday: 0=Sunday ... 6=Saturday, same as MT5."""
+    if weekday in {0, 6}:
+        return False
+    hour = hour_gmt % 24
+    return (london[0] <= hour < london[1]) or (ny[0] <= hour < ny[1])
+
+
+def trend_confirms(side: str, m15_e20: float, m15_e50: float, h1_e20: float, h1_e50: float) -> bool:
+    if min(m15_e20, m15_e50, h1_e20, h1_e50) <= 0:
+        return False
+    side = side.lower()
+    if side == "buy":
+        return m15_e20 > m15_e50 and h1_e20 > h1_e50
+    if side == "sell":
+        return m15_e20 < m15_e50 and h1_e20 < h1_e50
+    return False
+
+
+def in_loss_cooldown(now_ts: float, last_loss_ts: float | None, minutes: int) -> bool:
+    if minutes <= 0 or last_loss_ts is None:
+        return False
+    return now_ts - last_loss_ts < minutes * 60
+
+
+def consensus_allows(local_side: str, server_side: str | None, *, fresh: bool, require: bool) -> bool:
+    """Veto only: missing/stale never counts as approval, and never loosens a local block."""
+    if server_side is None or not fresh:
+        return not require
+    side = server_side.lower()
+    if side in {"wait", "block", "none", ""}:
+        return False
+    return side == local_side.lower()
+
+
+def weekend_hold_window(weekday: int, hour_gmt: int) -> bool:
+    if weekday == 6:
+        return True
+    if weekday == 0 and hour_gmt < 22:
+        return True
+    if weekday == 5 and hour_gmt >= 21:
+        return True
+    return False
+
+
+def correlation_conflict(side: str, candidate: str, open_positions: list[tuple[str, str]]) -> bool:
+    """True when an open position already points the same way in a correlated group."""
+    groups = (
+        {"EURUSD", "GBPUSD", "AUDUSD", "NZDUSD"},
+        {"USDJPY", "USDCHF", "USDCAD"},
+        {"EURJPY", "GBPJPY", "AUDJPY", "CADJPY"},
+        {"XAUUSD", "XAGUSD"},
+    )
+    core = next((g for g in groups if any(candidate.startswith(s) for s in g)), None)
+    if core is None:
+        # exact core name
+        for g in groups:
+            if candidate in g or any(candidate.startswith(s) for s in g):
+                core = g
+                break
+    if core is None:
+        return False
+    want = side.lower()
+    cand = next((s for s in core if candidate.startswith(s)), candidate)
+    for symbol, pos_side in open_positions:
+        other = next((s for s in core if symbol.startswith(s)), None)
+        if other and other != cand and pos_side.lower() == want:
+            return True
+    return False
+
+
+def safe_mode_action(consecutive_losses: int, reduce_after: int = 2, stop_after: int = 3) -> str:
+    if stop_after > 0 and consecutive_losses >= stop_after:
+        return "stop"
+    if reduce_after > 0 and consecutive_losses >= reduce_after:
+        return "reduce"
+    return "off"
+
+
+def partial_tp_volume(volume: float, close_pct: float, step: float, min_lot: float) -> float | None:
+    close = (volume * close_pct / 100.0) // step * step
+    if close < min_lot or (volume - close) < min_lot:
+        return None
+    return float(close)
+
+
+def auto_symbol_score(*, spread_atr: float, in_session: bool, trend_aligned: bool,
+                      weekly_pnl: float | None, rocket: float | None,
+                      adx: float, adx_min: float = 18.0) -> float:
+    """Higher is better. Rocket is a bonus of at most 10 and never a substitute for local quality."""
+    spread_pts = max(0.0, min(25.0, 25.0 * (1.0 - spread_atr / 0.15)))
+    adx_pts = 15.0 if adx_min <= adx <= 45 else (8.0 if adx >= adx_min else 0.0)
+    trend_pts = 10.0 if trend_aligned else 0.0
+    sess_pts = 10.0 if in_session else 2.0
+    week_pts = 5.0 if weekly_pnl is None else (10.0 if weekly_pnl > 0 else 0.0)
+    rocket_pts = 0.0 if rocket is None else 0.10 * max(0.0, min(100.0, rocket))
+    return spread_pts + adx_pts + trend_pts + sess_pts + week_pts + rocket_pts
+
+
+def pick_top_symbols(scored: list[tuple[str, float]], n: int = 3) -> list[str]:
+    ordered = sorted(scored, key=lambda x: x[1], reverse=True)
+    return [name for name, _ in ordered[: max(1, n)]]
+
+
+def prop_daily_stop(daily_limit: float, buffer: float = 0.80) -> float:
+    return daily_limit * buffer
+
+
+def prop_pace_factor(progress: float, start: float = 0.70, tight: float = 0.90) -> float:
+    if progress >= 1.0:
+        return 0.0
+    if progress >= tight:
+        return 0.25
+    if progress >= start:
+        return 0.50
+    return 1.0
+
+
+def prop_consistency_hit(day_profit_pct: float, target_pct: float, share: float = 40.0) -> bool:
+    if target_pct <= 0 or share <= 0:
+        return False
+    return day_profit_pct >= target_pct * share / 100.0
+
+
+def prop_near_dd(*, dd: float, dd_limit: float, risk: float, buffer: float = 0.80) -> bool:
+    stop = dd_limit * buffer
+    if dd >= stop:
+        return True
+    return (stop - dd) <= risk * 1.25
