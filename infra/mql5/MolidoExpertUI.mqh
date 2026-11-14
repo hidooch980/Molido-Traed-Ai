@@ -7,6 +7,7 @@
 #define MOLIDO_EXPERT_UI_MQH
 
 #include <Canvas/Canvas.mqh>
+#resource "Images\molido_avatar.bmp"
 
 #define EX_H    "MolidoEx_H"
 #define EX_L    "MolidoEx_L"
@@ -16,6 +17,7 @@
 #define EX_T    "MolidoEx_T"
 #define EX_TAG  "MolidoEx_Tag"
 #define EX_HUD  "MolidoEx_Hud"
+#define EX_LIVE "MolidoEx_Live"
 #define EX_BTN  "ExDash_"
 #define EX_MARK "ExMark_"
 
@@ -52,6 +54,9 @@ double  g_gauge_shown = 0;
 datetime g_ex_updated = 0;
 int     g_pulse_sec = 0;
 int     g_ox = 0, g_oy = 0;
+bool    g_ex_host_saved = false;
+color   g_host_bg, g_host_fg, g_host_grid, g_host_up, g_host_dn, g_host_bull, g_host_bear;
+bool    g_host_show_grid, g_host_show_date, g_host_show_price;
 
 #define EX_HIT_MAX 96
 string g_hit_id[EX_HIT_MAX];
@@ -140,6 +145,16 @@ int ExPx(const int base)
    double s = DashFontScale;
    if(s < 1.0) s = 1.0;
    if(s > 1.6) s = 1.6;
+   int v = (int)MathRound(base * s);
+   return(v < 1 ? 1 : v);
+  }
+
+int ExLy(const int base)
+  {
+   // Layout bands stay compact so a 1.4 font scale cannot crush the chart hole.
+   double s = DashFontScale;
+   if(s < 1.0) s = 1.0;
+   if(s > 1.15) s = 1.15;
    int v = (int)MathRound(base * s);
    return(v < 1 ? 1 : v);
   }
@@ -266,8 +281,8 @@ void ExGlowCard(const int x1, const int y1, const int x2, const int y2, const in
    ExRound(x1 - g1, y1 - g1, x2 + g1, y2 + g1, r + 4, ExArgb(glow, (uchar)MathMax(8, strength / 5)));
    ExRound(x1 - g2, y1 - g2, x2 + g2, y2 + g2, r + 2, ExArgb(glow, (uchar)MathMax(14, strength / 3)));
    ExRound(x1 - g3, y1 - g3, x2 + g3, y2 + g3, r + 1, ExArgb(glow, strength));
-   ExRound(x1, y1, x2, y2, r, ExArgb(EX_NAVY, 240));
-   ExGradV(x1 + 1, y1 + 1, x2 - 1, y2 - 1, EX_NAVY2, EX_BLACK, 235, 245, r - 1);
+   ExRound(x1, y1, x2, y2, r, ExArgb(EX_NAVY, 255));
+   ExGradV(x1 + 1, y1 + 1, x2 - 1, y2 - 1, EX_NAVY2, EX_BLACK, 255, 255, r - 1);
    // bevel
    g_dc.FillRectangle(x1 + r, y1 + 1, x2 - r, y1 + 2, ExArgb(EX_GOLD2, 50));
    g_dc.FillRectangle(x1 + r, y2 - 2, x2 - r, y2 - 1, ExArgb(EX_BLACK, 80));
@@ -306,42 +321,43 @@ void ExLayout()
    if(W < 200) W = 200;
    if(H < 200) H = 200;
    g_ex_cw = W; g_ex_ch = H;
-   g_ly_head = ExPx(62);
-   g_ly_tab  = ExPx(36);
-   g_ly_mid  = ExPx(78);
-   g_ly_bot  = ExPx(132);
-   g_ly_left = (int)MathRound(W * 0.18);
-   if(g_ly_left < 168) g_ly_left = 168;
-   if(g_ly_left > 230) g_ly_left = 230;
-   g_ly_right = (int)MathRound(W * 0.30);
-   if(g_ly_right < 230) g_ly_right = 230;
-   if(g_ly_right > 330) g_ly_right = 330;
-   int gap = ExPx(8);
-   // shrink to keep a visible chart hole
-   int hole_w = W - g_ly_left - g_ly_right - gap * 3;
-   int hole_h = H - g_ly_head - g_ly_mid - g_ly_bot - g_ly_tab - gap * 2;
-   if(hole_w < 260)
+   // reserved bands — never shrink the tab bar (it was getting clipped)
+   g_ly_head = ExLy(68);
+   g_ly_tab  = ExLy(46);
+   g_ly_mid  = ExLy(66);
+   g_ly_bot  = ExLy(132);
+   g_ly_left = (int)MathRound(W * 0.17);
+   if(g_ly_left < 180) g_ly_left = 180;
+   if(g_ly_left > 240) g_ly_left = 240;
+   g_ly_right = (int)MathRound(W * 0.32);
+   if(g_ly_right < 300) g_ly_right = 300;
+   if(g_ly_right > 400) g_ly_right = 400;
+   int gap = 0; // tile panels with no gaps so candles cannot leak through
+   int hole_w = W - g_ly_left - g_ly_right;
+   int hole_h = H - g_ly_head - g_ly_mid - g_ly_bot - g_ly_tab;
+   if(hole_w < 280)
      {
-      int need = 260 - hole_w;
+      int need = 280 - hole_w;
       int cut_r = need / 2, cut_l = need - cut_r;
       g_ly_right -= cut_r; g_ly_left -= cut_l;
-      if(g_ly_right < 170) g_ly_right = 170;
-      if(g_ly_left < 140) g_ly_left = 140;
-      hole_w = W - g_ly_left - g_ly_right - gap * 3;
+      if(g_ly_right < 260) g_ly_right = 260;
+      if(g_ly_left < 160) g_ly_left = 160;
+      hole_w = W - g_ly_left - g_ly_right;
      }
-   if(hole_h < 180)
+   // If the chart is short, shrink mid/bot a little but NEVER the tab or header.
+   if(hole_h < 240)
      {
-      int deficit = 180 - hole_h;
-      if(g_ly_bot > ExPx(90) && deficit > 0)
-        { int c = MathMin(deficit, g_ly_bot - ExPx(90)); g_ly_bot -= c; deficit -= c; }
-      if(g_ly_mid > ExPx(64) && deficit > 0)
-        { int c = MathMin(deficit, g_ly_mid - ExPx(64)); g_ly_mid -= c; deficit -= c; }
-      hole_h = H - g_ly_head - g_ly_mid - g_ly_bot - g_ly_tab - gap * 2;
+      int deficit = 240 - hole_h;
+      if(g_ly_bot > ExLy(112) && deficit > 0)
+        { int c = MathMin(deficit, g_ly_bot - ExLy(112)); g_ly_bot -= c; deficit -= c; }
+      if(g_ly_mid > ExLy(58) && deficit > 0)
+        { int c = MathMin(deficit, g_ly_mid - ExLy(58)); g_ly_mid -= c; deficit -= c; }
+      hole_h = H - g_ly_head - g_ly_mid - g_ly_bot - g_ly_tab;
      }
-   g_ly_hx = g_ly_left + gap;
-   g_ly_hy = g_ly_head + gap / 2;
-   g_ly_hw = W - g_ly_left - g_ly_right - gap * 2;
-   g_ly_hh = H - g_ly_head - g_ly_mid - g_ly_bot - g_ly_tab - gap;
+   g_ly_hx = g_ly_left;
+   g_ly_hy = g_ly_head;
+   g_ly_hw = W - g_ly_left - g_ly_right;
+   g_ly_hh = H - g_ly_head - g_ly_mid - g_ly_bot - g_ly_tab;
    if(g_ly_hw < 200) g_ly_hw = 200;
    if(g_ly_hh < 140) g_ly_hh = 140;
   }
@@ -369,6 +385,9 @@ void ExDestroy()
    for(int i = 0; i < 8; i++)
       if(ObjectFind(0, names[i]) >= 0)
          ObjectDelete(0, names[i]);
+   if(ObjectFind(0, EX_LIVE) >= 0)
+      ObjectDelete(0, EX_LIVE);
+   ExRestoreHostChart();
    ExDestroyMarks();
    g_ex_sig = "";
    g_ex_cw = 0; g_ex_ch = 0;
@@ -396,6 +415,116 @@ bool ExMake(CCanvas &c, const string name, const int x, const int y, const int w
    return(true);
   }
 
+void ExHideHostChart()
+  {
+   if(!g_ex_host_saved)
+     {
+      g_host_bg   = (color)ChartGetInteger(0, CHART_COLOR_BACKGROUND);
+      g_host_fg   = (color)ChartGetInteger(0, CHART_COLOR_FOREGROUND);
+      g_host_grid = (color)ChartGetInteger(0, CHART_COLOR_GRID);
+      g_host_up   = (color)ChartGetInteger(0, CHART_COLOR_CHART_UP);
+      g_host_dn   = (color)ChartGetInteger(0, CHART_COLOR_CHART_DOWN);
+      g_host_bull = (color)ChartGetInteger(0, CHART_COLOR_CANDLE_BULL);
+      g_host_bear = (color)ChartGetInteger(0, CHART_COLOR_CANDLE_BEAR);
+      g_host_show_grid  = (bool)ChartGetInteger(0, CHART_SHOW_GRID);
+      g_host_show_date  = (bool)ChartGetInteger(0, CHART_SHOW_DATE_SCALE);
+      g_host_show_price = (bool)ChartGetInteger(0, CHART_SHOW_PRICE_SCALE);
+      g_ex_host_saved = true;
+     }
+   color bg = EX_NAVY;
+   ChartSetInteger(0, CHART_COLOR_BACKGROUND, bg);
+   ChartSetInteger(0, CHART_COLOR_FOREGROUND, bg);
+   ChartSetInteger(0, CHART_COLOR_GRID, bg);
+   ChartSetInteger(0, CHART_COLOR_CHART_UP, bg);
+   ChartSetInteger(0, CHART_COLOR_CHART_DOWN, bg);
+   ChartSetInteger(0, CHART_COLOR_CANDLE_BULL, bg);
+   ChartSetInteger(0, CHART_COLOR_CANDLE_BEAR, bg);
+   ChartSetInteger(0, CHART_COLOR_CHART_LINE, bg);
+   ChartSetInteger(0, CHART_COLOR_VOLUME, bg);
+   ChartSetInteger(0, CHART_COLOR_BID, bg);
+   ChartSetInteger(0, CHART_COLOR_ASK, bg);
+   ChartSetInteger(0, CHART_COLOR_LAST, bg);
+   ChartSetInteger(0, CHART_COLOR_STOP_LEVEL, bg);
+   ChartSetInteger(0, CHART_SHOW_GRID, false);
+   ChartSetInteger(0, CHART_SHOW_DATE_SCALE, false);
+   ChartSetInteger(0, CHART_SHOW_PRICE_SCALE, false);
+   ChartSetInteger(0, CHART_SHOW_OHLC, false);
+   ChartSetInteger(0, CHART_SHOW_ASK_LINE, false);
+   ChartSetInteger(0, CHART_SHOW_BID_LINE, false);
+   ChartSetInteger(0, CHART_SHOW_LAST_LINE, false);
+   ChartSetInteger(0, CHART_SHOW_PERIOD_SEP, false);
+   ChartSetInteger(0, CHART_SHOW_VOLUMES, CHART_VOLUME_HIDE);
+   ChartSetInteger(0, CHART_SHOW_OBJECT_DESCR, false);
+  }
+
+void ExRestoreHostChart()
+  {
+   if(!g_ex_host_saved) return;
+   ChartSetInteger(0, CHART_COLOR_BACKGROUND, g_host_bg);
+   ChartSetInteger(0, CHART_COLOR_FOREGROUND, g_host_fg);
+   ChartSetInteger(0, CHART_COLOR_GRID, g_host_grid);
+   ChartSetInteger(0, CHART_COLOR_CHART_UP, g_host_up);
+   ChartSetInteger(0, CHART_COLOR_CHART_DOWN, g_host_dn);
+   ChartSetInteger(0, CHART_COLOR_CANDLE_BULL, g_host_bull);
+   ChartSetInteger(0, CHART_COLOR_CANDLE_BEAR, g_host_bear);
+   ChartSetInteger(0, CHART_SHOW_GRID, g_host_show_grid);
+   ChartSetInteger(0, CHART_SHOW_DATE_SCALE, g_host_show_date);
+   ChartSetInteger(0, CHART_SHOW_PRICE_SCALE, g_host_show_price);
+   g_ex_host_saved = false;
+  }
+
+void ExPlaceLiveChart()
+  {
+   if(g_ly_hw < 40 || g_ly_hh < 40)
+      return;
+   if(ObjectFind(0, EX_LIVE) < 0)
+     {
+      if(!ObjectCreate(0, EX_LIVE, OBJ_CHART, 0, 0, 0.0))
+        {
+         Print("MolidoExpert: live chart failed ", GetLastError());
+         return;
+        }
+     }
+   int inset = ExLy(4);
+   int scale_w = ExLy(58); // MT5 draws the object-chart price scale to the right of the box
+   ObjectSetInteger(0, EX_LIVE, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+   ObjectSetInteger(0, EX_LIVE, OBJPROP_XDISTANCE, g_ly_hx + inset);
+   ObjectSetInteger(0, EX_LIVE, OBJPROP_YDISTANCE, g_ly_hy + inset);
+   ObjectSetInteger(0, EX_LIVE, OBJPROP_XSIZE, g_ly_hw - inset * 2 - scale_w);
+   ObjectSetInteger(0, EX_LIVE, OBJPROP_YSIZE, g_ly_hh - inset * 2);
+   ObjectSetInteger(0, EX_LIVE, OBJPROP_BACK, false);
+   ObjectSetInteger(0, EX_LIVE, OBJPROP_SELECTABLE, false);
+   ObjectSetInteger(0, EX_LIVE, OBJPROP_HIDDEN, true);
+   ObjectSetInteger(0, EX_LIVE, OBJPROP_ZORDER, 40);
+   ObjectSetString(0, EX_LIVE, OBJPROP_SYMBOL, _Symbol);
+   ObjectSetInteger(0, EX_LIVE, OBJPROP_PERIOD, Period());
+   ObjectSetInteger(0, EX_LIVE, OBJPROP_DATE_SCALE, true);
+   ObjectSetInteger(0, EX_LIVE, OBJPROP_PRICE_SCALE, true);
+   long cid = ObjectGetInteger(0, EX_LIVE, OBJPROP_CHART_ID);
+   if(cid > 0)
+     {
+      ChartSetInteger(cid, CHART_MODE, CHART_CANDLES);
+      ChartSetInteger(cid, CHART_SHOW_GRID, true);
+      ChartSetInteger(cid, CHART_SHOW_DATE_SCALE, true);
+      ChartSetInteger(cid, CHART_SHOW_PRICE_SCALE, true);
+      ChartSetInteger(cid, CHART_SHOW_OHLC, false);
+      ChartSetInteger(cid, CHART_SHOW_ASK_LINE, true);
+      ChartSetInteger(cid, CHART_SHOW_VOLUMES, CHART_VOLUME_HIDE);
+      ChartSetInteger(cid, CHART_SHIFT, true);
+      ChartSetDouble(cid, CHART_SHIFT_SIZE, 8.0);
+      ChartSetInteger(cid, CHART_COLOR_BACKGROUND, EX_NAVY);
+      ChartSetInteger(cid, CHART_COLOR_FOREGROUND, EX_MUTED);
+      ChartSetInteger(cid, CHART_COLOR_GRID, EX_LINE);
+      ChartSetInteger(cid, CHART_COLOR_CHART_UP, EX_GREEN);
+      ChartSetInteger(cid, CHART_COLOR_CANDLE_BULL, EX_GREEN);
+      ChartSetInteger(cid, CHART_COLOR_CHART_DOWN, EX_CORAL);
+      ChartSetInteger(cid, CHART_COLOR_CANDLE_BEAR, EX_CORAL);
+      ChartSetInteger(cid, CHART_COLOR_BID, EX_BLUE);
+      ChartSetInteger(cid, CHART_COLOR_ASK, EX_GOLD);
+      ChartRedraw(cid);
+     }
+  }
+
 bool ExEnsure()
   {
    if(!ShowDashboard)
@@ -403,7 +532,10 @@ bool ExEnsure()
    ExLayout();
    int W = g_ex_cw, H = g_ex_ch;
    if(g_ex_ready)
+     {
+      ExPlaceLiveChart();
       return(true);
+     }
    int mid_y = g_ly_hy + g_ly_hh;
    int bot_y = mid_y + g_ly_mid;
    int tab_y = H - g_ly_tab;
@@ -422,6 +554,8 @@ bool ExEnsure()
    int hy = g_ly_hy + ExPx(6);
    if(hx + hw > tx - 8) hw = MathMax(ExPx(140), tx - hx - 8);
    if(!ExMake(g_cv_hud, EX_HUD, hx, hy, hw, hh)) return(false);
+   ExHideHostChart();
+   ExPlaceLiveChart();
    g_ex_ready = true;
    g_ex_sig = "";
    return(true);
@@ -520,6 +654,38 @@ void ExRobot(const int x, const int y, const int w, const int h)
    g_dc.FillCircle(cx - rx / 2, cy + 2, 2, ExArgb(EX_BLUE, 200));
    g_dc.FillCircle(cx + rx / 2, cy + 2, 2, ExArgb(EX_BLUE, 200));
   }
+void ExDrawAvatar(const int x, const int y, const int w, const int h)
+  {
+   if(g_dc == NULL) return;
+   uint px[];
+   uint iw = 0, ih = 0;
+   if(!ResourceReadImage("::Images\\molido_avatar.bmp", px, iw, ih) || iw == 0 || ih == 0)
+     {
+      ExRobot(x, y, w, h);
+      return;
+     }
+   double sc = MathMin((double)w / (double)iw, (double)h / (double)ih);
+   int dw = (int)MathRound(iw * sc);
+   int dh = (int)MathRound(ih * sc);
+   if(dw < 8) dw = 8;
+   if(dh < 8) dh = 8;
+   int ox = x + (w - dw) / 2;
+   int oy = y + (h - dh) / 2;
+   for(int yy = 0; yy < dh; yy++)
+     {
+      int sy = yy * (int)ih / dh;
+      if(sy < 0) sy = 0;
+      if(sy >= (int)ih) sy = (int)ih - 1;
+      for(int xx = 0; xx < dw; xx++)
+        {
+         int sx = xx * (int)iw / dw;
+         if(sx < 0) sx = 0;
+         if(sx >= (int)iw) sx = (int)iw - 1;
+         g_dc.PixelSet(ox + xx, oy + yy, px[sy * (int)iw + sx]);
+        }
+     }
+  }
+
 
 void ExGaugeSemi(const int cx, const int cy, const int rad, const double shown, const int target)
   {
@@ -589,12 +755,73 @@ void ExBtn3D(const string id, const int ax, const int ay, const int w, const int
    else
       ExGradV(ax + 1, ay + 1, ax + w - 1, ay + h - 1, c2, c1, 255, 255, r - 1);
    g_dc.FillRectangle(ax + r, ay + 1, ax + w - r, ay + 2, ExArgb(EX_TEXT, press ? 20 : 70));
-   ExFont("Segoe UI Bold", (w > ExPx(90) ? 11 : 9));
-   int tw = ExTw(cap);
-   int tx = ax + (w - tw) / 2;
-   int ty = ay + (h - ExFontSz(w > ExPx(90) ? 11 : 9)) / 2 - 1;
-   if(press) { tx++; ty++; }
-   ExText(tx, ty, cap, fg);
+   int maxw = w - ExPx(8);
+   if(maxw < 8) maxw = 8;
+   int fs = (h >= ExPx(36) && w > ExPx(90) ? 11 : (h >= ExPx(26) ? 9 : 8));
+   string l1 = cap, l2 = "";
+   int br = StringFind(cap, "\n");
+   if(br >= 0)
+     {
+      l1 = StringSubstr(cap, 0, br);
+      l2 = StringSubstr(cap, br + 1);
+     }
+   ExFont("Segoe UI Bold", fs);
+   if(l2 == "")
+     {
+      while(fs > 7 && ExTw(l1) > maxw)
+        {
+         fs--;
+         ExFont("Segoe UI Bold", fs);
+        }
+      if(ExTw(l1) > maxw)
+        {
+         int best = -1;
+         int mid = StringLen(l1) / 2;
+         for(int i = 1; i < StringLen(l1) - 1; i++)
+           {
+            ushort ch = (ushort)StringGetCharacter(l1, i);
+            if(ch == ' ' || ch == 0x200C)
+              {
+               if(best < 0 || MathAbs(i - mid) < MathAbs(best - mid))
+                  best = i;
+              }
+           }
+         if(best > 0)
+           {
+            l2 = StringSubstr(l1, best + 1);
+            l1 = StringSubstr(l1, 0, best);
+           }
+        }
+     }
+   else
+     {
+      while(fs > 7 && (ExTw(l1) > maxw || ExTw(l2) > maxw))
+        {
+         fs--;
+         ExFont("Segoe UI Bold", fs);
+        }
+     }
+   int fh = ExFontSz(fs);
+   int ty;
+   if(l2 == "")
+     {
+      int tw = ExTw(l1);
+      int tx = ax + (w - tw) / 2;
+      ty = ay + (h - fh) / 2 - 1;
+      if(press) { tx++; ty++; }
+      ExText(tx, ty, l1, fg);
+     }
+   else
+     {
+      int tw1 = ExTw(l1);
+      int tw2 = ExTw(l2);
+      ty = ay + (h - 2 * fh - 2) / 2;
+      int tx1 = ax + (w - tw1) / 2;
+      int tx2 = ax + (w - tw2) / 2;
+      if(press) { tx1++; tx2++; ty++; }
+      ExText(tx1, ty, l1, fg);
+      ExText(tx2, ty + fh + 1, l2, fg);
+     }
    ExHitAdd(id, ax, ay, w, h);
   }
 
@@ -602,15 +829,18 @@ void ExStepper(const string id, const int ax, const int ay, const int w, const i
                const string label, const string value)
   {
    ExGlowCard(ax, ay, ax + w, ay + h, ExPx(8), EX_BLUE, 50);
+   int bw = MathMin(ExPx(22), MathMax(ExPx(16), h - ExPx(16)));
+   int bh = bw;
+   int by = ay + (h - bh) / 2;
+   ExBtn3D(id + "_dn", ax + ExPx(6), by, bw, bh, "-", EX_CARD, EX_NAVY, EX_TEXT, false);
+   ExBtn3D(id + "_up", ax + w - bw - ExPx(6), by, bw, bh, "+", EX_CARD, EX_NAVY, EX_TEXT, false);
    ExFont("Segoe UI", 7);
-   ExText(ax + ExPx(8), ay + ExPx(4), label, EX_MUTED);
-   int bw = ExPx(22), bh = ExPx(22);
-   int by = ay + h - bh - ExPx(6);
-   ExBtn3D(id + "_dn", ax + ExPx(8), by, bw, bh, "-", EX_CARD, EX_NAVY, EX_TEXT, false);
-   ExBtn3D(id + "_up", ax + w - bw - ExPx(8), by, bw, bh, "+", EX_CARD, EX_NAVY, EX_TEXT, false);
-   ExFont("Segoe UI Bold", 12);
+   int lw = ExTw(label);
+   ExText(ax + (w - lw) / 2, ay + ExPx(4), label, EX_MUTED);
+   ExFont("Segoe UI Bold", 11);
    int tw = ExTw(value);
-   ExText(ax + (w - tw) / 2, ay + ExPx(22), value, EX_TEXT);
+   int ty = ay + (h - ExFontSz(11)) / 2 + ExPx(4);
+   ExText(ax + (w - tw) / 2, ty, value, EX_TEXT);
   }
 
 void ExSafeBadge(const int x, const int y, const int s, const int level)
@@ -795,123 +1025,121 @@ void ExDrawHeader(const bool ready, const bool linked, const bool blocked, const
   {
    ExUse(g_cv_h);
    int W = g_ex_cw, H = g_ly_head;
-   g_cv_h.Erase(0);
-   ExGradV(0, 0, W - 1, H - 1, EX_NAVY2, EX_BLACK, 250, 250, 0);
+   g_cv_h.Erase(ExArgb(EX_NAVY, 255));
+   ExGradV(0, 0, W - 1, H - 1, EX_NAVY2, EX_BLACK, 255, 255, 0);
    g_cv_h.FillRectangle(0, H - 2, W - 1, H - 1, ExArgb(EX_BLUE, 80));
    g_cv_h.FillRectangle(0, 0, W - 1, 2, ExArgb(EX_GOLD, 180));
    int pad = ExPx(10);
-   ExLogoM(pad, ExPx(8), ExPx(44));
-   ExFont("Segoe UI Bold", 16);
-   ExText(pad + ExPx(52), ExPx(8), "Molido Expert", EX_GOLD2);
-   ExFont("Segoe UI Semibold", 9);
-   ExText(pad + ExPx(52), ExPx(32), ExTr("subtitle"), EX_BLUE);
-   // status pill
+   ExLogoM(pad, ExPx(8), ExPx(48));
+   ExFont("Segoe UI Bold", 20);
+   ExText(pad + ExPx(56), ExPx(6), "Molido Expert", EX_GOLD2);
+   ExFont("Segoe UI Semibold", 10);
+   ExText(pad + ExPx(56), ExPx(34), ExTr("subtitle"), EX_BLUE);
    string st = ExTr("ready");
    color sc = EX_GREEN;
    bool live = ready;
    if(blocked) { st = ExTr("real"); sc = EX_CORAL; live = false; }
    else if(killed) { st = ExTr("killed"); sc = EX_CORAL; live = false; }
    else if(!ready) { st = ExTr("notready"); sc = EX_AMBER; live = false; }
-   ExFont("Segoe UI Semibold", 9);
+   ExFont("Segoe UI Semibold", 10);
    int pw = ExTw(st) + ExPx(28);
-   int px = pad + ExPx(250);
-   if(px + pw > W / 2) px = ExPx(240);
-   int py = (H - ExPx(26)) / 2;
-   ExPill(px, py, pw, ExPx(26), sc, sc, st, live);
-   ExHeartbeat(px + ExPx(10), py + ExPx(13), sc, live);
-   // connection + signal bars
-   string core = ExTr("core") + ": " + (linked ? ExTr("online") : ExTr("offline"));
-   color cc = linked ? EX_GREEN : EX_CORAL;
-   ExFont("Segoe UI Semibold", 9);
-   int cw = ExTw(core) + ExPx(36);
+   int px = pad + ExPx(280);
+   if(px + pw > W / 2) px = ExPx(260);
+   int py = (H - ExPx(28)) / 2;
+   ExPill(px, py, pw, ExPx(28), sc, sc, st, live);
+   ExHeartbeat(px + ExPx(10), py + ExPx(14), sc, live);
+   // connection: muted label + state-colored word only
+   ExFont("Segoe UI Semibold", 10);
+   string clab = ExTr("core");
    int cx = px + pw + ExPx(16);
-   ExPill(cx, py, cw, ExPx(26), cc, cc, core, linked);
-   // tiny signal icon
-   int sx = cx + cw - ExPx(16);
-   int sy = py + ExPx(18);
+   ExText(cx, py + ExPx(6), clab, EX_MUTED);
+   int labw = ExTw(clab);
+   string stw = linked ? ExTr("online") : ExTr("offline");
+   color cc = linked ? EX_GREEN : EX_CORAL;
+   ExFont("Segoe UI Bold", 10);
+   int sw = ExTw(stw) + ExPx(28);
+   int sx0 = cx + labw + ExPx(8);
+   ExPill(sx0, py, sw, ExPx(28), cc, cc, stw, linked);
+   int bx = sx0 + sw + ExPx(8);
+   int sy = py + ExPx(20);
    int bars = (linked ? 4 : 1);
    for(int i = 0; i < 4; i++)
      {
       int bh = ExPx(4 + i * 3);
       uint col = ExArgb(i < bars ? cc : EX_MUTED, i < bars ? 230 : 80);
-      g_cv_h.FillRectangle(sx + i * 4, sy - bh, sx + i * 4 + 3, sy, col);
+      g_cv_h.FillRectangle(bx + i * 4, sy - bh, bx + i * 4 + 3, sy, col);
      }
-   // clock + last update (trust)
    string ts = TimeToString(TimeLocal(), TIME_DATE | TIME_SECONDS);
-   ExFont("Segoe UI Semibold", 10);
+   ExFont("Segoe UI Semibold", 11);
    int tw = ExTw(ts);
-   ExText(W - tw - ExPx(52), ExPx(10), ts, EX_TEXT);
-   ExFont("Segoe UI", 7);
+   ExText(W - tw - ExPx(56), ExPx(8), ts, EX_TEXT);
+   ExFont("Segoe UI", 8);
    string up = ExTr("updated") + "  " + TimeToString(g_ex_updated, TIME_SECONDS);
    int uw = ExTw(up);
-   ExText(W - uw - ExPx(52), ExPx(30), up, EX_MUTED);
-   // globe language
-   int lx = W - ExPx(44);
-   int ly = ExPx(14);
+   ExText(W - uw - ExPx(56), ExPx(30), up, EX_MUTED);
+   int lx = W - ExPx(46);
+   int ly = ExPx(16);
    ExBtn3D("lang", lx, ly, ExPx(32), ExPx(32), (MolidoLangId()==LANG_FA?"FA":"EN"), EX_CARD, EX_NAVY, EX_GOLD2, false);
-   ExFont("Segoe UI Bold", 8);
-   // override label with globe-like mark + lang
-   // (button already labeled; rewrite)
   }
 
 void ExDrawLeft(const int strength, const bool linked)
   {
    ExUse(g_cv_l);
    int W = g_ly_left, H = g_ly_hy + g_ly_hh - g_ly_head;
-   g_cv_l.Erase(0);
+   g_cv_l.Erase(ExArgb(EX_NAVY, 255));
    ExGlowCard(ExPx(6), ExPx(4), W - ExPx(6), H - ExPx(4), ExPx(12), EX_BLUE, (uchar)MathRound(40 + 50 * ExPulse()));
-   // avatar
-   int ax = ExPx(16), ay = ExPx(10);
-   int aw = W - ExPx(32);
-   int ah = MathMin(ExPx(132), H / 3);
-   ExRobot(ax, ay, aw, ah);
-   int y = ay + ah + ExPx(4);
-   // hybrid pill
+   int row = ExLy(20);
+   int strat_h = 4 * row + ExLy(6);
+   int news_h = ExLy(16);
+   int top_h = H - strat_h - news_h - ExLy(8);
+   if(top_h < ExLy(120)) top_h = MathMax(ExLy(96), H - strat_h - ExLy(4));
+   int ax = ExPx(14), ay = ExPx(6);
+   int aw = W - ExPx(28);
+   int ah = MathMin(ExLy(110), (int)MathRound(top_h * 0.42));
+   if(ah < ExLy(56)) ah = ExLy(56);
+   ExDrawAvatar(ax, ay, aw, ah);
+   int y = ay + ah + ExPx(2);
    ExFont("Segoe UI Semibold", 8);
    string hy = ExTr("hybrid");
    int hw = ExTw(hy) + ExPx(28);
    if(hw > W - ExPx(20)) hw = W - ExPx(20);
    int hx = (W - hw) / 2;
-   ExRound(hx - 2, y - 2, hx + hw + 2, y + ExPx(24) + 2, ExPx(10), ExArgb(EX_BLUE, (uchar)MathRound(30 + 40 * ExPulse())));
-   ExRound(hx, y, hx + hw, y + ExPx(22), ExPx(10), ExArgb(EX_NAVY2, 230));
-   g_cv_l.FillCircle(hx + ExPx(12), y + ExPx(11), ExPx(5), ExArgb(EX_BLUE, 220));
-   ExText(hx + ExPx(22), y + ExPx(4), hy, EX_TEXT);
-   y += ExPx(30);
-   // gauge
+   ExRound(hx - 2, y - 2, hx + hw + 2, y + ExPx(20) + 2, ExPx(10), ExArgb(EX_BLUE, (uchar)MathRound(30 + 40 * ExPulse())));
+   ExRound(hx, y, hx + hw, y + ExPx(20), ExPx(10), ExArgb(EX_NAVY2, 255));
+   g_cv_l.FillCircle(hx + ExPx(12), y + ExPx(10), ExPx(5), ExArgb(EX_BLUE, 220));
+   ExText(hx + ExPx(22), y + ExPx(3), hy, EX_TEXT);
+   y += ExPx(24);
    int gc = W / 2;
-   int gy = y + ExPx(36);
-   int rad = MathMin(ExPx(48), W / 3);
+   int gy = y + MathMin(ExLy(34), (top_h - (y - ay)) / 2);
+   int rad = MathMin(ExLy(42), MathMin(W / 3, (H - strat_h - y - ExLy(8)) * 2 / 3));
+   if(rad < ExLy(22)) rad = ExLy(22);
    ExGaugeSemi(gc, gy, rad, g_gauge_shown, strength);
-   y = gy + ExPx(22);
-   // strategies
+   // strategies are pinned to the bottom of the left card so they never vanish
+   int y0 = H - news_h - strat_h;
+   if(y0 < gy + ExLy(16)) y0 = gy + ExLy(16);
    bool sc = StratUseScalper();
    bool tr = StratUseTrend();
    string ids[4] = {"sc","tr","rk","sm"};
    string keys[4] = {"sc","tf","rk","sm"};
    bool ons[4]; ons[0]=sc; ons[1]=tr; ons[2]=false; ons[3]=false;
    bool impl[4]; impl[0]=true; impl[1]=true; impl[2]=false; impl[3]=false;
-   int row = ExPx(22);
    for(int i = 0; i < 4; i++)
      {
-      int ry = y + i * row;
+      int ry = y0 + i * row;
+      if(ry + row > H - ExLy(4)) break;
       ExCheck(ExPx(16), ry, ons[i], impl[i]);
       ExFont("Segoe UI Semibold", 9);
       color fc = (impl[i] ? EX_TEXT : EX_MUTED);
       ExText(ExPx(38), ry, ExTr(keys[i]), fc);
-      if(!impl[i])
-        {
-         ExFont("Segoe UI", 7);
-         ExText(ExPx(38), ry + ExPx(10), ExTr("impl_no"), EX_MUTED);
-        }
       ExHitAdd(ids[i], ExPx(12), ry, W - ExPx(24), row);
      }
-   y += 4 * row + ExPx(6);
-   if(y + ExPx(16) < H - ExPx(10))
+   int ny = y0 + 4 * row;
+   if(ny + ExPx(12) < H - ExPx(4))
      {
       ExFont("Segoe UI", 7);
       string news = DemoNextNewsLine();
       if(StringLen(news) > 0)
-         ExText(ExPx(14), y, news, EX_MUTED);
+         ExText(ExPx(14), ny, news, EX_MUTED);
      }
   }
 
@@ -920,32 +1148,51 @@ void ExDrawRight(const bool linked)
    ExUse(g_cv_r);
    int W = g_ly_right;
    int H = g_ly_hy + g_ly_hh - g_ly_head;
-   g_cv_r.Erase(0);
+   g_cv_r.Erase(ExArgb(EX_NAVY, 255));
    ExGlowCard(ExPx(4), ExPx(4), W - ExPx(6), H - ExPx(4), ExPx(12), EX_BLUE, (uchar)MathRound(50 + 60 * ExPulse()));
-   ExFont("Segoe UI Bold", 12);
+   int pad = ExPx(10);
+   int gap = ExPx(6);
+   int title_h = ExPx(30);
+   int tfs = 16;
+   ExFont("Segoe UI Bold", tfs);
    string title = ExTr("council");
+   while(tfs > 10 && ExTw(title) > W - ExPx(24))
+     { tfs--; ExFont("Segoe UI Bold", tfs); }
    int tw = ExTw(title);
    int tx = (W - tw) / 2;
-   if(tx < ExPx(12)) tx = ExPx(12);
-   ExText(tx, ExPx(10), title, EX_GOLD2);
-   // crown-ish marks
+   if(tx < pad) tx = pad;
+   ExText(tx, ExPx(8), title, EX_GOLD2);
    g_cv_r.FillCircle(tx - ExPx(10), ExPx(18), 3, ExArgb(EX_GOLD, 200));
-   // brain + 51-dot ring
+   int avail_h = H - title_h - pad;
+   int btn_h = (avail_h - 3 * gap) / 4;
+   if(btn_h < ExPx(24)) btn_h = ExPx(24);
+   if(btn_h > ExPx(40)) btn_h = ExPx(40);
+   int brain_d = MathMin(ExPx(130), MathMin(avail_h - ExPx(8), W / 3));
+   if(brain_d < ExPx(90)) brain_d = ExPx(90);
+   int btn_w = W / 2 - brain_d / 2 - pad - gap;
+   if(btn_w < ExPx(78))
+     {
+      brain_d = MathMax(ExPx(80), W - 2 * (ExPx(78) + pad + gap));
+      btn_w = W / 2 - brain_d / 2 - pad - gap;
+     }
+   if(btn_w < ExPx(70)) btn_w = ExPx(70);
+   int col0 = pad;
+   int col1 = W - pad - btn_w;
+   int top = title_h;
    int cx = W / 2;
-   int cy = H / 2 - ExPx(4);
-   int R = MathMin(ExPx(54), W / 5);
+   int cy = title_h + avail_h / 2;
+   int R = brain_d / 2 - ExPx(18);
+   if(R < ExPx(28)) R = ExPx(28);
    int on = (linked ? g_ai_agents_on : 0);
    int tot = (g_ai_agents_total > 0 ? g_ai_agents_total : 51);
    if(tot > 51) tot = 51;
    double p = ExPulse();
    g_cv_r.FillCircle(cx, cy, R + 16, ExArgb(EX_BLUE, (uchar)MathRound(20 + 30 * p)));
    g_cv_r.FillCircle(cx, cy, R + 8, ExArgb(EX_BLUE, (uchar)MathRound(40 + 50 * p)));
-   g_cv_r.FillCircle(cx, cy, R, ExArgb(EX_NAVY, 240));
-   // stylized brain folds (two lobes)
+   g_cv_r.FillCircle(cx, cy, R, ExArgb(EX_NAVY, 255));
    g_cv_r.FillCircle(cx - R / 3, cy - 2, R / 2, ExArgb(EX_BLUE, (uchar)MathRound(70 + 50 * p)));
    g_cv_r.FillCircle(cx + R / 3, cy - 2, R / 2, ExArgb(EX_BLUE, (uchar)MathRound(70 + 50 * p)));
    g_cv_r.FillCircle(cx, cy + R / 5, R / 3, ExArgb(EX_BLUE2, 180));
-   // 51 dots
    int dots = 51;
    int ring = R + ExPx(16);
    for(int i = 0; i < dots; i++)
@@ -958,43 +1205,28 @@ void ExDrawRight(const bool linked)
       g_cv_r.FillCircle(dx, dy, 2, ExArgb(dc, lit ? 230 : 100));
      }
    string num = (linked ? IntegerToString(on) + " / " + IntegerToString(tot) : ExTr("dash"));
-   ExFont("Segoe UI Bold", 14);
+   ExFont("Segoe UI Bold", 16);
    int nw = ExTw(num);
    ExText(cx - nw / 2, cy - ExFontSz(8), num, EX_TEXT);
    ExFont("Segoe UI", 8);
    string al = linked ? ExTr("agents") : ExTr("disc");
    int alw = ExTw(al);
-   ExText(cx - alw / 2, cy + ExPx(10), al, linked ? EX_MUTED : EX_CORAL);
-   // 8 agent buttons
+   ExText(cx - alw / 2, cy + ExPx(12), al, linked ? EX_MUTED : EX_CORAL);
    string gk[8] = {"g0","g1","g2","g3","g4","g5","g6","g7"};
-   // positions: 4 left, 4 right of the ring
-   int bw = (W - ring * 2 - ExPx(28)) / 2;
-   if(bw < ExPx(86)) bw = (W / 2) - ExPx(18);
-   if(bw > ExPx(120)) bw = ExPx(120);
-   int bh = ExPx(28);
-   int gap = ExPx(6);
-   int col0 = ExPx(12);
-   int col1 = W - bw - ExPx(14);
-   int top = ExPx(36);
-   // if not enough vertical room, pack tighter
-   int need = 4 * (bh + gap);
-   int avail = H - top - ExPx(16);
-   if(need > avail && avail > 0)
-      bh = MathMax(ExPx(20), (avail / 4) - gap);
    int order_l[4] = {0,2,4,6};
    int order_r[4] = {1,3,5,7};
-   int gmap[8] = {0,5,7,6,1,8,9,10}; // Market, News, Risk, Sentiment, Rocket, Capital, Learning, Council
+   int gmap[8] = {0,5,7,6,1,8,9,10};
    for(int i = 0; i < 4; i++)
      {
-      int ly = top + i * (bh + gap);
+      int ly = top + i * (btn_h + gap);
       int idl = order_l[i], idr = order_r[i];
       int sl = gmap[idl], sr = gmap[idr];
       bool ok_l = (linked && sl < 11 && StringLen(g_ai_group_st[sl]) > 0 && StringFind(g_ai_group_st[sl], "Disconnected") < 0);
       bool ok_r = (linked && sr < 11 && StringLen(g_ai_group_st[sr]) > 0 && StringFind(g_ai_group_st[sr], "Disconnected") < 0);
       color c1l = ok_l ? EX_BLUE : EX_CARD;
       color c1r = ok_r ? EX_BLUE : EX_CARD;
-      ExBtn3D("ag" + IntegerToString(idl), col0, ly, bw, bh, ExTr(gk[idl]), c1l, EX_NAVY, EX_TEXT, false);
-      ExBtn3D("ag" + IntegerToString(idr), col1, ly, bw, bh, ExTr(gk[idr]), c1r, EX_NAVY, EX_TEXT, false);
+      ExBtn3D("ag" + IntegerToString(idl), col0, ly, btn_w, btn_h, ExTr(gk[idl]), c1l, EX_NAVY, EX_TEXT, false);
+      ExBtn3D("ag" + IntegerToString(idr), col1, ly, btn_w, btn_h, ExTr(gk[idr]), c1r, EX_NAVY, EX_TEXT, false);
      }
   }
 
@@ -1004,7 +1236,7 @@ void ExDrawHud()
    ExUse(g_cv_hud);
    int W = ExPx(280), H = ExPx(28);
    // actual canvas size may be smaller — use object width if possible
-   g_cv_hud.Erase(0);
+   g_cv_hud.Erase(ExArgb(EX_NAVY, 255));
    ExRound(0, 0, W - 1, H - 1, ExPx(6), ExArgb(EX_NAVY, 200));
    ExFont("Segoe UI Bold", 9);
    ExText(ExPx(6), ExPx(6), _Symbol, EX_GOLD2);
@@ -1027,7 +1259,7 @@ void ExDrawTag()
   {
    ExUse(g_cv_tag);
    int W = ExPx(86), H = ExPx(40);
-   g_cv_tag.Erase(0);
+   g_cv_tag.Erase(ExArgb(EX_NAVY, 255));
    double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
    double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
    bool ok = (ask > 0.0);
@@ -1043,35 +1275,37 @@ void ExDrawMid()
   {
    ExUse(g_cv_m);
    int W = g_ex_cw, H = g_ly_mid;
-   g_cv_m.Erase(0);
-   ExGradV(0, 0, W - 1, H - 1, EX_NAVY, EX_BLACK, 240, 240, 0);
-   int pad = ExPx(10);
-   int y = ExPx(10);
-   int h = H - ExPx(18);
-   // BUY / SELL strong gradients
-   int bw = ExPx(130);
-   if(bw > W / 5) bw = W / 5;
-   if(bw < ExPx(96)) bw = ExPx(96);
-   ExBtn3D("buy", pad, y, bw, h, ExTr("buy") + "  (BUY)", EX_GREEN, EX_GREEN2, EX_TEXT, false);
-   ExBtn3D("sell", pad + bw + ExPx(8), y, bw, h, ExTr("sell") + "  (SELL)", EX_CORAL, EX_RED, EX_TEXT, true);
-   // steppers
-   int sx = pad + 2 * (bw + ExPx(8));
-   int remain = W - sx - ExPx(150) - pad;
-   if(remain < ExPx(210)) remain = W - sx - ExPx(120) - pad;
-   int sw = remain / 3 - ExPx(6);
-   if(sw < ExPx(70)) sw = ExPx(70);
-   ExStepper("lot", sx, y, sw, h, ExTr("lot"), DoubleToString(g_ex_lot, 2));
-   ExStepper("tp", sx + sw + ExPx(6), y, sw, h, ExTr("tp"), ExTpPreview());
-   ExStepper("sl", sx + 2 * (sw + ExPx(6)), y, sw, h, ExTr("sl"), ExSlPreview());
-   // close card
-   int cx = sx + 3 * (sw + ExPx(6));
-   if(cx + ExPx(100) > W - pad)
-      cx = W - ExPx(118) - pad;
-   int cw = W - pad - cx;
-   ExGlowCard(cx, y, cx + cw, y + h, ExPx(8), EX_BLUE, 50);
-   int ch = (h - ExPx(8)) / 2;
-   ExBtn3D("close", cx + ExPx(6), y + ExPx(4), cw - ExPx(12), ch, ExTr("close"), EX_CARD, EX_NAVY2, EX_TEXT, false);
-   ExBtn3D("closeall", cx + ExPx(6), y + ExPx(4) + ch, cw - ExPx(12), ch, ExTr("closeall"), EX_CARD, EX_NAVY2, EX_MUTED, false);
+   g_cv_m.Erase(ExArgb(EX_NAVY, 255));
+   ExGradV(0, 0, W - 1, H - 1, EX_NAVY, EX_BLACK, 255, 255, 0);
+   int pad = ExPx(8);
+   int gap = ExPx(6);
+   int y = ExPx(8);
+   int h = H - ExPx(16);
+   if(h < ExPx(40)) h = ExPx(40);
+   // 7 equal-row cells: BUY, SELL, lot, SL, TP, close, close-all
+   double units = 1.25 + 1.25 + 1.05 + 1.05 + 1.05 + 1.0 + 1.0;
+   int avail = W - 2 * pad - 6 * gap;
+   if(avail < ExPx(400)) avail = W - 2 * pad - 6 * ExPx(4);
+   double unit = (double)avail / units;
+   int bw = (int)MathRound(unit * 1.25);
+   int sw = (int)MathRound(unit * 1.05);
+   int cw = (int)MathRound(unit * 1.0);
+   int x = pad;
+   ExBtn3D("buy", x, y, bw, h, ExTr("buy") + "  BUY", EX_GREEN, EX_GREEN2, EX_TEXT, false);
+   x += bw + gap;
+   ExBtn3D("sell", x, y, bw, h, ExTr("sell") + "  SELL", EX_CORAL, EX_RED, EX_TEXT, true);
+   x += bw + gap;
+   ExStepper("lot", x, y, sw, h, ExTr("lot"), DoubleToString(g_ex_lot, 2));
+   x += sw + gap;
+   ExStepper("sl", x, y, sw, h, ExTr("sl"), ExSlPreview());
+   x += sw + gap;
+   ExStepper("tp", x, y, sw, h, ExTr("tp"), ExTpPreview());
+   x += sw + gap;
+   ExBtn3D("close", x, y, cw, h, ExTr("close"), EX_CARD, EX_NAVY2, EX_TEXT, false);
+   x += cw + gap;
+   int last = W - pad - x;
+   if(last < ExPx(70)) last = cw;
+   ExBtn3D("closeall", x, y, last, h, ExTr("closeall"), EX_CARD, EX_NAVY2, EX_MUTED, false);
   }
 
 void ExDrawBotTrade(const ExpertPerf &perf, const ExpertReport &rep,
@@ -1080,24 +1314,24 @@ void ExDrawBotTrade(const ExpertPerf &perf, const ExpertReport &rep,
   {
    ExUse(g_cv_b);
    int W = g_ex_cw, H = g_ly_bot;
-   g_cv_b.Erase(0);
+   g_cv_b.Erase(ExArgb(EX_NAVY, 255));
    int pad = ExPx(8);
-   int kill_w = ExPx(120);
-   int inner = W - pad * 2 - kill_w - ExPx(8);
-   int cw = (inner - ExPx(12)) / 3;
+   int gap = ExPx(6);
+   int y = ExPx(6);
+   int ch = H - ExPx(12);
+   int cw = (W - 2 * pad - 3 * gap) / 4;
    int x = pad;
-   int y = ExPx(4);
-   int ch = H - ExPx(8);
    // RISK
    ExGlowCard(x, y, x + cw, y + ch, ExPx(10), EX_GREEN, 60);
-   ExLockIcon(x + ExPx(16), y + ExPx(16), EX_GOLD);
-   ExFont("Segoe UI Bold", 11);
-   ExText(x + ExPx(28), y + ExPx(8), ExTr("risk"), EX_GOLD2);
+   ExLockIcon(x + ExPx(16), y + ExPx(18), EX_GOLD);
+   ExFont("Segoe UI Bold", 14);
+   ExText(x + ExPx(30), y + ExPx(8), ExTr("risk"), EX_GOLD2);
    int level = ExRiskLevel(daily_used, dd_used, killed, blocked);
-   ExSafeBadge(x + cw - ExPx(40), y + ch / 2, ExPx(22), level);
+   ExSafeBadge(x + cw - ExPx(40), y + ExPx(14), ExPx(22), level);
    ExFont("Segoe UI", 8);
-   int ly = y + ExPx(28);
-   int row = ExPx(16);
+   int ly = y + ExPx(32);
+   int row = (ch - ExPx(40)) / 4;
+   if(row < ExPx(14)) row = ExPx(14);
    string r1 = ExTr("r_trade") + "   " + DoubleToString(DemoActiveRiskPct(), 2) + "%";
    string r2 = ExTr("r_daily") + "   " + DoubleToString(DemoActiveDailyPct(), 2) + "%";
    string r3 = ExTr("r_dd") + "   " + (DemoActiveMaxDdPct() > 0 ? DoubleToString(DemoActiveMaxDdPct(), 2) + "%" : ExTr("dash"));
@@ -1107,52 +1341,52 @@ void ExDrawBotTrade(const ExpertPerf &perf, const ExpertReport &rep,
    ExText(x + ExPx(12), ly, r3, EX_TEXT); ly += row;
    ExText(x + ExPx(12), ly, r4, EX_TEXT);
    // PERF
-   x += cw + ExPx(6);
+   x += cw + gap;
    ExGlowCard(x, y, x + cw, y + ch, ExPx(10), EX_BLUE, 55);
-   ExFont("Segoe UI Bold", 11);
+   ExFont("Segoe UI Bold", 14);
    ExText(x + ExPx(12), y + ExPx(8), ExTr("perf"), EX_GOLD2);
-   ExPerfBars(x + ExPx(10), y + ExPx(28), cw / 2 - ExPx(16), ch - ExPx(40));
+   ExPerfBars(x + ExPx(10), y + ExPx(32), cw / 2 - ExPx(16), ch - ExPx(44));
    int tx = x + cw / 2;
    ExFont("Segoe UI", 8);
-   ExText(tx, y + ExPx(28), ExTr("today"), EX_MUTED);
+   ExText(tx, y + ExPx(32), ExTr("today"), EX_MUTED);
    ExFont("Segoe UI Bold", 12);
-   string tv = (perf.has_data || rep.today_trades > 0 || rep.history_trades > 0)
-               ? IntegerToString(rep.today_trades) : ExTr("nodata");
-   // today trades can be 0 with history; 0 is real, only "no data" when no history at all
+   string tv;
    if(!perf.has_data && rep.today_trades == 0 && rep.history_trades == 0)
       tv = ExTr("nodata");
    else
       tv = IntegerToString(rep.today_trades);
-   ExText(tx, y + ExPx(42), tv, EX_TEXT);
+   ExText(tx, y + ExPx(46), tv, EX_TEXT);
    ExFont("Segoe UI", 8);
-   ExText(tx, y + ExPx(64), ExTr("win"), EX_MUTED);
+   ExText(tx, y + ExPx(66), ExTr("win"), EX_MUTED);
    ExFont("Segoe UI Bold", 12);
    string wv = perf.has_data ? DoubleToString(perf.winpct, 1) + "%" : ExTr("nodata");
-   ExText(tx, y + ExPx(78), wv, EX_TEXT);
+   ExText(tx, y + ExPx(80), wv, EX_TEXT);
    ExFont("Segoe UI", 8);
-   ExText(tx, y + ExPx(98), ExTr("net"), EX_MUTED);
+   ExText(tx, y + ExPx(100), ExTr("net"), EX_MUTED);
    ExFont("Segoe UI Bold", 11);
    string nv = perf.has_data ? ExpertMoney(perf.pnl) : ExTr("nodata");
-   ExText(tx, y + ExPx(110), nv, perf.has_data && perf.pnl < 0 ? EX_CORAL : EX_GREEN);
+   ExText(tx, y + ExPx(112), nv, perf.has_data && perf.pnl < 0 ? EX_CORAL : EX_GREEN);
    // MARKETS
-   x += cw + ExPx(6);
+   x += cw + gap;
    ExGlowCard(x, y, x + cw, y + ch, ExPx(10), EX_BLUE, 55);
-   ExFont("Segoe UI Bold", 11);
+   ExFont("Segoe UI Bold", 14);
    ExText(x + ExPx(12), y + ExPx(8), ExTr("markets"), EX_GOLD2);
    string kinds[3] = {"forex","gold","crypto"};
-   string labs[3] = {ExTr("forex"), ExTr("gold") + " (XAUUSD)", "Crypto"};
-   // gold label uses real symbol if present
+   string labs[3];
+   labs[0] = ExTr("forex");
    string gs = ExMarketSym("gold");
    if(StringLen(gs) > 0) labs[1] = ExTr("gold") + " (" + gs + ")";
    else labs[1] = ExTr("gold");
+   labs[2] = "Crypto";
+   int mrow = (ch - ExPx(36)) / 3;
    for(int i = 0; i < 3; i++)
      {
-      int ry = y + ExPx(28) + i * ExPx(30);
+      int ry = y + ExPx(32) + i * mrow;
       string sym = ExMarketSym(kinds[i]);
       bool ok = (StringLen(sym) > 0);
-      bool live = ok && ExTickOk(sym);
-      string st = (!ok ? ExTr("nodata") : (live ? ExTr("active") : ExTr("closed")));
-      color sc = (!ok ? EX_AMBER : (live ? EX_GREEN : EX_MUTED));
+      bool m_live = ok && ExTickOk(sym);
+      string st = (!ok ? ExTr("nodata") : (m_live ? ExTr("active") : ExTr("closed")));
+      color sc = (!ok ? EX_AMBER : (m_live ? EX_GREEN : EX_MUTED));
       ExFont("Segoe UI Semibold", 9);
       ExText(x + ExPx(12), ry, labs[i], EX_TEXT);
       ExFont("Segoe UI", 8);
@@ -1160,24 +1394,19 @@ void ExDrawBotTrade(const ExpertPerf &perf, const ExpertReport &rep,
       if(ok)
          ExSpark(x + cw - ExPx(70), ry, ExPx(56), ExPx(22), sym);
      }
-   // KILL
-   int kx = W - pad - kill_w;
+   // EMERGENCY STOP — fixed rightmost cell of the 4-column grid
+   x += cw + gap;
+   int kx = x;
+   int kill_w = W - pad - kx;
    ExRound(kx - 3, y - 2, kx + kill_w + 2, y + ch + 2, ExPx(10), ExArgb(EX_CORAL, (uchar)MathRound(50 + 60 * ExPulse())));
-   ExBtn3D("kill", kx, y, kill_w, ch, ExTr("kill"), EX_CORAL, EX_RED, EX_TEXT, true);
-   ExFont("Segoe UI", 7);
-   // subtitle is drawn below title inside button area — add as second line on canvas
-   int ksubw = ExTw(ExTr("killsub"));
-   ExText(kx + (kill_w - ksubw) / 2, y + ch - ExPx(16), ExTr("killsub"), C'255,200,200');
-   // Auto / Stop new small chips under? already will be in header leftover. Add two slim buttons above kill if space — put left of kill in remaining? Keep in tabs/settings and also small on mid. Add here top of kill card is full. Place left of kill is markets. Put auto/stop in header later.
-   int ay = y + ExPx(2);
-   // compact auto/stop just above tabs is better — draw two small buttons at left of kill if kill is tall
+   ExBtn3D("kill", kx, y, kill_w, ch, ExTr("kill") + "\n" + ExTr("killsub"), EX_CORAL, EX_RED, EX_TEXT, true);
   }
 
 void ExDrawBotReport(const ExpertPerf &perf, const ExpertReport &rep)
   {
    ExUse(g_cv_b);
    int W = g_ex_cw, H = g_ly_bot;
-   g_cv_b.Erase(0);
+   g_cv_b.Erase(ExArgb(EX_NAVY, 255));
    ExGlowCard(ExPx(8), ExPx(4), W - ExPx(8), H - ExPx(4), ExPx(10), EX_BLUE, 50);
    ExFont("Segoe UI Bold", 12);
    ExText(ExPx(18), ExPx(10), ExTr("tab3"), EX_GOLD2);
@@ -1206,7 +1435,7 @@ void ExDrawBotSignals(const int strength)
   {
    ExUse(g_cv_b);
    int W = g_ex_cw, H = g_ly_bot;
-   g_cv_b.Erase(0);
+   g_cv_b.Erase(ExArgb(EX_NAVY, 255));
    ExGlowCard(ExPx(8), ExPx(4), W - ExPx(8), H - ExPx(4), ExPx(10), EX_BLUE, 50);
    ExFont("Segoe UI Bold", 12);
    ExText(ExPx(18), ExPx(10), ExTr("tab2"), EX_GOLD2);
@@ -1233,7 +1462,7 @@ void ExDrawBotSettings()
   {
    ExUse(g_cv_b);
    int W = g_ex_cw, H = g_ly_bot;
-   g_cv_b.Erase(0);
+   g_cv_b.Erase(ExArgb(EX_NAVY, 255));
    ExGlowCard(ExPx(8), ExPx(4), W - ExPx(8), H - ExPx(4), ExPx(10), EX_BLUE, 50);
    ExFont("Segoe UI Bold", 12);
    ExText(ExPx(18), ExPx(10), ExTr("tab4"), EX_GOLD2);
@@ -1259,7 +1488,7 @@ void ExDrawBotAbout()
   {
    ExUse(g_cv_b);
    int W = g_ex_cw, H = g_ly_bot;
-   g_cv_b.Erase(0);
+   g_cv_b.Erase(ExArgb(EX_NAVY, 255));
    ExGlowCard(ExPx(8), ExPx(4), W - ExPx(8), H - ExPx(4), ExPx(10), EX_GOLD, 40);
    ExFont("Segoe UI Bold", 13);
    ExText(ExPx(18), ExPx(12), "Molido Expert  2.1", EX_GOLD2);
@@ -1273,19 +1502,21 @@ void ExDrawTabs()
   {
    ExUse(g_cv_t);
    int W = g_ex_cw, H = g_ly_tab;
-   g_cv_t.Erase(0);
-   ExGradV(0, 0, W - 1, H - 1, EX_NAVY2, EX_BLACK, 250, 250, 0);
-   g_cv_t.FillRectangle(0, 0, W - 1, 1, ExArgb(EX_BLUE, 70));
+   g_cv_t.Erase(ExArgb(EX_NAVY, 255));
+   ExGradV(0, 0, W - 1, H - 1, EX_NAVY2, EX_BLACK, 255, 255, 0);
+   g_cv_t.FillRectangle(0, 0, W - 1, 2, ExArgb(EX_GOLD, 120));
    int n = 6;
    int pad = ExPx(8);
-   int bw = (W - pad * 2 - ExPx(5) * (n - 1)) / n;
-   int bh = H - ExPx(8);
+   int gap = ExPx(6);
+   int bw = (W - pad * 2 - gap * (n - 1)) / n;
+   int bh = H - ExPx(10);
+   if(bh < ExPx(28)) bh = ExPx(28);
    string keys[6] = {"tab0","tab1","tab2","tab3","tab4","tab5"};
    for(int i = 0; i < n; i++)
      {
-      int x = pad + i * (bw + ExPx(5));
+      int x = pad + i * (bw + gap);
       bool on = (g_ex_tab == i);
-      ExBtn3D("tab" + IntegerToString(i), x, ExPx(4), bw, bh, ExTr(keys[i]),
+      ExBtn3D("tab" + IntegerToString(i), x, ExPx(5), bw, bh, ExTr(keys[i]),
               on ? EX_BLUE : EX_CARD, EX_NAVY, on ? EX_GOLD2 : EX_MUTED, false);
      }
   }
@@ -1352,7 +1583,11 @@ void MolidoDashOnInit()
    g_gauge_shown = 0;
    ChartSetInteger(0, CHART_EVENT_MOUSE_MOVE, true);
    if(ShowDashboard)
+     {
       ExEnsure();
+      ExHideHostChart();
+      ExPlaceLiveChart();
+     }
   }
 
 void MolidoDashOnDeinit()

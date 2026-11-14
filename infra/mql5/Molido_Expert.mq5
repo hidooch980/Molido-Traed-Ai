@@ -3,7 +3,7 @@
 //| Upgrade of Molido_Master: same safety, auto-detect, real block.  |
 //+------------------------------------------------------------------+
 #property copyright   "MolidoTrade AI"
-#property version     "2.10"
+#property version     "2.20"
 #property description "Molido Expert – AI Trading Power. Demo only; real accounts blocked."
 #define MOLIDO_EXPERT_UI
 #define MOLIDO_EA_NAME          "Molido_Expert"
@@ -20,5 +20,5 @@
 #define MOLIDO_DEFAULT_REHEARSAL true
 #define MOLIDO_USE_FIBO         false
 #define MOLIDO_REAL_SUPPORTED   false
-#define MOLIDO_EA_VERSION       "2.10"
+#define MOLIDO_EA_VERSION       "2.20"
 #include "MolidoRuntime.mqh"

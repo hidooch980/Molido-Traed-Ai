@@ -196,7 +196,7 @@ def test_molido_expert_keeps_safety_and_modules():
     root = pathlib.Path(__file__).resolve().parents[2] / "infra" / "mql5"
     ea = (root / "Molido_Expert.mq5").read_text(encoding="utf-8")
     assert "MOLIDO_EXPERT_UI" in ea
-    assert 'MOLIDO_EA_VERSION       "2.10"' in ea
+    assert 'MOLIDO_EA_VERSION       "2.20"' in ea
     assert "MOLIDO_REAL_SUPPORTED   false" in ea
     assert "MOLIDO_MAGIC            685409" in ea
     assert "PROFILE_AUTO" in ea
