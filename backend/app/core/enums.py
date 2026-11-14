@@ -13,12 +13,23 @@ from enum import StrEnum
 
 class Timeframe(StrEnum):
     M1 = "M1"
+    M2 = "M2"
+    M3 = "M3"
+    M4 = "M4"
     M5 = "M5"
+    M6 = "M6"
+    M10 = "M10"
+    M12 = "M12"
     M15 = "M15"
+    M20 = "M20"
     M30 = "M30"
     H1 = "H1"
+    H2 = "H2"
     H3 = "H3"
     H4 = "H4"
+    H6 = "H6"
+    H8 = "H8"
+    H12 = "H12"
     D1 = "D1"
     W1 = "W1"
     MN1 = "MN1"
@@ -35,12 +46,23 @@ class Timeframe(StrEnum):
 
 _TIMEFRAME_DELTAS: dict[Timeframe, timedelta] = {
     Timeframe.M1: timedelta(minutes=1),
+    Timeframe.M2: timedelta(minutes=2),
+    Timeframe.M3: timedelta(minutes=3),
+    Timeframe.M4: timedelta(minutes=4),
     Timeframe.M5: timedelta(minutes=5),
+    Timeframe.M6: timedelta(minutes=6),
+    Timeframe.M10: timedelta(minutes=10),
+    Timeframe.M12: timedelta(minutes=12),
     Timeframe.M15: timedelta(minutes=15),
+    Timeframe.M20: timedelta(minutes=20),
     Timeframe.M30: timedelta(minutes=30),
     Timeframe.H1: timedelta(hours=1),
+    Timeframe.H2: timedelta(hours=2),
     Timeframe.H3: timedelta(hours=3),
     Timeframe.H4: timedelta(hours=4),
+    Timeframe.H6: timedelta(hours=6),
+    Timeframe.H8: timedelta(hours=8),
+    Timeframe.H12: timedelta(hours=12),
     Timeframe.D1: timedelta(days=1),
     Timeframe.W1: timedelta(weeks=1),
     Timeframe.MN1: timedelta(days=30),

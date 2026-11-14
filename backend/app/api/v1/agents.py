@@ -17,6 +17,7 @@ from app.agents.gateway.budget import Budget
 from app.agents.gateway.ledger import since_days, today_totals, usage_summary
 from app.api.deps import Principal, require
 from app.core.enums import Permission
+from app.core.timeframes import catalogue
 from app.db.session import get_db
 from app.models.agent_memory import CouncilDecisionRecord, FailureRecord, LearningRecord
 
@@ -28,6 +29,12 @@ READ = Depends(require(Permission.READ))
 @router.get("/registry")
 def read_registry(_: Principal = READ) -> dict[str, Any]:
     return registry.snapshot()
+
+
+@router.get("/timeframes")
+def timeframes(_: Principal = READ) -> dict[str, Any]:
+    """Every period with its Native/Derived label relative to the MT5 bridge."""
+    return {"timeframes": catalogue()}
 
 
 @router.get("/gateway")
