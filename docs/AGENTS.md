@@ -114,6 +114,34 @@ Kill Switch و gate نوع حساب ارسال می‌کند.
 | RT09 | مدیر خروج موشکی | L3 | NOT_IMPLEMENTED | — |
 | RT10 | ارزیاب فرصت‌های موشکی | L3 | NOT_IMPLEMENTED | — |
 
+## Grok Gateway (مرحله ۳)
+
+مسیر: `backend/app/agents/gateway/`. فقط مشورتی؛ هیچ مسیر تصمیم، ریسک یا اجرا آن را import نمی‌کند.
+
+- **Endpoint و مدل‌ها** از مستندات رسمی xAI در ۲۳ آبان ۱۴۰۵ بررسی شد:
+  [docs.x.ai/docs/models](https://docs.x.ai/docs/models) و
+  [docs.x.ai/docs/api-reference](https://docs.x.ai/docs/api-reference) —
+  `POST https://api.x.ai/v1/responses`، احراز با `Authorization: Bearer`، فیلدهای
+  `usage.input_tokens`، `usage.input_tokens_details.cached_tokens`، `usage.output_tokens`.
+  پیش‌فرض‌ها: سبک و استاندارد `grok-4.3`، عمیق `grok-4.7` (با env قابل تغییر:
+  `MOLIDO_XAI_MODEL_LIGHT/STANDARD/DEEP`). درخواست‌ها با `store: false` ارسال می‌شوند.
+- **کلید** فقط از `XAI_API_KEY` در لحظهٔ درخواست خوانده می‌شود و هیچ‌جا ذخیره یا نمایش داده
+  نمی‌شود. بدون کلید: gateway غیرفعال ← همهٔ ایجنت‌ها ABSTAIN ← تصمیم WAIT.
+- **قیمت در کد نیست.** از `MOLIDO_XAI_PRICING_JSON` خوانده می‌شود، مثلاً (قیمت‌های صفحهٔ
+  مدل‌ها در همان تاریخ، دلار به ازای یک میلیون توکن — پیش از استفاده دوباره بررسی شود):
+  `{"grok-4.3": {"input": 1.25, "cached_input": 0.2, "output": 2.5, "long_context_threshold": 200000, "long_input": 2.5, "long_cached_input": 0.4, "long_output": 5.0}, "grok-4.7": {"input": 2.0, "cached_input": 0.5, "output": 6.0, "long_context_threshold": 200000, "long_input": 4.0, "long_cached_input": 1.0, "long_output": 12.0}}`.
+  بدون قیمت، هزینه «نامعلوم» (null) ثبت می‌شود و فقط سقف توکن اعمال می‌شود.
+- **کنترل‌ها:** صف محدود با اولویت (CRITICAL/HIGH/NORMAL/LOW)، سقف هم‌زمانی، حذف درخواست
+  تکراری هم‌زمان، Cache با TTL و LRU، سقف توکن ورودی و خروجی، Timeout، Retry محدود با
+  Exponential Backoff فقط برای 408/409/429/5xx، Circuit Breaker با یک probe.
+- **بودجه:** NORMAL؛ ECONOMY از ۷۰٪ سقف (فقط CRITICAL و HIGH، مدل عمیق به استاندارد)؛
+  EMERGENCY در ۱۰۰٪ (هیچ فراخوانی). ریسک، ایمنی و ژورنال اصلاً به gateway وابسته نیستند.
+- **دفتر هزینه:** جدول `agent_llm_usage` (migration `0030_agent_llm_usage`)، یک ردیف برای هر
+  نتیجه؛ Cache hit با صفر توکن ثبت می‌شود.
+- **API فقط‌خواندنی:** `GET /api/v1/agents/gateway` و `GET /api/v1/agents/gateway/usage?days=N`.
+- خروجی مدل فقط JSON مشخص پذیرفته می‌شود؛ BLOCK از مدل به WAIT تبدیل می‌شود؛ BUY/SELL بدون
+  شاهد به WAIT؛ خروجی نامعتبر ABSTAIN. اطمینان اعلام‌شدهٔ مدل ثبت می‌شود ولی در وزن‌دهی استفاده نمی‌شود.
+
 ## برنامه مرحله‌ای
 
 هر مرحله روی شاخه جدا، با تست، و فقط با تأیید مالک merge می‌شود. هیچ مرحله‌ای LIVE را فعال نمی‌کند.
@@ -122,7 +150,7 @@ Kill Switch و gate نوع حساب ارسال می‌کند.
 |---|---|---|
 | ۱ | رجیستری ۵۱ نقش و پیام استاندارد (همین شاخه) | انجام شد |
 | ۲ | مستندات و امنیت: حذف IP و شماره حساب از docs، gate پول واقعی داخل EA (`AllowRealAccount=false`؛ نیاز به کامپایل روی ترمینال) | انجام شد |
-| ۳ | Grok Gateway مشورتی: کش، حذف تکرار، صف، بودجه، circuit breaker، ثبت توکن و هزینه؛ بدون مسیر به execution | ۳–۵ روز |
+| ۳ | Grok Gateway مشورتی (`backend/app/agents/gateway/`) | انجام شد — بخش «Grok Gateway» |
 | ۴ | مغز و شورا: تحلیلگرهای خبر، اقتصاد کلان و Quant؛ وزن‌دهی بر اساس عملکرد خارج از نمونه | ۳–۴ روز |
 | ۵ | حافظه هر ایجنت و حافظه تصمیم شورا روی جدول‌های موجود | ۲–۳ روز |
 | ۶ | Rocket Hunter (RT01–RT10) به‌صورت PROPOSED، ثبت R1–R5 بدون معامله، سپس walk-forward | ۵–۸ روز |

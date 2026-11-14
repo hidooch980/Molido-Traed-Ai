@@ -44,13 +44,13 @@ class TestTheRegistryCannotReachExecution:
     def test_the_agents_package_imports_nothing_on_the_trading_path(self):
         offenders = {
             path.name: sorted(m for m in _imports(path) if m.startswith(TRADING_PATH))
-            for path in sorted(AGENTS_PKG.glob("*.py"))
+            for path in sorted(AGENTS_PKG.rglob("*.py"))
         }
         assert {k: v for k, v in offenders.items() if v} == {}
 
     def test_the_agents_package_imports_only_core_and_itself_from_app(self):
-        allowed = ("app.agents", "app.core.enums")
-        for path in sorted(AGENTS_PKG.glob("*.py")):
+        allowed = ("app.agents", "app.core.enums", "app.db", "app.models")
+        for path in sorted(AGENTS_PKG.rglob("*.py")):
             internal = {m for m in _imports(path) if m == "app" or m.startswith("app.")}
             assert all(m.startswith(allowed) for m in internal), (path.name, internal)
 
