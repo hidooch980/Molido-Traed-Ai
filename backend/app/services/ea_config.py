@@ -14,6 +14,8 @@ own setting:
     MOLIDO_EA_INTRADAY_BAR_COUNT 50..2000
     MOLIDO_EA_TICK_COUNT         0..1000 (0 = no tick files; SC02 falls back to bars)
     MOLIDO_EA_DOWNLOAD_URL       where the updater fetches the .mq5
+    MOLIDO_EA_DEMO_RISK_CAPS     per-demo-login caps (login:risk:daily:dd:lots:pos:preset)
+    MOLIDO_EA_NEWS_EVENTS        optional calendar rows (time|CCY|HIGH|name;...)
 """
 
 from __future__ import annotations
@@ -58,6 +60,51 @@ def _symbols(session: Session | None) -> list[str]:
     return [n for n in names if _SYMBOL.match(n)][:100]
 
 
+# login:risk:daily:dd:lots:pos:preset  — demo accounts only. Values are clamped
+# to the hard ceilings the expert also enforces. Real-account fields are ignored.
+_HARD_CAPS = {"risk_pct": 0.5, "daily_loss_pct": 5.0, "max_dd_pct": 10.0,
+              "max_lots": 2.0, "max_positions": 2}
+_DEFAULT_DEMO_CAPS = "68531270:0.5:2:0:2:2:scalper"
+
+
+def _clamp(value: float, lo: float, hi: float) -> float:
+    return max(lo, min(hi, value))
+
+
+def _parse_demo_caps_row(row: str) -> str | None:
+    parts = [p.strip() for p in row.split(":")]
+    if len(parts) < 6:
+        return None
+    try:
+        login = int(parts[0])
+    except ValueError:
+        return None
+    if login <= 0:
+        return None
+    try:
+        risk = _clamp(float(parts[1]), 0.01, _HARD_CAPS["risk_pct"])
+        daily = _clamp(float(parts[2]), 0.1, _HARD_CAPS["daily_loss_pct"])
+        dd = _clamp(float(parts[3]), 0.0, _HARD_CAPS["max_dd_pct"])
+        lots = _clamp(float(parts[4]), 0.01, _HARD_CAPS["max_lots"])
+        pos = int(_clamp(float(parts[5]), 1, _HARD_CAPS["max_positions"]))
+    except ValueError:
+        return None
+    preset = "ftmo" if len(parts) > 6 and parts[6].lower() in {"ftmo", "1"} else "scalper"
+    return f"{login}:{risk:g}:{daily:g}:{dd:g}:{lots:g}:{pos}:{preset}"
+
+
+def demo_risk_caps_csv(raw: str | None = None) -> str:
+    """Build the per-login demo cap string the EA reads. Always includes 68531270."""
+    text = raw if raw is not None else os.environ.get("MOLIDO_EA_DEMO_RISK_CAPS", "")
+    rows = [r.strip() for r in text.replace(",", ";").split(";") if r.strip()]
+    parsed = [c for r in rows if (c := _parse_demo_caps_row(r))]
+    logins = {int(c.split(":", 1)[0]) for c in parsed}
+    if 68531270 not in logins:
+        parsed.insert(0, _DEFAULT_DEMO_CAPS)
+    return ";".join(parsed)
+
+
+
 def config(session: Session | None = None, *, running_version: str | None = None) -> dict[str, Any]:
     out: dict[str, Any] = {"schema": 1}
     symbols = _symbols(session)
@@ -70,6 +117,12 @@ def config(session: Session | None = None, *, running_version: str | None = None
             out[key] = max(lo, min(hi, int(value)))
     out.update(ea_release())
     out["ea_download_url"] = os.environ.get("MOLIDO_EA_DOWNLOAD_URL") or None
+    caps = demo_risk_caps_csv()
+    if caps:
+        out["demo_risk_caps_csv"] = caps
+    news = os.environ.get("MOLIDO_EA_NEWS_EVENTS", "").strip()
+    if news:
+        out["news_events_csv"] = news
     out["config_version"] = hashlib.sha256(
         repr(sorted((k, v) for k, v in out.items())).encode()).hexdigest()[:16]
     out["guards_remote_controllable"] = False

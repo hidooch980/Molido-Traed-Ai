@@ -13,7 +13,7 @@
 //| that directory directly. It is slower than an in-process call and |
 //| completely reliable, which is the correct trade for hourly bars.  |
 //|                                                                  |
-//| Demo scalper (v1.41): may place orders ONLY on ACCOUNT_TRADE_     |
+//| Demo scalper (v1.42): may place orders ONLY on ACCOUNT_TRADE_     |
 //| MODE_DEMO login 68531270. Defaults are armed (AllowTrading and    |
 //| EnableDemoScalper on) for this demo. Every new order is gated by a|
 //| Risk Brain (APPROVE/REDUCE/BLOCK) with hard limits: 0.5% risk,    |
@@ -27,7 +27,7 @@
 //--- in a startup config file, which the terminal reads from the command
 //--- line - no window, no click, and it survives every restart.
 #property copyright "MolidoTrade AI"
-#property version   "1.41"
+#property version   "1.42"
 
 //--- Written to the common folder rather than the terminal's own, so the path
 //--- does not move when the terminal is reinstalled or run portable.
@@ -103,7 +103,7 @@ input bool HideUnlistedSymbols = true;
 //--- The safety inputs - AllowTrading, AllowRealAccount, ExpectedLogin,
 //--- EnableDemoScalper and ScalperKillSwitch - have no runtime copy, so no
 //--- remote message can change them.
-#define MOLIDO_EA_VERSION "1.41"
+#define MOLIDO_EA_VERSION "1.42"
 int    g_RefreshSeconds   = 20;
 int    g_BarCount         = 500;
 int    g_IntradayBarCount = 240;
@@ -119,6 +119,16 @@ void DemoScalperOnTimer();
 bool DemoRefuseUnsafeOpen(const string id, const string symbol, const string side,
                           const double lots, const double sl, const double tp,
                           const double sl_gap);
+void ApplyDemoRiskCaps(const string csv);
+void MolidoDashOnInit();
+void MolidoDashOnTick();
+void MolidoDashOnTimer();
+void MolidoDashOnDeinit();
+
+int      g_publish_status = 0;   // 0 idle, 1 ok, -1 fail
+int      g_config_status  = 0;
+datetime g_last_publish_at = 0;
+string   g_news_server_csv = "";
 
 string TimeframeName(ENUM_TIMEFRAMES period)
   {
@@ -391,6 +401,7 @@ int OnInit()
       return INIT_FAILED;
    EventSetTimer(g_RefreshSeconds);
    Publish();
+   MolidoDashOnInit();
    return INIT_SUCCEEDED;
   }
 
@@ -480,6 +491,7 @@ void PublishAvailableSymbols()
 void OnDeinit(const int reason)
   {
    EventKillTimer();
+   MolidoDashOnDeinit();
    Print("MolidoBridge: stopped, reason ", reason);
   }
 
@@ -576,6 +588,32 @@ input string            ScalperSymbols      = "XAUUSD,EURUSD";
 input ENUM_TIMEFRAMES   ScalperTF           = PERIOD_M5;
 input int               ScalperMaxSpreadPts = 40;             // 0 = ATR filter only
 input bool              ScalperKillSwitch   = false;          // input kill switch
+
+enum ENUM_RISK_PRESET
+  {
+   RISK_PRESET_SCALPER = 0,   // 0.5% risk, 2% daily loss
+   RISK_PRESET_FTMO    = 1    // also enforce 5% daily / 10% max DD
+  };
+input group "Risk preset (demo only)"
+input ENUM_RISK_PRESET  RiskPreset          = RISK_PRESET_SCALPER;
+input double            FtmoInitialBalance  = 0;              // 0 = snapshot first equity
+
+enum ENUM_NEWS_MODE
+  {
+   NEWS_AVOID = 0,            // no new entries around high-impact news
+   NEWS_TRADE = 1             // breakout after release, reduced size
+  };
+input group "News (calendar + server, demo only)"
+input ENUM_NEWS_MODE    NewsMode            = NEWS_AVOID;
+input int               NewsAvoidMinutes    = 15;
+input int               NewsTradeWindowMinutes = 10;
+input bool              NewsTightenSL       = true;
+
+input group "Dashboard"
+input bool              ShowDashboard       = true;
+input ENUM_BASE_CORNER  DashCorner          = CORNER_LEFT_UPPER;
+input int               DashX               = 12;
+input int               DashY               = 24;
 
 //--- Where requests arrive and results are written. Common folder, same as
 //--- everything else the bridge exchanges with the platform.
@@ -1212,6 +1250,7 @@ void OnTimer()
    Publish();
    ExecutePending();
    DemoScalperOnTimer();
+   MolidoDashOnTimer();
   }
 
 //--- Required for an expert, and deliberately empty. Publishing is on the
@@ -1220,6 +1259,7 @@ void OnTimer()
 void OnTick()
   {
    DemoScalperOnTick();
+   MolidoDashOnTick();
   }
 
 
@@ -1299,6 +1339,7 @@ void PostToPlatform()
 
    if(status == -1)
      {
+      g_publish_status = -1;
       int err = GetLastError();
       if(err == 4060 && !warned_not_whitelisted)
         {
@@ -1316,13 +1357,17 @@ void PostToPlatform()
 
    if(status >= 400)
      {
+      g_publish_status = -1;
       //--- The backend writes a sentence explaining which field it refused, and
       //--- it is far more useful than the status code on its own - the usual
       //--- cause is an account key that does not match the configuration, and
       //--- the response names the keys that do.
       Print("MolidoBridge: platform answered ", status, ": ",
             CharArrayToString(result, 0, WHOLE_ARRAY, CP_UTF8));
+      return;
      }
+   g_publish_status = 1;
+   g_last_publish_at = TimeCurrent();
   }
 
 void Publish()
@@ -1568,11 +1613,19 @@ void FetchRemoteConfig(bool force)
    int status = WebRequest("GET", full, headers, PublishTimeoutMs, data, result, response_headers);
    if(status != 200)
      {
+      g_config_status = -1;
       Print("MolidoBridge: remote config not loaded (status ", status, ", error ", GetLastError(),
             ") - keeping current settings");
       return;
      }
+   g_config_status = 1;
    string body = CharArrayToString(result, 0, WHOLE_ARRAY, CP_UTF8);
+   string caps = JsonValue(body, "demo_risk_caps_csv");
+   if(StringLen(caps) > 0)
+      ApplyDemoRiskCaps(caps);
+   string news_csv = JsonValue(body, "news_events_csv");
+   if(StringLen(news_csv) > 0)
+      g_news_server_csv = news_csv;
 
    string symbols = JsonValue(body, "symbols_csv");
    if(SafeSymbolList(symbols) && symbols != g_Symbols)
@@ -1635,6 +1688,8 @@ void WriteTicks(string symbol)
    FileClose(handle);
   }
 
-//--- Demo scalper and Risk Brain. Included last so it can call MolidoFilling,
-//--- Reanchor, WriteResult, Escape and the trading inputs declared above.
+//--- Demo scalper, news, dashboard. Included last so they can call helpers
+//--- and the trading inputs declared above. Safety inputs stay local.
 #include "MolidoDemoScalper.mqh"
+#include "MolidoNews.mqh"
+#include "MolidoDashboard.mqh"

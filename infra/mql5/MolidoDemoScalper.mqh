@@ -53,6 +53,262 @@ int      g_demo_n = 0;
 int      g_demo_entries_today = 0;
 datetime g_demo_entries_day = 0;
 
+
+#define HARD_MAX_RISK_PCT     0.5
+#define HARD_MAX_DAILY_PCT    5.0
+#define HARD_MAX_DD_PCT       10.0
+#define FTMO_DAILY_LOSS_PCT   5.0
+#define FTMO_MAX_DD_PCT       10.0
+#define DEMO_MAX_ACCOUNTS     16
+#define DEMO_START_FILE       "molido_start_equity_"
+
+bool DemoNewsGateNewEntries();
+bool DemoNewsTradeActive();
+
+string g_last_verdict        = "—";
+string g_last_reason         = "";
+string g_last_verdict_symbol = "";
+datetime g_last_verdict_at   = 0;
+
+struct DemoCaps
+  {
+   long   login;
+   double risk_pct;
+   double daily_pct;
+   double max_dd_pct;
+   double max_lots;
+   int    max_positions;
+   int    preset; // 0 scalper, 1 ftmo
+  };
+
+DemoCaps g_caps[DEMO_MAX_ACCOUNTS];
+int      g_caps_n = 0;
+double   g_start_equity = 0.0;
+
+double ClampLimit(const double value, const double lo, const double hi)
+  {
+   if(value < lo) return(lo);
+   if(value > hi) return(hi);
+   return(value);
+  }
+
+bool DemoCapsFor(const long login, DemoCaps &out)
+  {
+   for(int i = 0; i < g_caps_n; i++)
+      if(g_caps[i].login == login)
+        {
+         out = g_caps[i];
+         return(true);
+        }
+   return(false);
+  }
+
+void ApplyDemoRiskCaps(const string csv)
+  {
+   g_caps_n = 0;
+   if(StringLen(csv) == 0)
+      return;
+   string rows[];
+   int n = StringSplit(csv, ';', rows);
+   for(int i = 0; i < n && g_caps_n < DEMO_MAX_ACCOUNTS; i++)
+     {
+      string p[];
+      int c = StringSplit(rows[i], ':', p);
+      if(c < 6)
+         continue;
+      long login = StringToInteger(p[0]);
+      if(login <= 0)
+         continue;
+      DemoCaps cap;
+      cap.login = login;
+      cap.risk_pct = ClampLimit(StringToDouble(p[1]), 0.01, HARD_MAX_RISK_PCT);
+      cap.daily_pct = ClampLimit(StringToDouble(p[2]), 0.1, HARD_MAX_DAILY_PCT);
+      cap.max_dd_pct = ClampLimit(StringToDouble(p[3]), 0.0, HARD_MAX_DD_PCT);
+      cap.max_lots = ClampLimit(StringToDouble(p[4]), 0.01, DEMO_HARD_MAX_LOTS);
+      cap.max_positions = (int)ClampLimit((double)StringToInteger(p[5]), 1, DEMO_MAX_POSITIONS);
+      cap.preset = (c > 6 && (p[6] == "ftmo" || p[6] == "FTMO" || p[6] == "1")) ? 1 : 0;
+      g_caps[g_caps_n++] = cap;
+      Print("MolidoScalper: caps for demo ", login,
+            " risk=", DoubleToString(cap.risk_pct, 2),
+            "% daily=", DoubleToString(cap.daily_pct, 2),
+            "% dd=", DoubleToString(cap.max_dd_pct, 2),
+            "% lots=", DoubleToString(cap.max_lots, 2));
+     }
+  }
+
+double DemoActiveRiskPct()
+  {
+   DemoCaps cap;
+   if(DemoCapsFor(AccountInfoInteger(ACCOUNT_LOGIN), cap))
+      return(MathMin(cap.risk_pct, HARD_MAX_RISK_PCT));
+   return(MathMin(DEMO_RISK_PCT, HARD_MAX_RISK_PCT));
+  }
+
+double DemoActiveDailyPct()
+  {
+   DemoCaps cap;
+   if(DemoCapsFor(AccountInfoInteger(ACCOUNT_LOGIN), cap))
+      return(MathMin(cap.daily_pct, HARD_MAX_DAILY_PCT));
+   if(RiskPreset == RISK_PRESET_FTMO)
+      return(MathMin(FTMO_DAILY_LOSS_PCT, HARD_MAX_DAILY_PCT));
+   return(MathMin(DEMO_DAILY_LOSS_PCT, HARD_MAX_DAILY_PCT));
+  }
+
+double DemoActiveMaxDdPct()
+  {
+   DemoCaps cap;
+   if(DemoCapsFor(AccountInfoInteger(ACCOUNT_LOGIN), cap))
+      return(MathMin(cap.max_dd_pct, HARD_MAX_DD_PCT));
+   if(RiskPreset == RISK_PRESET_FTMO)
+      return(MathMin(FTMO_MAX_DD_PCT, HARD_MAX_DD_PCT));
+   return(0.0);
+  }
+
+double DemoActiveMaxLotsCap()
+  {
+   DemoCaps cap;
+   double capv = DEMO_HARD_MAX_LOTS;
+   if(DemoCapsFor(AccountInfoInteger(ACCOUNT_LOGIN), cap) && cap.max_lots > 0.0)
+      capv = MathMin(capv, cap.max_lots);
+   if(MaxLots > 0.0 && MaxLots < capv)
+      capv = MaxLots;
+   return(capv);
+  }
+
+int DemoActiveMaxPositions()
+  {
+   DemoCaps cap;
+   if(DemoCapsFor(AccountInfoInteger(ACCOUNT_LOGIN), cap))
+      return(cap.max_positions);
+   return(DEMO_MAX_POSITIONS);
+  }
+
+bool DemoLoadStartEquity(double &start)
+  {
+   start = 0.0;
+   if(FtmoInitialBalance > 0.0)
+     {
+      start = FtmoInitialBalance;
+      g_start_equity = start;
+      return(true);
+     }
+   if(g_start_equity > 0.0)
+     {
+      start = g_start_equity;
+      return(true);
+     }
+   string path = DEMO_START_FILE + IntegerToString(AccountInfoInteger(ACCOUNT_LOGIN)) + ".txt";
+   int h = FileOpen(path, FILE_READ | FILE_TXT | FILE_ANSI | FILE_COMMON);
+   if(h != INVALID_HANDLE)
+     {
+      string raw = FileReadString(h);
+      FileClose(h);
+      start = StringToDouble(raw);
+      if(start > 0.0)
+        {
+         g_start_equity = start;
+         return(true);
+        }
+     }
+   start = AccountInfoDouble(ACCOUNT_EQUITY);
+   if(start <= 0.0)
+      start = AccountInfoDouble(ACCOUNT_BALANCE);
+   if(start <= 0.0)
+      return(false);
+   h = FileOpen(path, FILE_WRITE | FILE_TXT | FILE_ANSI | FILE_COMMON);
+   if(h != INVALID_HANDLE)
+     {
+      FileWriteString(h, DoubleToString(start, 2));
+      FileClose(h);
+     }
+   g_start_equity = start;
+   return(true);
+  }
+
+bool DemoMaxDdPct(double &dd_pct, double &start_eq)
+  {
+   dd_pct = 0.0;
+   start_eq = 0.0;
+   if(DemoActiveMaxDdPct() <= 0.0)
+      return(true);
+   if(!DemoLoadStartEquity(start_eq))
+      return(false);
+   double eq = AccountInfoDouble(ACCOUNT_EQUITY);
+   if(eq <= 0.0 || start_eq <= 0.0)
+      return(false);
+   dd_pct = 100.0 * (start_eq - eq) / start_eq;
+   if(dd_pct < 0.0)
+      dd_pct = 0.0;
+   return(true);
+  }
+
+void DemoScalperStatus(string &status, string &reason)
+  {
+   status = "ARMED";
+   reason = "";
+   if(!EnableDemoScalper)
+     {
+      status = "off";
+      reason = "EnableDemoScalper is false";
+      return;
+     }
+   if(!AllowTrading)
+     {
+      status = "blocked";
+      reason = "AllowTrading is off";
+      return;
+     }
+   if(!DemoAccountOk())
+     {
+      status = "blocked";
+      reason = "not an allowed demo login";
+      return;
+     }
+   if(DemoKillEngaged())
+     {
+      status = "blocked";
+      reason = "kill switch";
+      return;
+     }
+   if(!DemoTerminalTradable())
+     {
+      status = "blocked";
+      reason = "AutoTrading or connection";
+      return;
+     }
+   double daily = 0.0;
+   if(!DemoDailyPnlPct(daily))
+     {
+      status = "blocked";
+      reason = "missing daily P/L";
+      return;
+     }
+   double loss = -MathMin(0.0, daily);
+   if(loss >= DemoActiveDailyPct())
+     {
+      status = "blocked";
+      reason = "daily loss cap";
+      return;
+     }
+   double dd = 0.0, start = 0.0;
+   if(DemoActiveMaxDdPct() > 0.0)
+     {
+      if(!DemoMaxDdPct(dd, start))
+        {
+         status = "blocked";
+         reason = "missing drawdown data";
+         return;
+        }
+      if(dd >= DemoActiveMaxDdPct())
+        {
+         status = "blocked";
+         reason = "max drawdown cap";
+         return;
+        }
+     }
+  }
+
+
 //+------------------------------------------------------------------+
 void DemoLog(const string symbol, const string side, const ENUM_DEMO_VERDICT verdict,
              const string reasons, const double lots, const double entry,
@@ -101,7 +357,12 @@ void DemoLog(const string symbol, const string side, const ENUM_DEMO_VERDICT ver
       FileClose(last);
      }
 
-   Print("MolidoScalper: ", (verdict == DEMO_APPROVE ? "APPROVE" : verdict == DEMO_REDUCE ? "REDUCE" : "BLOCK"),
+   g_last_verdict = (verdict == DEMO_APPROVE ? "APPROVE" : verdict == DEMO_REDUCE ? "REDUCE" : "BLOCK");
+   g_last_reason = reasons;
+   g_last_verdict_symbol = symbol;
+   g_last_verdict_at = TimeGMT();
+
+   Print("MolidoScalper: ", g_last_verdict,
          " ", side, " ", symbol, " lots=", DoubleToString(lots, 2),
          " risk=", DoubleToString(risk_pct, 2), "% ", reasons);
   }
@@ -113,9 +374,11 @@ bool DemoAccountOk()
    long login = AccountInfoInteger(ACCOUNT_LOGIN);
    if(mode != ACCOUNT_TRADE_MODE_DEMO)
       return(false);
-   if(login != DEMO_SCALPER_LOGIN)
-      return(false);
-   return(true);
+   if(login == DEMO_SCALPER_LOGIN)
+      return(true);
+   DemoCaps cap;
+   //--- Other demos are allowed only when the server config listed them.
+   return(DemoCapsFor(login, cap));
   }
 
 //+------------------------------------------------------------------+
@@ -159,10 +422,7 @@ bool DemoTradingAllowed()
 //+------------------------------------------------------------------+
 double DemoEffectiveMaxLots()
   {
-   double cap = DEMO_HARD_MAX_LOTS;
-   if(MaxLots > 0.0 && MaxLots < cap)
-      cap = MaxLots;
-   return(cap);
+   return(DemoActiveMaxLotsCap());
   }
 
 //+------------------------------------------------------------------+
@@ -344,7 +604,7 @@ ENUM_DEMO_VERDICT DemoReview(const string symbol, const string side,
 
    if(!DemoAccountOk())
      {
-      reasons = "not demo login 68531270";
+      reasons = "not an allowed demo account";
       return(DEMO_BLOCK);
      }
    if(DemoKillEngaged())
@@ -444,15 +704,32 @@ ENUM_DEMO_VERDICT DemoReview(const string symbol, const string side,
      }
 
    double loss = -MathMin(0.0, daily_pnl_pct);
-   if(loss >= DEMO_DAILY_LOSS_PCT)
+   double daily_cap = DemoActiveDailyPct();
+   if(loss >= daily_cap)
      {
       reasons = "daily loss " + DoubleToString(loss, 2) + "% reached limit " +
-                DoubleToString(DEMO_DAILY_LOSS_PCT, 2) + "%";
+                DoubleToString(daily_cap, 2) + "%";
       return(DEMO_BLOCK);
      }
 
+   double dd_pct = 0.0, start_eq = 0.0;
+   if(DemoActiveMaxDdPct() > 0.0)
+     {
+      if(!DemoMaxDdPct(dd_pct, start_eq))
+        {
+         reasons = "missing: overall drawdown";
+         return(DEMO_BLOCK);
+        }
+      if(dd_pct >= DemoActiveMaxDdPct())
+        {
+         reasons = "max drawdown " + DoubleToString(dd_pct, 2) + "% reached limit " +
+                   DoubleToString(DemoActiveMaxDdPct(), 2) + "%";
+         return(DEMO_BLOCK);
+        }
+     }
+
    size_factor = 1.0;
-   if(loss >= DEMO_REDUCE_FRACTION * DEMO_DAILY_LOSS_PCT)
+   if(loss >= DEMO_REDUCE_FRACTION * daily_cap)
      {
       size_factor *= DEMO_REDUCE_FACTOR;
       reasons = "daily loss " + DoubleToString(loss, 2) + "% past reduce threshold";
@@ -469,9 +746,9 @@ ENUM_DEMO_VERDICT DemoReview(const string symbol, const string side,
       reasons = "missing: open positions";
       return(DEMO_BLOCK);
      }
-   if(open_n >= DEMO_MAX_POSITIONS)
+   if(open_n >= DemoActiveMaxPositions())
      {
-      reasons = IntegerToString(open_n) + " positions open (cap " + IntegerToString(DEMO_MAX_POSITIONS) + ")";
+      reasons = IntegerToString(open_n) + " positions open (cap " + IntegerToString(DemoActiveMaxPositions()) + ")";
       return(DEMO_BLOCK);
      }
 
@@ -488,7 +765,7 @@ ENUM_DEMO_VERDICT DemoReview(const string symbol, const string side,
       return(DEMO_BLOCK);
      }
 
-   risk_pct = NormalizeDouble(DEMO_RISK_PCT * size_factor, 4);
+   risk_pct = NormalizeDouble(DemoActiveRiskPct() * size_factor, 4);
    if(size_factor < 1.0)
       return(DEMO_REDUCE);
    reasons = (reasons == "" ? "all checks passed" : reasons);
@@ -523,7 +800,7 @@ bool DemoScalperOnInit()
      {
       if(!DemoAccountOk())
         {
-         Print("MolidoScalper: refusing to start trading - account is not DEMO login 68531270 ",
+         Print("MolidoScalper: refusing to start trading - not an allowed DEMO account ",
                "(mode=", AccountInfoInteger(ACCOUNT_TRADE_MODE),
                " login=", AccountInfoInteger(ACCOUNT_LOGIN), ")");
          return(false);
@@ -752,6 +1029,10 @@ void DemoScalperOnTick()
       return;
    if(!DemoAccountOk())
       return;
+   if(DemoNewsGateNewEntries())
+      return;
+   if(DemoNewsTradeActive())
+      return;
 
    if(g_demo_n <= 0 && !DemoParseSymbols())
       return;
@@ -795,8 +1076,8 @@ bool DemoRefuseUnsafeOpen(const string id, const string symbol, const string sid
   {
    if(!DemoAccountOk())
      {
-      WriteResult(id, false, 0, 0.0, "refused - not demo login 68531270");
-      DemoLog(symbol, side, DEMO_BLOCK, "command refused: not demo login 68531270",
+      WriteResult(id, false, 0, 0.0, "refused - not an allowed demo account");
+      DemoLog(symbol, side, DEMO_BLOCK, "command refused: not an allowed demo account",
               lots, 0, sl, tp, 0, 0, 0, 0, 0);
       return(true);
      }

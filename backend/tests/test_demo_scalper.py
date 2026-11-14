@@ -16,7 +16,11 @@ from app.agents.demo_scalper import (
     MAX_LOTS,
     MAX_OPEN_POSITIONS,
     RISK_PER_TRADE_PCT,
+    FTMO_DAILY_LOSS_PCT,
+    FTMO_MAX_DD_PCT,
     account_is_allowed,
+    in_news_avoid_window,
+    news_breakout_side,
     review_demo_trade,
     size_lots,
 )
@@ -164,3 +168,38 @@ def test_mql_mirrors_python_constants():
     assert "ExpectedLogin = 68531270" in mq5
     assert "MaxLots         = 2.00" in mq5
     assert "EnableDemoScalper" in mq5
+    news = (root / "MolidoNews.mqh").read_text(encoding="utf-8")
+    assert "NEWS_AVOID" in mq5 and "NEWS_TRADE" in mq5
+    assert "CalendarValueHistory" in news
+    assert "FTMO_DAILY_LOSS_PCT   5.0" in src
+    assert "FTMO_MAX_DD_PCT       10.0" in src
+    assert "ApplyDemoRiskCaps" in src
+
+
+def test_other_demo_logins_need_server_caps():
+    assert account_is_allowed(ACCOUNT_TRADE_MODE_DEMO, 42) is False
+    assert account_is_allowed(ACCOUNT_TRADE_MODE_DEMO, 42, {42}) is True
+    assert account_is_allowed(ACCOUNT_TRADE_MODE_REAL, 42, {42}) is False
+    assert account_is_allowed(ACCOUNT_TRADE_MODE_DEMO, DEMO_LOGIN, set()) is True
+
+
+def test_ftmo_preset_numbers():
+    assert FTMO_DAILY_LOSS_PCT == 5.0 and FTMO_MAX_DD_PCT == 10.0
+    # A 200k FTMO-style book: 5% daily = $10k, 10% max DD = $20k.
+    assert BALANCE * FTMO_DAILY_LOSS_PCT / 100 == 10_000
+    assert BALANCE * FTMO_MAX_DD_PCT / 100 == 20_000
+
+
+def test_news_avoid_window_and_breakout():
+    event = 1_000_000.0
+    assert in_news_avoid_window(event - 15 * 60, event, 15)
+    assert not in_news_avoid_window(event - 15 * 60 - 1, event, 15)
+    assert in_news_avoid_window(event + 14 * 60, event, 15)
+    assert not in_news_avoid_window(event + 15 * 60, event, 15)
+    assert news_breakout_side(1.11, 1.10, 1.09) == "buy"
+    assert news_breakout_side(1.08, 1.10, 1.09) == "sell"
+    assert news_breakout_side(1.095, 1.10, 1.09) is None
+    # A news-sized trade still cannot exceed the 0.5% / 2.00 lot caps.
+    lots = size_lots(balance=BALANCE, risk_pct=0.25, sl_distance=5.0,
+                     tick_size=0.01, tick_value=1.0)
+    assert lots == 1.0

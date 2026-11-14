@@ -100,29 +100,32 @@ try {
   }
   Copy-Item $tmp $target -Force
 
-  $incName = "MolidoDemoScalper.mqh"
-  $incUrl = $SourceUrl -replace [regex]::Escape($name), $incName
-  $incSumUrl = $incUrl + ".sha256"
-  $incTarget = Join-Path $ExpertsDir $incName
-  $incTmp = Join-Path $WorkDir "download.mqh"
-  $incBackup = $null
-  Invoke-WebRequest -Uri $incUrl -OutFile $incTmp -UseBasicParsing
-  $incSumLine = (Invoke-WebRequest -Uri $incSumUrl -UseBasicParsing).Content
-  if ($incSumLine -is [byte[]]) { $incSumLine = [Text.Encoding]::ASCII.GetString($incSumLine) }
-  $incPublished = ($incSumLine.Trim() -split '\s+')[0].ToLower()
-  $incActual = (Get-FileHash -Path $incTmp -Algorithm SHA256).Hash.ToLower()
-  if ($incActual -ne $incPublished) { throw "include checksum mismatch: file $incActual, published $incPublished" }
-  if (Test-Path $incTarget) {
-    $incBackup = Join-Path "$WorkDir\backup" ("MolidoDemoScalper-{0:yyyyMMdd-HHmmss}.mqh" -f (Get-Date))
-    Copy-Item $incTarget $incBackup -Force
+  $includes = @("MolidoDemoScalper.mqh","MolidoNews.mqh","MolidoDashboard.mqh")
+  $incBackups = @()
+  foreach ($incName in $includes) {
+    $incUrl = $SourceUrl -replace [regex]::Escape($name), $incName
+    $incSumUrl = $incUrl + ".sha256"
+    $incTarget = Join-Path $ExpertsDir $incName
+    $incTmp = Join-Path $WorkDir ("download-" + $incName)
+    Invoke-WebRequest -Uri $incUrl -OutFile $incTmp -UseBasicParsing
+    $incSumLine = (Invoke-WebRequest -Uri $incSumUrl -UseBasicParsing).Content
+    if ($incSumLine -is [byte[]]) { $incSumLine = [Text.Encoding]::ASCII.GetString($incSumLine) }
+    $incPublished = ($incSumLine.Trim() -split '\s+')[0].ToLower()
+    $incActual = (Get-FileHash -Path $incTmp -Algorithm SHA256).Hash.ToLower()
+    if ($incActual -ne $incPublished) { throw "include checksum mismatch for $incName : file $incActual, published $incPublished" }
+    if (Test-Path $incTarget) {
+      $incBackup = Join-Path "$WorkDir\backup" ("{0}-{1:yyyyMMdd-HHmmss}" -f $incName, (Get-Date))
+      Copy-Item $incTarget $incBackup -Force
+      $incBackups += @{target=$incTarget; backup=$incBackup}
+    }
+    Copy-Item $incTmp $incTarget -Force
   }
-  Copy-Item $incTmp $incTarget -Force
 
   if (Compile $target) { Log "installed $new"; exit 0 }
 
   Log "compile failed - restoring the previous version"
   if ($backup) { Copy-Item $backup $target -Force }
-  if ($incBackup) { Copy-Item $incBackup $incTarget -Force }
+  foreach ($item in $incBackups) { Copy-Item $item.backup $item.target -Force }
   if ($backup) { [void](Compile $target) }
   exit 2
 }

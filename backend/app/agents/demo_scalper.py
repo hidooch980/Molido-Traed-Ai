@@ -38,6 +38,10 @@ MAX_LOTS = 2.0
 SL_ATR_MULT = 1.0
 TP_ATR_MULT = 1.5
 MAX_ENTRIES_PER_DAY = 8
+FTMO_DAILY_LOSS_PCT = 5.0
+FTMO_MAX_DD_PCT = 10.0
+HARD_MAX_DAILY_LOSS_PCT = 5.0
+HARD_MAX_DD_PCT = 10.0
 
 
 def demo_limits() -> RiskLimits:
@@ -55,8 +59,12 @@ def demo_limits() -> RiskLimits:
     )
 
 
-def account_is_allowed(trade_mode: int | None, login: int | None) -> bool:
-    """Hard gate: demo mode and this login only. Anything else is a refusal."""
+def account_is_allowed(
+    trade_mode: int | None,
+    login: int | None,
+    allowed_logins: set[int] | None = None,
+) -> bool:
+    """Demo only. 68531270 is always allowed; other demos need server caps."""
     if trade_mode is None or login is None:
         return False
     try:
@@ -64,7 +72,29 @@ def account_is_allowed(trade_mode: int | None, login: int | None) -> bool:
         acc = int(login)
     except (TypeError, ValueError):
         return False
-    return mode == ACCOUNT_TRADE_MODE_DEMO and acc == DEMO_LOGIN
+    if mode != ACCOUNT_TRADE_MODE_DEMO:
+        return False
+    if acc == DEMO_LOGIN:
+        return True
+    return bool(allowed_logins) and acc in allowed_logins
+
+
+def in_news_avoid_window(now_ts: float, event_ts: float, avoid_minutes: int) -> bool:
+    """True when now is inside [event - X, event + X] minutes."""
+    if avoid_minutes <= 0 or event_ts <= 0:
+        return False
+    pad = avoid_minutes * 60
+    return event_ts - pad <= now_ts < event_ts + pad
+
+
+def news_breakout_side(close: float, pre_high: float, pre_low: float) -> str | None:
+    if pre_high <= pre_low or close <= 0:
+        return None
+    if close > pre_high:
+        return "buy"
+    if close < pre_low:
+        return "sell"
+    return None
 
 
 def _block(reason: str, checks: dict[str, bool] | None = None) -> RiskDecision:
