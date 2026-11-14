@@ -464,7 +464,7 @@ void DemoPartialTakeProfit()
             req2.position = ticket;
             req2.sl = NormalizeDouble(be, (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS));
             req2.tp = tp;
-            OrderSend(req2, res2);
+            if(!OrderSend(req2, res2)) return;
            }
         }
      }

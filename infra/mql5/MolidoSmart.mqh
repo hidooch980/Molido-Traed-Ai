@@ -442,14 +442,13 @@ void DemoSmartRefresh(const string symbol)
    double m15_e50 = s_m15_e50;
    double h1_e20  = s_h1_e20;
    double h1_e50  = s_h1_e50;
+   string trend = "trend n/a";
    if(m15_e20 > 0.0 && m15_e50 > 0.0 && h1_e20 > 0.0 && h1_e50 > 0.0)
      {
       string m15 = (m15_e20 > m15_e50) ? "M15^" : "M15v";
       string h1  = (h1_e20 > h1_e50) ? "H1^" : "H1v";
       trend = m15 + " " + h1;
      }
-   else
-      trend = "trend n/a";
    g_smart_trend = trend;
 
    g_smart_cool_left = SmartCooldownLeftSec();
