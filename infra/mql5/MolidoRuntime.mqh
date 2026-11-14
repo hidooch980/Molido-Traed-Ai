@@ -38,6 +38,19 @@
 //--- does not move when the terminal is reinstalled or run portable.
 #define FLAGS (FILE_WRITE | FILE_TXT | FILE_ANSI | FILE_COMMON)
 
+enum ENUM_ACCOUNT_PROFILE
+  {
+   PROFILE_DEMO         = 0,  // personal demo: 0.5% risk, 2% daily
+   PROFILE_PROP_FTMO    = 1,  // 5% daily / 10% max DD, target, days, weekend
+   PROFILE_PROP_GENERIC = 2,  // configurable DD / profit target
+   PROFILE_LIVE_REAL    = 3   // hard-locked unless explicitly unlocked
+  };
+
+input group "Account type"
+input ENUM_ACCOUNT_PROFILE AccountProfile = MOLIDO_DEFAULT_PROFILE;
+
+input group "Advanced (no need to change)"
+
 //--- How often to republish. Hourly bars do not reward a tighter loop, and a
 //--- service rewriting the same files every second would keep a disk busy for
 //--- nothing.
@@ -107,11 +120,11 @@ input bool HideUnlistedSymbols = true;
 //--- replaced by the platform's remote config (symbols, refresh, bar counts).
 //--- The safety inputs - AllowTrading, AllowRealAccount, AllowedLogins,
 //--- AllowedRealLogins, AccountProfile, EnableDemoScalper and
-//--- ScalperKillSwitch - have no runtime copy, so no remote message can
-//--- change them.
+//--- ScalperKillSwitch, RehearsalMode, AutoUpdateEnabled - have no runtime
+//--- copy, so no remote message can change them.
 #include "MolidoShared.mqh"
 #ifndef MOLIDO_EA_VERSION
-#define MOLIDO_EA_VERSION "1.43"
+#define MOLIDO_EA_VERSION "1.44"
 #endif
 int    g_RefreshSeconds   = 20;
 int    g_BarCount         = 500;
@@ -135,9 +148,19 @@ void MolidoDashOnTimer();
 void MolidoDashOnDeinit();
 void MolidoDashOnChartEvent(const int id, const long &lparam,
                             const double &dparam, const string &sparam);
+bool MolidoLinkHealthy();
+bool MolidoRequestUpdate();
+void MolidoWriteSettingsSnapshot();
 
 int      g_publish_status = 0;   // 0 idle, 1 ok, -1 fail
 int      g_config_status  = 0;
+datetime g_initTime       = 0;
+datetime g_lastServerOk   = 0;
+string   g_update_version = "";
+string   g_update_sha256  = "";
+string   g_update_gate    = "";
+bool     g_update_ready   = false;
+bool     g_update_pending = false;
 datetime g_last_publish_at = 0;
 string   g_news_server_csv = "";
 string   g_consensus_csv   = "";
@@ -375,6 +398,65 @@ void WritePositions()
 //| from "the service stopped an hour ago", and those are opposite     |
 //| facts about a feed.                                                |
 //+------------------------------------------------------------------+
+void WriteDailySummary()
+  {
+   MqlDateTime dt;
+   TimeToStruct(TimeCurrent(), dt);
+   dt.hour = 0;
+   dt.min  = 0;
+   dt.sec  = 0;
+   datetime start = StructToTime(dt);
+   HistorySelect(start, TimeCurrent());
+   int trades = 0, wins = 0, losses = 0;
+   double gross_win = 0.0, gross_loss = 0.0, daily_pnl = 0.0;
+   int total = HistoryDealsTotal();
+   for(int i = 0; i < total; i++)
+     {
+      ulong ticket = HistoryDealGetTicket(i);
+      if(ticket == 0)
+         continue;
+      if(!IsMolidoMagic((long)HistoryDealGetInteger(ticket, DEAL_MAGIC)))
+         continue;
+      int entry = (int)HistoryDealGetInteger(ticket, DEAL_ENTRY);
+      if(entry != DEAL_ENTRY_OUT && entry != DEAL_ENTRY_OUT_BY)
+         continue;
+      double pnl = HistoryDealGetDouble(ticket, DEAL_PROFIT)
+                 + HistoryDealGetDouble(ticket, DEAL_SWAP)
+                 + HistoryDealGetDouble(ticket, DEAL_COMMISSION);
+      daily_pnl += pnl;
+      trades++;
+      if(pnl >= 0.0) { wins++; gross_win += pnl; }
+      else { losses++; gross_loss += -pnl; }
+     }
+   double pf = (gross_loss > 0.0 ? gross_win / gross_loss : (gross_win > 0.0 ? 99.0 : 0.0));
+   double wr = (trades > 0 ? 100.0 * wins / trades : 0.0);
+   string json = "{";
+   json += "\"date\":\"" + TimeToString(start, TIME_DATE) + "\",";
+   json += "\"published_at\":\"" + TimeToString(TimeGMT(), TIME_DATE | TIME_SECONDS) + "\",";
+   json += "\"login\":" + IntegerToString(AccountInfoInteger(ACCOUNT_LOGIN)) + ",";
+   json += "\"ea\":\"" + MOLIDO_EA_NAME + "\",";
+   json += "\"ea_version\":\"" + MOLIDO_EA_VERSION + "\",";
+   json += "\"profile\":" + IntegerToString((int)AccountProfile) + ",";
+   json += "\"rehearsal\":" + ((RehearsalMode && (AccountProfile == PROFILE_PROP_FTMO || AccountProfile == PROFILE_PROP_GENERIC)) ? "true" : "false") + ",";
+   json += "\"balance\":" + DoubleToString(AccountInfoDouble(ACCOUNT_BALANCE), 2) + ",";
+   json += "\"equity\":" + DoubleToString(AccountInfoDouble(ACCOUNT_EQUITY), 2) + ",";
+   json += "\"daily_pnl\":" + DoubleToString(daily_pnl, 2) + ",";
+   json += "\"trades\":" + IntegerToString(trades) + ",";
+   json += "\"wins\":" + IntegerToString(wins) + ",";
+   json += "\"losses\":" + IntegerToString(losses) + ",";
+   json += "\"win_rate\":" + DoubleToString(wr, 1) + ",";
+   json += "\"profit_factor\":" + DoubleToString(pf, 2) + ",";
+   json += "\"open_positions\":" + IntegerToString((int)PositionsTotal()) + ",";
+   json += "\"connected\":" + (TerminalInfoInteger(TERMINAL_CONNECTED) ? "true" : "false") + ",";
+   json += "\"link_healthy\":" + (MolidoLinkHealthy() ? "true" : "false");
+   json += "}";
+   int handle = FileOpen("molido_daily_summary.json", FLAGS);
+   if(handle == INVALID_HANDLE)
+      return;
+   FileWriteString(handle, json);
+   FileClose(handle);
+  }
+
 void WriteHeartbeat(int cycle)
   {
    int handle = FileOpen("molido_heartbeat.json", FLAGS);
@@ -399,6 +481,7 @@ int OnInit()
   {
    if(!AccountAllowed())
       return INIT_FAILED;
+   g_initTime = TimeCurrent();
    g_RefreshSeconds = RefreshSeconds;
    g_BarCount = BarCount;
    g_IntradayBarCount = IntradayBarCount;
@@ -553,16 +636,6 @@ input bool   AllowRealAccount = false;
 input string AllowedLogins     = "68531270";
 input string AllowedRealLogins = "";
 
-enum ENUM_ACCOUNT_PROFILE
-  {
-   PROFILE_DEMO         = 0,  // personal demo: 0.5% risk, 2% daily
-   PROFILE_PROP_FTMO    = 1,  // 5% daily / 10% max DD, target, days, weekend
-   PROFILE_PROP_GENERIC = 2,  // configurable DD / profit target
-   PROFILE_LIVE_REAL    = 3   // hard-locked unless explicitly unlocked
-  };
-
-input group "Account profile"
-input ENUM_ACCOUNT_PROFILE AccountProfile = MOLIDO_DEFAULT_PROFILE;
 input double            PropProfitTargetPct        = 10.0;  // FTMO challenge default
 input int               PropMinTradingDays         = 4;
 input bool              PropNoWeekendHold          = true;
@@ -577,6 +650,7 @@ input double            PropDdBufferFrac           = 0.80;  // stop at 80% of ma
 input double            PropPaceStartFrac          = 0.70;  // slow down near the target
 input double            PropPaceTightFrac          = 0.90;
 input double            PropConsistencyDayShare    = 40.0;  // max share of target in one day
+input bool              RehearsalMode              = MOLIDO_DEFAULT_REHEARSAL;
 
 bool LoginInCsv(const string csv, const long login)
   {
@@ -628,7 +702,7 @@ bool AccountAllowed()
          return false;
         }
      }
-   else if(!LoginInAllowlist(login))
+   else if(!MolidoIsTester() && !LoginInAllowlist(login))
      {
       Print("MolidoBridge: login ", login, " is not in AllowedLogins - refusing");
       return false;
@@ -671,10 +745,12 @@ enum ENUM_MOLIDO_STRATEGY
    STRAT_TREND   = 2,
    STRAT_AUTO    = 3
   };
-input group "Strategy"
 input ENUM_MOLIDO_STRATEGY StrategyMode     = MOLIDO_DEFAULT_STRATEGY;
+input bool              UseScalper         = MOLIDO_USE_SCALPER;
+input bool              UseNews            = MOLIDO_USE_NEWS;
+input bool              UseTrend           = MOLIDO_USE_TREND;
+input bool              UseAutoSymbol      = MOLIDO_USE_AUTO;
 
-input group "Demo Scalper (login 68531270 only)"
 input bool              EnableDemoScalper   = true;           // armed for demo 68531270
 input bool              AutoSymbolMode      = MOLIDO_DEFAULT_AUTO;
 input int               AutoSymbolTopN      = MOLIDO_DEFAULT_TOPN;
@@ -682,6 +758,8 @@ input int               AutoSymbolMaxScan   = 60;
 input string            ScalperSymbols      = "XAUUSD,EURUSD"; // fallback if auto finds none
 input ENUM_TIMEFRAMES   ScalperTF           = PERIOD_M5;
 input int               ScalperMaxSpreadPts = 40;             // 0 = ATR filter only
+input int               SpreadSpikeLookback = 20;
+input double            SpreadSpikeMult     = 2.0;            // skip if spread > average * this
 input bool              ScalperKillSwitch   = false;          // input kill switch
 
 enum ENUM_RISK_PRESET
@@ -689,7 +767,6 @@ enum ENUM_RISK_PRESET
    RISK_PRESET_SCALPER = 0,   // 0.5% risk, 2% daily loss
    RISK_PRESET_FTMO    = 1    // also enforce 5% daily / 10% max DD
   };
-input group "Risk preset (demo only)"
 input ENUM_RISK_PRESET  RiskPreset          = RISK_PRESET_SCALPER;
 input double            FtmoInitialBalance  = 0;              // 0 = snapshot first equity
 
@@ -698,13 +775,11 @@ enum ENUM_NEWS_MODE
    NEWS_AVOID = 0,            // no new entries around high-impact news
    NEWS_TRADE = 1             // breakout after release, reduced size
   };
-input group "News (calendar + server, demo only)"
 input ENUM_NEWS_MODE    NewsMode            = MOLIDO_DEFAULT_NEWS;
 input int               NewsAvoidMinutes    = 15;
 input int               NewsTradeWindowMinutes = 10;
 input bool              NewsTightenSL       = true;
 
-input group "Smart filters (demo only)"
 input bool              UseRegimeFilter     = true;
 input int               AtrPctMin           = 20;
 input int               AtrPctMax           = 80;
@@ -724,7 +799,6 @@ input double            TrailAtrMult        = 1.0;
 input int               CooldownMinutes     = 30;
 input bool              RequireServerConsensus = false;
 
-input group "Protect (demo/prop only)"
 input int               SafeModeReduceAfter    = 2;      // 0 = off
 input double            SafeModeReduceFactor   = 0.5;
 input int               SafeModeStopAfter      = 3;      // 0 = off; stop until next day
@@ -734,12 +808,13 @@ input bool              UseCorrelationGuard    = true;
 input bool              UseWeeklySessionFocus  = false;  // only after enough weekly trades
 input int               WeeklyFocusMinTrades   = 5;
 
-input group "Dashboard"
 input bool              ShowDashboard       = true;
 input double            DashFontScale       = 1.4;            // readable on high-res screens
 input ENUM_BASE_CORNER  DashCorner          = CORNER_LEFT_UPPER;
 input int               DashX               = 12;
 input int               DashY               = 24;
+input int               DisconnectGraceSec  = 180;            // 0 = only local terminal connection
+input bool              AutoUpdateEnabled   = true;           // confirm on-chart, then updater applies
 
 //--- Where requests arrive and results are written. Common folder, same as
 //--- everything else the bridge exchanges with the platform.
@@ -1197,6 +1272,11 @@ void ExecuteOne(string filename)
       WriteResult(id, false, 0, 0.0, "AllowTrading is off on the expert");
       return;
      }
+   if(!MolidoLinkHealthy())
+     {
+      WriteResult(id, false, 0, 0.0, "refused - terminal or server link is down; only managing open positions");
+      return;
+     }
    if(RealAccountRefused(id))
       return;
    if(DemoRefuseUnsafeOpen(id, symbol, side, lots, sl, tp, sl_gap))
@@ -1437,6 +1517,8 @@ bool warned_not_whitelisted = false;
 
 void PostToPlatform()
   {
+   if(MolidoIsTester())
+      return;
    if(StringLen(PublishUrl) == 0)
       return;
 
@@ -1498,6 +1580,7 @@ void PostToPlatform()
       return;
      }
    g_publish_status = 1;
+   g_lastServerOk = TimeCurrent();
    g_last_publish_at = TimeCurrent();
   }
 
@@ -1523,6 +1606,7 @@ void Publish()
    //--- the end of the pass, where its cycle count still means "a full pass
    //--- completed".
    WriteHeartbeat(cycle);
+   WriteDailySummary();
    WritePositions();
 
    //--- Everything above is cheap and runs every tick. Everything below is
@@ -1648,6 +1732,26 @@ void Publish()
 input string ConfigUrl            = "";   // empty = PublishUrl with /publish -> /config
 input int    ConfigRefreshMinutes = 10;
 
+bool MolidoLinkHealthy()
+  {
+   if(MolidoIsTester())
+      return(true);
+   if(!TerminalInfoInteger(TERMINAL_CONNECTED))
+      return(false);
+   bool server = (StringLen(ConfigUrl) > 0 || StringLen(PublishUrl) > 0);
+   if(!server)
+      return(true);
+   int grace = DisconnectGraceSec;
+   if(grace < 30)
+      grace = 30;
+   if(g_lastServerOk > 0)
+      return((TimeCurrent() - g_lastServerOk) <= grace);
+   if(g_initTime > 0 && (TimeCurrent() - g_initTime) > grace)
+      return(false);
+   return(true);
+  }
+
+
 datetime g_lastConfigFetch = 0;
 string   g_announcedVersion = "";
 
@@ -1726,6 +1830,8 @@ bool VersionNewer(const string a, const string b)
 
 void FetchRemoteConfig(bool force)
   {
+   if(MolidoIsTester())
+      return;
    string url = ResolvedConfigUrl();
    if(StringLen(url) == 0)
       return;
@@ -1750,6 +1856,7 @@ void FetchRemoteConfig(bool force)
       return;
      }
    g_config_status = 1;
+   g_lastServerOk = TimeCurrent();
    string body = CharArrayToString(result, 0, WHOLE_ARRAY, CP_UTF8);
    string caps = JsonValue(body, "demo_risk_caps_csv");
    if(StringLen(caps) > 0)
@@ -1794,6 +1901,21 @@ void FetchRemoteConfig(bool force)
       g_IntradayBarCount = Clamp((int)StringToInteger(intraday), 50, 2000);
 
    string latest = JsonValue(body, "ea_latest_version");
+   string gate = JsonValue(body, "ea_gate");
+   string sha = JsonValue(body, "ea_latest_sha256");
+   if(StringLen(latest) > 0 && VersionNewer(latest, MOLIDO_EA_VERSION)
+      && (gate == "PASS" || gate == "pass")
+      && StringLen(sha) == 64)
+     {
+      g_update_version = latest;
+      g_update_sha256 = sha;
+      g_update_gate = "PASS";
+      g_update_ready = AutoUpdateEnabled;
+     }
+   else
+     {
+      g_update_ready = false;
+     }
    if(StringLen(latest) > 0 && latest != g_announcedVersion && VersionNewer(latest, MOLIDO_EA_VERSION))
      {
       g_announcedVersion = latest;
@@ -1828,6 +1950,106 @@ void WriteTicks(string symbol)
 //--- Demo scalper, news, dashboard. Included last so they can call helpers
 //--- and the trading inputs declared above. Safety inputs stay local.
 #include "MolidoShared.mqh"
+
+int MolidoOwnOpenCount()
+  {
+   int n = 0;
+   int total = PositionsTotal();
+   for(int i = 0; i < total; i++)
+     {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket == 0 || !PositionSelectByTicket(ticket))
+         continue;
+      if((long)PositionGetInteger(POSITION_MAGIC) == MOLIDO_MAGIC)
+         n++;
+     }
+   return(n);
+  }
+
+bool MolidoPositionsHaveStops()
+  {
+   int total = PositionsTotal();
+   for(int i = 0; i < total; i++)
+     {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket == 0 || !PositionSelectByTicket(ticket))
+         continue;
+      if((long)PositionGetInteger(POSITION_MAGIC) != MOLIDO_MAGIC)
+         continue;
+      if(PositionGetDouble(POSITION_SL) <= 0.0)
+         return(false);
+     }
+   return(true);
+  }
+
+void MolidoWriteSettingsSnapshot()
+  {
+   string json = "{";
+   json += "\"ea\":\"" + MOLIDO_EA_NAME + "\",";
+   json += "\"ea_version\":\"" + MOLIDO_EA_VERSION + "\",";
+   json += "\"magic\":" + IntegerToString(MOLIDO_MAGIC) + ",";
+   json += "\"login\":" + IntegerToString(AccountInfoInteger(ACCOUNT_LOGIN)) + ",";
+   json += "\"AccountProfile\":" + IntegerToString((int)AccountProfile) + ",";
+   json += "\"AllowTrading\":" + (AllowTrading ? "true" : "false") + ",";
+   json += "\"AllowRealAccount\":" + (AllowRealAccount ? "true" : "false") + ",";
+   json += "\"AllowedLogins\":\"" + AllowedLogins + "\",";
+   json += "\"AllowedRealLogins\":\"" + AllowedRealLogins + "\",";
+   json += "\"RehearsalMode\":" + (RehearsalMode ? "true" : "false") + ",";
+   json += "\"UseScalper\":" + (UseScalper ? "true" : "false") + ",";
+   json += "\"UseNews\":" + (UseNews ? "true" : "false") + ",";
+   json += "\"UseTrend\":" + (UseTrend ? "true" : "false") + ",";
+   json += "\"UseAutoSymbol\":" + (UseAutoSymbol ? "true" : "false") + ",";
+   json += "\"chart_id\":" + IntegerToString(ChartID()) + ",";
+   json += "\"symbol\":\"" + _Symbol + "\",";
+   json += "\"timeframe\":" + IntegerToString((int)_Period);
+   json += "}";
+   int h = FileOpen("molido_master_settings.json", FLAGS);
+   if(h == INVALID_HANDLE)
+      return;
+   FileWriteString(h, json);
+   FileClose(h);
+  }
+
+bool MolidoRequestUpdate()
+  {
+   if(!g_update_ready || StringLen(g_update_version) == 0 || StringLen(g_update_sha256) != 64)
+      return(false);
+   if(MolidoOwnOpenCount() > 0 && !MolidoPositionsHaveStops())
+     {
+      Print("MolidoMaster: update deferred - open positions are missing a stop");
+      return(false);
+     }
+   MolidoWriteSettingsSnapshot();
+   string json = "{";
+   json += "\"action\":\"update\",";
+   json += "\"confirmed\":true,";
+   json += "\"ea\":\"" + MOLIDO_EA_NAME + "\",";
+   json += "\"from_version\":\"" + MOLIDO_EA_VERSION + "\",";
+   json += "\"to_version\":\"" + g_update_version + "\",";
+   json += "\"sha256\":\"" + g_update_sha256 + "\",";
+   json += "\"gate\":\"PASS\",";
+   json += "\"profile\":" + IntegerToString((int)AccountProfile) + ",";
+   json += "\"open_positions\":" + IntegerToString(MolidoOwnOpenCount()) + ",";
+   json += "\"stops_ok\":" + (MolidoPositionsHaveStops() ? "true" : "false") + ",";
+   json += "\"chart_id\":" + IntegerToString(ChartID()) + ",";
+   json += "\"symbol\":\"" + _Symbol + "\",";
+   json += "\"timeframe\":" + IntegerToString((int)_Period) + ",";
+   json += "\"requested_at\":\"" + TimeToString(TimeGMT(), TIME_DATE | TIME_SECONDS) + "\"";
+   json += "}";
+   int h = FileOpen("molido_update_request.json", FLAGS);
+   if(h == INVALID_HANDLE)
+     {
+      Print("MolidoMaster: cannot write update request (", GetLastError(), ")");
+      return(false);
+     }
+   FileWriteString(h, json);
+   FileClose(h);
+   g_update_pending = true;
+   g_update_ready = false;
+   Print("MolidoMaster: update ", g_update_version, " confirmed - watcher will apply, then reattach with the same AccountProfile");
+   return(true);
+  }
+
 #include "MolidoDemoScalper.mqh"
 #include "MolidoNews.mqh"
 #include "MolidoSmart.mqh"

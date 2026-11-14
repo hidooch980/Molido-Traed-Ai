@@ -13,6 +13,7 @@
 #define MOLIDO_MAGIC_NEWS     685405
 #define MOLIDO_MAGIC_TREND    685406
 #define MOLIDO_MAGIC_AUTO     685407
+#define MOLIDO_MAGIC_MASTER   685408
 
 #ifndef MOLIDO_MAGIC
 #define MOLIDO_MAGIC MOLIDO_MAGIC_BRIDGE
@@ -21,7 +22,7 @@
 #define MOLIDO_EA_NAME "MolidoBridge"
 #endif
 #ifndef MOLIDO_EA_VERSION
-#define MOLIDO_EA_VERSION "1.43"
+#define MOLIDO_EA_VERSION "1.44"
 #endif
 #ifndef MOLIDO_DEFAULT_PROFILE
 #define MOLIDO_DEFAULT_PROFILE PROFILE_DEMO
@@ -38,8 +39,29 @@
 #ifndef MOLIDO_DEFAULT_TOPN
 #define MOLIDO_DEFAULT_TOPN 3
 #endif
+#ifndef MOLIDO_USE_SCALPER
+#define MOLIDO_USE_SCALPER true
+#endif
+#ifndef MOLIDO_USE_NEWS
+#define MOLIDO_USE_NEWS false
+#endif
+#ifndef MOLIDO_USE_TREND
+#define MOLIDO_USE_TREND false
+#endif
+#ifndef MOLIDO_USE_AUTO
+#define MOLIDO_USE_AUTO MOLIDO_DEFAULT_AUTO
+#endif
+#ifndef MOLIDO_DEFAULT_REHEARSAL
+#define MOLIDO_DEFAULT_REHEARSAL false
+#endif
 
 #define DEMO_SCALPER_MAGIC    MOLIDO_MAGIC
+
+bool MolidoIsTester()
+  {
+   return(MQLInfoInteger(MQL_TESTER) || MQLInfoInteger(MQL_OPTIMIZATION)
+          || MQLInfoInteger(MQL_FORWARD));
+  }
 
 #define COORD_LOCK  "Molido.Coord.Lock"
 #define COORD_POS   "Molido.Coord.Positions"
@@ -57,6 +79,7 @@ bool IsMolidoMagic(const long magic)
    if(magic == MOLIDO_MAGIC_NEWS) return(true);
    if(magic == MOLIDO_MAGIC_TREND) return(true);
    if(magic == MOLIDO_MAGIC_AUTO) return(true);
+   if(magic == MOLIDO_MAGIC_MASTER) return(true);
    return(false);
   }
 

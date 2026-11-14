@@ -174,6 +174,48 @@ bool ProfileIsFtmo()
    return(AccountProfile == PROFILE_PROP_FTMO);
   }
 
+
+bool g_rt_scalper = true;
+bool g_rt_news    = false;
+bool g_rt_trend   = false;
+bool g_rt_auto    = false;
+
+void MolidoStratInit()
+  {
+   g_rt_scalper = UseScalper || (StrategyMode == STRAT_SCALPER);
+   g_rt_news    = UseNews || (StrategyMode == STRAT_NEWS);
+   g_rt_trend   = UseTrend || (StrategyMode == STRAT_TREND);
+   g_rt_auto    = UseAutoSymbol || AutoSymbolMode || (StrategyMode == STRAT_AUTO);
+   if(GlobalVariableCheck("Molido.Strat.Scalper"))
+      g_rt_scalper = (GlobalVariableGet("Molido.Strat.Scalper") > 0.5);
+   if(GlobalVariableCheck("Molido.Strat.News"))
+      g_rt_news = (GlobalVariableGet("Molido.Strat.News") > 0.5);
+   if(GlobalVariableCheck("Molido.Strat.Trend"))
+      g_rt_trend = (GlobalVariableGet("Molido.Strat.Trend") > 0.5);
+   if(GlobalVariableCheck("Molido.Strat.Auto"))
+      g_rt_auto = (GlobalVariableGet("Molido.Strat.Auto") > 0.5);
+   //--- Profile applies the strategy stack for Master-style use:
+   //--- PROP keeps news trading off (avoid-only) even if the toggle is later re-enabled
+   //--- via Advanced inputs; the dashboard can still turn legs on/off.
+  }
+
+bool StratUseScalper() { return(g_rt_scalper); }
+bool StratUseNews()    { return(g_rt_news); }
+bool StratUseTrend()   { return(g_rt_trend); }
+bool StratUseAuto()    { return(g_rt_auto); }
+
+void StratSet(const string which, const bool on)
+  {
+   if(which == "scalper") g_rt_scalper = on;
+   if(which == "news")    g_rt_news = on;
+   if(which == "trend")   g_rt_trend = on;
+   if(which == "auto")    g_rt_auto = on;
+   if(which == "scalper") GlobalVariableSet("Molido.Strat.Scalper", on ? 1.0 : 0.0);
+   if(which == "news")    GlobalVariableSet("Molido.Strat.News", on ? 1.0 : 0.0);
+   if(which == "trend")   GlobalVariableSet("Molido.Strat.Trend", on ? 1.0 : 0.0);
+   if(which == "auto")    GlobalVariableSet("Molido.Strat.Auto", on ? 1.0 : 0.0);
+  }
+
 bool ProfileIsProp()
   {
    return(AccountProfile == PROFILE_PROP_FTMO || AccountProfile == PROFILE_PROP_GENERIC);
@@ -191,15 +233,18 @@ bool ProfileUsesWeekendHold()
 
 string ProfileName()
   {
+   string name = "DEMO";
    if(AccountProfile == PROFILE_PROP_FTMO)
-      return("FTMO");
-   if(AccountProfile == PROFILE_PROP_GENERIC)
-      return("PROP");
-   if(AccountProfile == PROFILE_LIVE_REAL)
-      return("LIVE");
-   if(RiskPreset == RISK_PRESET_FTMO)
-      return("Demo/FTMO");
-   return("DEMO");
+      name = "FTMO";
+   else if(AccountProfile == PROFILE_PROP_GENERIC)
+      name = "PROP";
+   else if(AccountProfile == PROFILE_LIVE_REAL)
+      name = "LIVE";
+   else if(RiskPreset == RISK_PRESET_FTMO)
+      name = "Demo/FTMO";
+   if(RehearsalMode && ProfileIsProp())
+      name = name + " REHEARSAL";
+   return(name);
   }
 
 double ProfileProfitTargetPct()
@@ -307,7 +352,10 @@ bool DemoLoadStartEquity(double &start)
       start = g_start_equity;
       return(true);
      }
-   string path = DEMO_START_FILE + IntegerToString(AccountInfoInteger(ACCOUNT_LOGIN)) + ".txt";
+   string prefix = DEMO_START_FILE;
+   if(RehearsalMode && ProfileIsProp())
+      prefix = "molido_rehearsal_start_";
+   string path = prefix + IntegerToString(AccountInfoInteger(ACCOUNT_LOGIN)) + ".txt";
    int h = FileOpen(path, FILE_READ | FILE_TXT | FILE_ANSI | FILE_COMMON);
    if(h != INVALID_HANDLE)
      {
@@ -800,6 +848,14 @@ bool DemoAccountOk()
   {
    long mode  = AccountInfoInteger(ACCOUNT_TRADE_MODE);
    long login = AccountInfoInteger(ACCOUNT_LOGIN);
+   if(MolidoIsTester())
+     {
+      if(AccountProfile == PROFILE_LIVE_REAL)
+         return(false);
+      if(mode == ACCOUNT_TRADE_MODE_REAL)
+         return(AllowRealAccount && LoginInRealAllowlist(login));
+      return(true);
+     }
    if(login <= 0)
       return(false);
    if(AccountProfile == PROFILE_LIVE_REAL)
@@ -868,7 +924,7 @@ void DemoKillSet(const bool on)
 //+------------------------------------------------------------------+
 bool DemoTerminalTradable()
   {
-   if(!TerminalInfoInteger(TERMINAL_CONNECTED))
+   if(!MolidoIsTester() && !TerminalInfoInteger(TERMINAL_CONNECTED))
       return(false);
    if(!TerminalInfoInteger(TERMINAL_TRADE_ALLOWED))
       return(false);
@@ -889,6 +945,8 @@ bool DemoTradingAllowed()
    if(!DemoAccountOk())
       return(false);
    if(DemoKillEngaged())
+      return(false);
+   if(!MolidoLinkHealthy())
       return(false);
    return(true);
   }
@@ -1164,7 +1222,7 @@ ENUM_DEMO_VERDICT DemoReview(const string symbol, const string side,
                 DoubleToString(DEMO_SPREAD_ATR_FRAC * 100.0, 0) + "% ATR";
       return(DEMO_BLOCK);
      }
-   if(ScalperMaxSpreadPts > 0)
+   if(ScalperMaxSpreadPts > 0 || SpreadSpikeMult > 1.0)
      {
       double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
       if(point <= 0.0)
@@ -1172,10 +1230,35 @@ ENUM_DEMO_VERDICT DemoReview(const string symbol, const string side,
          reasons = "missing: symbol point size";
          return(DEMO_BLOCK);
         }
-      if(spread > ScalperMaxSpreadPts * point)
+      double pts = spread / point;
+      if(ScalperMaxSpreadPts > 0 && pts > ScalperMaxSpreadPts)
         {
          reasons = "spread wider than " + IntegerToString(ScalperMaxSpreadPts) + " points";
          return(DEMO_BLOCK);
+        }
+      if(SpreadSpikeLookback >= 3 && SpreadSpikeMult > 1.0)
+        {
+         static string spike_sym = "";
+         static double spike_avg = 0.0;
+         static int    spike_n = 0;
+         if(spike_sym != symbol)
+           {
+            spike_sym = symbol;
+            spike_avg = pts;
+            spike_n = 1;
+           }
+         else
+           {
+            int n = SpreadSpikeLookback;
+            if(n > 80) n = 80;
+            if(spike_n < n) spike_n++;
+            spike_avg += (pts - spike_avg) / spike_n;
+           }
+         if(spike_avg > 0.0 && pts > spike_avg * SpreadSpikeMult && pts > spike_avg + 2.0)
+           {
+            reasons = "spread spike " + DoubleToString(pts, 1) + " vs avg " + DoubleToString(spike_avg, 1);
+            return(DEMO_BLOCK);
+           }
         }
      }
 
@@ -1303,7 +1386,15 @@ ENUM_DEMO_VERDICT DemoReview(const string symbol, const string side,
 //+------------------------------------------------------------------+
 bool DemoParseSymbols()
   {
-   if((AutoSymbolMode || StrategyMode == STRAT_AUTO) && AutoRescan())
+   if(MolidoIsTester())
+     {
+      g_demo_n = 1;
+      g_demo_syms[0] = _Symbol;
+      g_demo_seen_bar[0] = 0;
+      g_demo_primed[0] = false;
+      return(true);
+     }
+   if(StratUseAuto() && AutoRescan())
       return(true);
    g_demo_n = 0;
    string names[];
@@ -1326,6 +1417,7 @@ bool DemoParseSymbols()
 //+------------------------------------------------------------------+
 bool DemoScalperOnInit()
   {
+   MolidoStratInit();
    if(EnableDemoScalper || AllowTrading)
      {
       if(!DemoAccountOk())
@@ -1558,10 +1650,12 @@ void DemoEvaluateSymbol(const string raw_name)
    string side, why;
    double entry, sl, tp, spread, atr;
    bool got = false;
-   if(StrategyMode == STRAT_TREND)
+   if(StratUseTrend())
       got = DemoTrendSignal(symbol, side, entry, sl, tp, spread, atr, why);
-   else
+   if(!got && StratUseScalper())
       got = DemoSignal(symbol, side, entry, sl, tp, spread, atr, why);
+   if(!got && !StratUseTrend() && !StratUseScalper())
+      why = "no entry strategy enabled";
    if(!got)
      {
       DemoLog(symbol, side, DEMO_BLOCK, why, 0, entry, sl, tp, spread, atr, 0, 0, 0);
@@ -1647,15 +1741,14 @@ void DemoScalperOnTick()
       return;
    if(DemoNewsGateNewEntries())
       return;
-   if(StrategyMode == STRAT_NEWS)
-     {
+   if(StratUseNews())
       DemoNewsTradeActive();
+   if(StratUseNews() && !StratUseScalper() && !StratUseTrend() && !StratUseAuto())
       return;
-     }
-   if(DemoNewsTradeActive())
+   if(DemoNewsTradeActive() && !StratUseScalper() && !StratUseTrend())
       return;
 
-   if(AutoSymbolMode || StrategyMode == STRAT_AUTO)
+   if(StratUseAuto())
       AutoRefreshIfDue();
    if(g_demo_n <= 0 && !DemoParseSymbols())
       return;
@@ -1666,7 +1759,7 @@ void DemoScalperOnTick()
       string resolved;
       if(!DemoResolveSymbol(symbol, resolved))
          continue;
-      ENUM_TIMEFRAMES tf = (StrategyMode == STRAT_TREND ? PERIOD_M15 : ScalperTF);
+      ENUM_TIMEFRAMES tf = (StratUseTrend() && !StratUseScalper() ? PERIOD_M15 : ScalperTF);
       datetime bar = iTime(resolved, tf, 0);
       if(bar == 0)
          continue;

@@ -100,7 +100,7 @@ try {
   }
   Copy-Item $tmp $target -Force
 
-  $includes = @("MolidoShared.mqh","MolidoRuntime.mqh","MolidoDemoScalper.mqh","MolidoNews.mqh","MolidoSmart.mqh","MolidoProtect.mqh","MolidoUniverse.mqh","MolidoDashboard.mqh")
+  $includes = @("MolidoShared.mqh","MolidoRuntime.mqh","MolidoDemoScalper.mqh","MolidoNews.mqh","MolidoSmart.mqh","MolidoProtect.mqh","MolidoUniverse.mqh","MolidoDashboard.mqh","molido-update-watch.ps1","Molido_Master.gate.json")
   $incBackups = @()
   foreach ($incName in $includes) {
     $incUrl = $SourceUrl -replace [regex]::Escape($name), $incName
@@ -121,7 +121,7 @@ try {
     Copy-Item $incTmp $incTarget -Force
   }
 
-  $experts = @("MolidoBridge.mq5","Molido_Demo.mq5","Molido_Prop.mq5","Molido_Live.mq5","Molido_Scalper.mq5","Molido_News.mq5","Molido_Trend.mq5","Molido_AutoPortfolio.mq5")
+  $experts = @("Molido_Master.mq5","MolidoBridge.mq5","Molido_Demo.mq5","Molido_Prop.mq5","Molido_Live.mq5","Molido_Scalper.mq5","Molido_News.mq5","Molido_Trend.mq5","Molido_AutoPortfolio.mq5")
   foreach ($eaName in $experts) {
     if ($eaName -eq $name) { continue }
     $eaUrl = $SourceUrl -replace [regex]::Escape($name), $eaName

@@ -294,7 +294,7 @@ void AutoApplyList(string &names[], double &scores[], const int n)
 
 bool AutoModeOn()
   {
-   return(AutoSymbolMode || StrategyMode == STRAT_AUTO);
+   return(StratUseAuto());
   }
 
 bool AutoRescan()

@@ -1,9 +1,9 @@
 //+------------------------------------------------------------------+
-//| MolidoBridge.mq5 - MolidoBridge: demo all-in-one (publish + scalper, backward compatible)
+//| MolidoBridge.mq5 - Molido Bridge (legacy compatible)
 //+------------------------------------------------------------------+
 #property copyright   "MolidoTrade AI"
-#property version     "1.43"
-#property description "MolidoBridge: demo all-in-one (publish + scalper, backward compatible)"
+#property version     "1.44"
+#property description "Molido Bridge (legacy compatible)"
 #define MOLIDO_EA_NAME          "MolidoBridge"
 #define MOLIDO_MAGIC            685317
 #define MOLIDO_DEFAULT_PROFILE  PROFILE_DEMO
@@ -11,5 +11,10 @@
 #define MOLIDO_DEFAULT_AUTO     true
 #define MOLIDO_DEFAULT_NEWS     NEWS_AVOID
 #define MOLIDO_DEFAULT_TOPN     3
-#define MOLIDO_EA_VERSION       "1.43"
+#define MOLIDO_USE_SCALPER      true
+#define MOLIDO_USE_NEWS         false
+#define MOLIDO_USE_TREND        false
+#define MOLIDO_USE_AUTO         true
+#define MOLIDO_DEFAULT_REHEARSAL false
+#define MOLIDO_EA_VERSION       "1.44"
 #include "MolidoRuntime.mqh"

@@ -11,6 +11,11 @@
 #define DASH_NAME      "MolidoDash_canvas"
 #define DASH_BTN_KILL  "MolidoDash_btnKill"
 #define DASH_BTN_FOLD  "MolidoDash_btnFold"
+#define DASH_BTN_SC    "MolidoDash_btnScalper"
+#define DASH_BTN_NX    "MolidoDash_btnNews"
+#define DASH_BTN_TR    "MolidoDash_btnTrend"
+#define DASH_BTN_AU    "MolidoDash_btnAuto"
+#define DASH_BTN_UPD   "MolidoDash_btnUpdate"
 #define DASH_MARK      "MolidoTrade_"
 #define DASH_GV_FOLD   "Molido.DashCollapsed"
 
@@ -61,6 +66,11 @@ int DashPanelH()
    int h = 698;
    if(ProfileIsProp())
       h += 120;
+   h += 70;
+   if(g_update_ready || g_update_pending)
+      h += 46;
+   if(!MolidoLinkHealthy())
+      h += 24;
    return(DashPx(h));
   }
 
@@ -127,10 +137,13 @@ void DashSection(int &y, const int x, const int w, const string title)
 
 void MolidoDashDestroyButtons()
   {
-   if(ObjectFind(0, DASH_BTN_KILL) >= 0)
-      ObjectDelete(0, DASH_BTN_KILL);
-   if(ObjectFind(0, DASH_BTN_FOLD) >= 0)
-      ObjectDelete(0, DASH_BTN_FOLD);
+   string names[] = {DASH_BTN_KILL, DASH_BTN_FOLD, DASH_BTN_SC, DASH_BTN_NX,
+                     DASH_BTN_TR, DASH_BTN_AU, DASH_BTN_UPD};
+   for(int i = 0; i < ArraySize(names); i++)
+     {
+      if(ObjectFind(0, names[i]) >= 0)
+         ObjectDelete(0, names[i]);
+     }
   }
 
 void MolidoMarksDestroy()
@@ -231,7 +244,39 @@ void MolidoDashPlaceButtons()
    string cap = killed ? "KILL ON" : "KILL";
    int kx = x + DashPx(14);
    int ky = y + DashPanelH() - DashPx(36);
+   if(g_update_ready || g_update_pending)
+      ky -= DashPx(34);
    DashPlaceButton(DASH_BTN_KILL, cap, kx, ky, DashPx(90), DashPx(24), kbg, kfg);
+
+   int sy = ky - DashPx(32);
+   int bw2 = DashPx(72);
+   int gap = DashPx(6);
+   int sx = x + DashPx(14);
+   color on_bg = C'20,72,52';
+   color off_bg = C'42,46,58';
+   color on_fg = C'180,255,210';
+   color off_fg = C'168,174,188';
+   DashPlaceButton(DASH_BTN_SC, (StratUseScalper() ? "SC ON" : "SC off"), sx, sy, bw2, DashPx(22),
+                   (StratUseScalper() ? on_bg : off_bg), (StratUseScalper() ? on_fg : off_fg));
+   DashPlaceButton(DASH_BTN_NX, (StratUseNews() ? "NX ON" : "NX off"), sx + bw2 + gap, sy, bw2, DashPx(22),
+                   (StratUseNews() ? on_bg : off_bg), (StratUseNews() ? on_fg : off_fg));
+   DashPlaceButton(DASH_BTN_TR, (StratUseTrend() ? "TR ON" : "TR off"), sx + 2 * (bw2 + gap), sy, bw2, DashPx(22),
+                   (StratUseTrend() ? on_bg : off_bg), (StratUseTrend() ? on_fg : off_fg));
+   DashPlaceButton(DASH_BTN_AU, (StratUseAuto() ? "AU ON" : "AU off"), sx + 3 * (bw2 + gap), sy, bw2, DashPx(22),
+                   (StratUseAuto() ? on_bg : off_bg), (StratUseAuto() ? on_fg : off_fg));
+
+   if(g_update_ready)
+     {
+      DashPlaceButton(DASH_BTN_UPD, "Update now?", x + DashPx(14), y + DashPanelH() - DashPx(32),
+                      w - DashPx(28), DashPx(24), C'160,110,20', C'255,242,214');
+     }
+   else if(g_update_pending)
+     {
+      DashPlaceButton(DASH_BTN_UPD, "Updating...", x + DashPx(14), y + DashPanelH() - DashPx(32),
+                      w - DashPx(28), DashPx(24), C'36,40,52', C'200,206,214');
+     }
+   else if(ObjectFind(0, DASH_BTN_UPD) >= 0)
+      ObjectDelete(0, DASH_BTN_UPD);
   }
 
 void MolidoMarkOne(const string name, const ENUM_OBJECT typ, const datetime t,
@@ -603,7 +648,7 @@ void MolidoDashRedraw()
                 DoubleToString(DashSpreadPts(), 1) + DashNextBar() + news_line + kill +
                 DashLinkStatus() + preset + ch_state + target_line + days_line + ddleft_line + smart1 + smart2 + weekly + safe + auto_line + IntegerToString(strength) +
                 IntegerToString((int)g_dash_fold) + DoubleToString(DashScale(), 2) +
-                IntegerToString((int)TerminalInfoInteger(TERMINAL_CONNECTED));
+                IntegerToString((int)TerminalInfoInteger(TERMINAL_CONNECTED)) + IntegerToString((int)g_update_ready) + g_update_version + IntegerToString((int)g_update_pending) + IntegerToString((int)MolidoLinkHealthy()) + IntegerToString((int)StratUseScalper()) + IntegerToString((int)StratUseNews()) + IntegerToString((int)StratUseTrend()) + IntegerToString((int)StratUseAuto());
    if(sig == g_dash_sig)
      {
       MolidoDashPlaceButtons();
@@ -633,6 +678,8 @@ void MolidoDashRedraw()
    g_dash.TextOut(pad, DashPx(10), MOLIDO_EA_NAME + "  " + MOLIDO_EA_VERSION, DashArgb(text), 0);
    DashFont("Segoe UI", 11);
    g_dash.TextOut(pad + DashPx(168), DashPx(14), preset, DashArgb(gold), 0);
+   if(!MolidoLinkHealthy())
+      g_dash.TextOut(pad, DashPx(34), "SAFE DISCONNECT - managing only", DashArgb(C'255,92,122'), 0);
 
    if(g_dash_fold)
      {
@@ -816,6 +863,8 @@ void MolidoDashRedraw()
 
 void MolidoDashOnInit()
   {
+   if(MolidoIsTester() && !MQLInfoInteger(MQL_VISUAL_MODE))
+      return;
    g_dash_fold = DashCollapsed();
    g_dash_sig = "";
    if(ShowDashboard)
@@ -824,6 +873,8 @@ void MolidoDashOnInit()
 
 void MolidoDashOnTick()
   {
+   if(MolidoIsTester() && !MQLInfoInteger(MQL_VISUAL_MODE))
+      return;
    if(!ShowDashboard && ObjectFind(0, DASH_NAME) < 0)
      {
       MolidoMarksSync();
@@ -869,6 +920,26 @@ void MolidoDashOnChartEvent(const int id, const long &lparam,
          DemoKillSet(true);
       else
          DemoKillSet(false);
+      g_dash_sig = "";
+      MolidoDashRedraw();
+      return;
+     }
+   if(sparam == DASH_BTN_SC || sparam == DASH_BTN_NX || sparam == DASH_BTN_TR || sparam == DASH_BTN_AU)
+     {
+      ObjectSetInteger(0, sparam, OBJPROP_STATE, false);
+      if(sparam == DASH_BTN_SC) StratSet("scalper", !StratUseScalper());
+      if(sparam == DASH_BTN_NX) StratSet("news", !StratUseNews());
+      if(sparam == DASH_BTN_TR) StratSet("trend", !StratUseTrend());
+      if(sparam == DASH_BTN_AU) StratSet("auto", !StratUseAuto());
+      g_dash_sig = "";
+      MolidoDashRedraw();
+      return;
+     }
+   if(sparam == DASH_BTN_UPD)
+     {
+      ObjectSetInteger(0, DASH_BTN_UPD, OBJPROP_STATE, false);
+      if(g_update_ready)
+         MolidoRequestUpdate();
       g_dash_sig = "";
       MolidoDashRedraw();
      }

@@ -3,7 +3,8 @@
 Only tunables are served: symbol list, refresh period, bar counts, and the
 latest EA version with its checksum and download URL. The EA's safety inputs
 (AllowTrading, AllowRealAccount, AllowedLogins, AllowedRealLogins,
-AccountProfile, EnableDemoScalper, ScalperKillSwitch) are not part of this payload
+AccountProfile, EnableDemoScalper, ScalperKillSwitch, RehearsalMode,
+AutoUpdateEnabled) are not part of this payload
 and the EA has no code path that would read them from it.
 
 Everything is environment-driven; an unset value is omitted so the EA keeps its
@@ -39,14 +40,42 @@ ENV = {"refresh_seconds": "MOLIDO_EA_REFRESH_SECONDS", "bar_count": "MOLIDO_EA_B
        "intraday_bar_count": "MOLIDO_EA_INTRADAY_BAR_COUNT", "tick_count": "MOLIDO_EA_TICK_COUNT"}
 
 
+def _read_gate() -> dict[str, Any]:
+    gate_path = EA_FILE.parent / "Molido_Master.gate.json"
+    master = EA_FILE.parent / "Molido_Master.mq5"
+    out: dict[str, Any] = {}
+    if master.exists():
+        out["ea_latest_sha256"] = hashlib.sha256(master.read_bytes()).hexdigest()
+    if not gate_path.exists():
+        return out
+    import json
+    try:
+        data = json.loads(gate_path.read_text(encoding="utf-8"))
+    except Exception:
+        return out
+    backtest = str(data.get("backtest") or "").upper()
+    sha = str(data.get("sha256") or "").lower()
+    out["ea_gate"] = backtest if backtest in {"PASS", "FAIL", "PENDING"} else "FAIL"
+    if sha:
+        out["ea_gate_sha256"] = sha
+    # Only advertise PASS when the sidecar hash matches the Master source.
+    if out.get("ea_gate") == "PASS" and out.get("ea_latest_sha256") and sha != out["ea_latest_sha256"]:
+        out["ea_gate"] = "FAIL"
+    return out
+
+
 def ea_release(path: pathlib.Path = EA_FILE) -> dict[str, Any]:
     if not path.exists():
-        return {"ea_latest_version": os.environ.get("MOLIDO_EA_LATEST_VERSION") or None,
-                "ea_sha256": os.environ.get("MOLIDO_EA_SHA256") or None}
+        out = {"ea_latest_version": os.environ.get("MOLIDO_EA_LATEST_VERSION") or None,
+               "ea_sha256": os.environ.get("MOLIDO_EA_SHA256") or None}
+        out.update(_read_gate())
+        return out
     raw = path.read_bytes()
     match = _VERSION.search(raw.decode("utf-8", errors="ignore"))
-    return {"ea_latest_version": match.group(1) if match else None,
-            "ea_sha256": hashlib.sha256(raw).hexdigest()}
+    out = {"ea_latest_version": match.group(1) if match else None,
+           "ea_sha256": hashlib.sha256(raw).hexdigest()}
+    out.update(_read_gate())
+    return out
 
 
 def _symbols(session: Session | None) -> list[str]:

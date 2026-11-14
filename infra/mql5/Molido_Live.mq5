@@ -1,9 +1,9 @@
 //+------------------------------------------------------------------+
-//| Molido_Live.mq5 - Molido Live: hard-locked until AllowRealAccount and AllowedRealLogins
+//| Molido_Live.mq5 - Molido Live: real account (hard-locked until unlocked)
 //+------------------------------------------------------------------+
 #property copyright   "MolidoTrade AI"
-#property version     "1.43"
-#property description "Molido Live: hard-locked until AllowRealAccount and AllowedRealLogins"
+#property version     "1.44"
+#property description "Molido Live: real account (hard-locked until unlocked)"
 #define MOLIDO_EA_NAME          "Molido_Live"
 #define MOLIDO_MAGIC            685403
 #define MOLIDO_DEFAULT_PROFILE  PROFILE_LIVE_REAL
@@ -11,5 +11,10 @@
 #define MOLIDO_DEFAULT_AUTO     true
 #define MOLIDO_DEFAULT_NEWS     NEWS_AVOID
 #define MOLIDO_DEFAULT_TOPN     3
-#define MOLIDO_EA_VERSION       "1.43"
+#define MOLIDO_USE_SCALPER      true
+#define MOLIDO_USE_NEWS         false
+#define MOLIDO_USE_TREND        false
+#define MOLIDO_USE_AUTO         true
+#define MOLIDO_DEFAULT_REHEARSAL false
+#define MOLIDO_EA_VERSION       "1.44"
 #include "MolidoRuntime.mqh"

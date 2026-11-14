@@ -107,8 +107,8 @@ def test_demo_scalper_is_included_and_checksummed():
             assert f'#include "{name}"' in SRC
         recorded = (EA.parent / f"{name}.sha256").read_text().split()[0]
         assert recorded == hashlib.sha256(mqh.read_bytes()).hexdigest()
-    assert '#property version     "1.43"' in EA.read_text(encoding="utf-8")
-    assert '#define MOLIDO_EA_VERSION       "1.43"' in EA.read_text(encoding="utf-8") or 'MOLIDO_EA_VERSION "1.43"' in SRC
+    assert '#property version     "1.44"' in EA.read_text(encoding="utf-8")
+    assert '#define MOLIDO_EA_VERSION       "1.44"' in EA.read_text(encoding="utf-8") or 'MOLIDO_EA_VERSION "1.44"' in SRC
     assert "NEWS_AVOID" in SRC and "NEWS_TRADE" in SRC
     assert "RISK_PRESET_FTMO" in SRC
     remote = _remote_section()
@@ -119,6 +119,9 @@ def test_demo_scalper_is_included_and_checksummed():
     assert 'JsonValue(body, "AllowedLogins")' not in remote
     assert 'JsonValue(body, "AutoSymbolMode")' not in remote
     assert 'JsonValue(body, "DashFontScale")' not in remote
+    assert 'JsonValue(body, "DisconnectGraceSec")' not in remote
+    assert 'JsonValue(body, "AutoUpdateEnabled")' not in remote
+    assert 'JsonValue(body, "RehearsalMode")' not in remote
 
 
 def test_demo_risk_caps_are_clamped_and_demo_only(monkeypatch):
@@ -154,6 +157,7 @@ def test_split_eas_have_unique_magics():
         "Molido_News.mq5": 685405,
         "Molido_Trend.mq5": 685406,
         "Molido_AutoPortfolio.mq5": 685407,
+        "Molido_Master.mq5": 685408,
     }
     seen = set()
     for name, magic in eas.items():
@@ -170,3 +174,10 @@ def test_split_eas_have_unique_magics():
     assert "PROFILE_LIVE_REAL" in (root / "Molido_Live.mq5").read_text(encoding="utf-8")
     assert "STRAT_TREND" in (root / "Molido_Trend.mq5").read_text(encoding="utf-8")
     assert "STRAT_AUTO" in (root / "Molido_AutoPortfolio.mq5").read_text(encoding="utf-8")
+    assert "PROFILE_DEMO" in (root / "Molido_Master.mq5").read_text(encoding="utf-8")
+    assert 'input group "Account type"' in SRC
+    assert 'input group "Advanced (no need to change)"' in SRC
+    assert SRC.find('input group "Account type"') < SRC.find('input group "Advanced (no need to change)"')
+    assert "MolidoIsTester" in SRC or "MolidoIsTester" in (root / "MolidoShared.mqh").read_text(encoding="utf-8")
+    assert "molido_update_request.json" in SRC and "molido_daily_summary.json" in SRC
+    assert "Update now?" in (root / "MolidoDashboard.mqh").read_text(encoding="utf-8")
