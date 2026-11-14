@@ -1414,6 +1414,47 @@ export interface AgentPerformanceView {
   note: string;
 }
 
+export interface AgentScorecardRow {
+  id: string;
+  calls: number;
+  buy: number;
+  sell: number;
+  wait_or_other: number;
+  accuracy: number | null;
+  hyp_pnl_pct: number;
+  weight: number;
+  enough_data: boolean;
+  note?: string;
+}
+
+export interface AgentScorecardView {
+  as_of: string;
+  horizon_bars: number;
+  min_samples: number;
+  weight_bounds: number[];
+  half_life_days: number;
+  agents: AgentScorecardRow[];
+  note: string;
+}
+
+export interface UnderperformerRow {
+  id: string;
+  accuracy: number;
+  hyp_pnl_pct: number;
+  calls: number;
+  proposal: string;
+  reason: string;
+}
+
+export interface UnderperformersView {
+  as_of: string;
+  window_days: number;
+  flagged: UnderperformerRow[];
+  proposals_only: boolean;
+  auto_delete: boolean;
+  note: string;
+}
+
 export interface FtmoMonitorRow {
   account: { id: string; label: string; rulebook_key: string | null; program: string | null;
     phase: string | null; starting_balance: number; currency: string };
@@ -1547,6 +1588,8 @@ export const api = {
   agentHealth: () => request<AgentHealthView>("/api/v1/agents/health"),
   agentAlerts: () => request<AgentAlertsView>("/api/v1/agents/alerts"),
   agentPerformance: () => request<AgentPerformanceView>("/api/v1/agents/performance"),
+  agentScorecard: () => request<AgentScorecardView>("/api/v1/agents/scorecard"),
+  agentUnderperformers: () => request<UnderperformersView>("/api/v1/agents/underperformers"),
   agentRegistry: () => request<AgentRegistryView>("/api/v1/agents/registry"),
   rocketScan: (timeframe = "H1") =>
     request<RocketScanView>(`/api/v1/agents/rocket/scan?timeframe=${timeframe}`),

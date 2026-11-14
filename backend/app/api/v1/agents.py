@@ -32,6 +32,7 @@ from app.services import (
     agent_scan,
     agent_symbol_view,
     agent_symbols,
+    agent_voting,
     agent_walkforward,
 )
 
@@ -233,6 +234,19 @@ def agents_performance(
 ) -> dict[str, Any]:
     """Forward direction hit rate per agent (before costs)."""
     return agent_health.performance(session, horizon_bars=horizon_bars)
+
+
+@router.get("/scorecard")
+def agents_scorecard(session: Session = Depends(get_db), _: Principal = READ) -> dict[str, Any]:
+    """Per-agent accuracy, hypothetical P&L and votes. Shadow, before costs."""
+    return agent_voting.scorecard(session)
+
+
+@router.get("/underperformers")
+def agents_underperformers(session: Session = Depends(get_db),
+                           _: Principal = READ) -> dict[str, Any]:
+    """Monthly no-value flags. Proposals only; nothing is disabled automatically."""
+    return agent_voting.latest_report(session) or agent_voting.underperformer_report(session)
 
 
 @router.get("/explain")

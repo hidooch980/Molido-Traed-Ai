@@ -72,21 +72,30 @@ def pending_events(session: Session, *, now: datetime, risk_ctx: Any = None,
         c = t.content or {}
         ev, tid = c.get("event"), c.get("trade_id")
         if ev == "open":
-            out.append((f"open:{tid}", f"📄 Paper OPEN {t.symbol} {c.get('direction')} "
-                                       f"[{c.get('account') or 'main'}] entry {c.get('entry')} "
-                                       f"SL {c.get('stop_loss')} TP {c.get('take_profit')}"))
+            side = {"BUY": "خرید", "SELL": "فروش", "long": "خرید", "short": "فروش"}.get(
+                str(c.get("direction") or ""), str(c.get("direction") or "—"))
+            acc = c.get("account") or "main"
+            out.append((f"open:{tid}",
+                        f"📄 معامله آزمایشی باز شد: {t.symbol} {side} [حساب {acc}] "
+                        f"ورود {c.get('entry')} حدضرر {c.get('stop_loss')} "
+                        f"حدسود {c.get('take_profit')}"))
         elif ev == "close":
-            out.append((f"close:{tid}", f"📄 Paper CLOSE {t.symbol} {c.get('result')} "
-                                        f"R={c.get('r')} [{c.get('account') or 'main'}]"))
+            result = {"stop": "حدضرر", "target": "حدسود"}.get(
+                str(c.get("result") or ""), str(c.get("result") or "—"))
+            acc = c.get("account") or "main"
+            out.append((f"close:{tid}",
+                        f"📄 معامله آزمایشی بسته شد: {t.symbol} {result} "
+                        f"R={c.get('r')} [حساب {acc}]"))
     if risk_ctx is not None:
         if risk_ctx.kill_switch:
-            out.append((f"kill:{day}", "🛑 Kill switch is engaged"))
+            out.append((f"kill:{day}", "🛑 کلید اضطراری فعال است"))
         from app.agents.risk_gate import RiskLimits
 
         lim = RiskLimits().max_daily_loss_pct
         d = risk_ctx.daily_pnl_pct
         if d is not None and d <= -lim:
-            out.append((f"dailycap:{day}", f"⚠️ Daily loss {d:.2f}% reached the {lim}% cap"))
+            out.append((f"dailycap:{day}",
+                        f"⚠️ زیان روزانه {d:.2f}٪ به سقف {lim:g}٪ رسید"))
     sigs = list(session.scalars(select(AgentMemoryEntry)
                                 .where(AgentMemoryEntry.kind == "rocket")
                                 .order_by(AgentMemoryEntry.created_at.desc())
@@ -94,7 +103,7 @@ def pending_events(session: Session, *, now: datetime, risk_ctx: Any = None,
     if len(sigs) == BLOCK_STREAK and all(
             ((s.content or {}).get("risk_review") or {}).get("verdict") == "BLOCK" for s in sigs):
         out.append((f"blockstreak:{sigs[-1].id}",
-                    f"🚧 Risk Brain BLOCKed the last {BLOCK_STREAK} rocket signals"))
+                    f"🚧 مغز ریسک آخرین {BLOCK_STREAK} سیگنال موشکی را مسدود کرد"))
     usd_limit = os.getenv("MOLIDO_XAI_DAILY_USD_LIMIT", "").strip()
     if usd_limit:
         from app.models.agent_usage import AgentLlmUsage
@@ -104,7 +113,8 @@ def pending_events(session: Session, *, now: datetime, risk_ctx: Any = None,
                                .where(AgentLlmUsage.created_at >= start)) or 0.0
         try:
             if float(spent) >= float(usd_limit):
-                out.append((f"xaicap:{day}", f"💸 xAI daily budget ${usd_limit} reached"))
+                out.append((f"xaicap:{day}",
+                            f"💸 بودجه روزانه xAI ({usd_limit} دلار) تمام شد"))
         except ValueError:
             pass
     return out

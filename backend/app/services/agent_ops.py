@@ -15,6 +15,7 @@ def cycle(session: Session) -> dict[str, Any]:
         agent_backtest_gate,
         agent_notify,
         agent_report,
+        agent_voting,
         ea_config,
     )
 
@@ -26,6 +27,8 @@ def cycle(session: Session) -> dict[str, Any]:
         ("notify", lambda: agent_notify.cycle(
             session, risk_ctx=agent_account.risk_context(session=session))),
         ("nightly_report", lambda: bool(agent_report.maybe_run(session))),
+        ("underperformers", lambda: agent_voting.maybe_monthly_report(session) is not None),
+        ("weekly_report", lambda: bool(agent_report.maybe_weekly(session))),
     ]
     for name, step in steps:
         try:

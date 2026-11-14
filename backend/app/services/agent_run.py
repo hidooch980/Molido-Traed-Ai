@@ -131,20 +131,87 @@ def run_symbol(session: Session, symbol: str, timeframe: Timeframe, *,
                                                                               as_of),
                        extras=extras)
     messages, health = run_timed(ctx, skip or set())
+    from app.services import agent_voting
+
+    weights = (context or {}).get("vote_weights")
+    if not isinstance(weights, dict):
+        try:
+            weights = agent_voting.current_weights(session, now=as_of)
+        except Exception:  # noqa: BLE001 - vote is advisory; a miss is WAIT
+            weights = {}
+    vote = agent_voting.vote_for_run(health, weights, bars=list(ctx.bars))
     out = {"symbol": symbol, "timeframe": timeframe.value, "as_of": as_of.isoformat(),
            "status": "ran", "mode": "shadow_only", "inputs": inputs,
-           "messages": [m.model_dump(mode="json") for m in messages], "health": health}
+           "messages": [m.model_dump(mode="json") for m in messages], "health": health,
+           "regime": vote.get("regime_detail"), "vote": vote}
     if record:
         memory.remember(session, "BRAIN-01", "agent",
                         f"agent run {symbol} {timeframe.value}: "
                         f"{sum(1 for h in health.values() if not h['ok'])} errors",
                         content={"event": "run", "timeframe": timeframe.value,
                                  "as_of": as_of.isoformat(), "inputs": inputs,
-                                 "agents": health}, symbol=symbol)
+                                 "agents": health, "regime": out["regime"],
+                                 "vote": vote}, symbol=symbol)
     return out
 
 
 RUN_FLAG = "MOLIDO_AGENT_RUN"
+MAX_IDLE = 900
+
+
+def _last_run_at(session: Session) -> datetime | None:
+    for row in memory.recall(session, kind="agent", limit=40):
+        if (row.content or {}).get("event") != "run":
+            continue
+        raw = (row.content or {}).get("as_of") or row.created_at
+        if isinstance(raw, datetime):
+            return raw if raw.tzinfo else raw.replace(tzinfo=UTC)
+        try:
+            at = datetime.fromisoformat(str(raw))
+        except ValueError:
+            continue
+        return at if at.tzinfo else at.replace(tzinfo=UTC)
+    return None
+
+
+def due(session: Session, *, now: datetime | None = None, bridge: Any = None,
+        timeframe: Timeframe = Timeframe.H1, max_idle: int = MAX_IDLE) -> str | None:
+    """Event-driven wake: new closed bar, large price move, or the idle cap."""
+    from app.agents.guards import decide_trigger
+    from app.models.instruments import Instrument
+    from app.services import agent_symbols
+
+    now = (now or datetime.now(UTC)).astimezone(UTC)
+    last = _last_run_at(session)
+    newest_close = last_price = last_close = last_range = None
+    names = list(agent_symbols.universe(session).get("symbols") or [])[:8]
+    for name in names:
+        inst = session.scalars(select(Instrument).where(Instrument.symbol == name)).first()
+        if inst is None:
+            continue
+        _, bars = agent_scan.candles(session, inst, timeframe, now, lookback=4)
+        if not bars:
+            continue
+        closed = bars[-1].open_time + timeframe.delta
+        if newest_close is None or closed > newest_close:
+            newest_close = closed
+            last_close = bars[-1].close
+            last_range = bars[-1].high - bars[-1].low
+    if bridge is not None:
+        try:
+            payload = bridge.symbols(now=now)
+            for name in names:
+                for entry in payload.get("symbols", []):
+                    if entry.get("name") == name and entry.get("ask") and entry.get("bid"):
+                        last_price = (float(entry["ask"]) + float(entry["bid"])) / 2
+                        break
+                if last_price is not None:
+                    break
+        except Exception:  # noqa: BLE001, S110
+            pass
+    return decide_trigger(last_run=last, now=now, newest_close=newest_close,
+                          last_price=last_price, last_close=last_close,
+                          last_range=last_range, max_interval=max_idle)
 
 
 def run_enabled() -> bool:
@@ -167,6 +234,12 @@ def run_cycle(session: Session, timeframe: Timeframe = Timeframe.H1, *,
     from app.services import agent_slippage
 
     context = agent_slippage.cycle_context(session, bridge=bridge)
+    try:
+        from app.services import agent_voting
+
+        context["vote_weights"] = agent_voting.current_weights(session)
+    except Exception as exc:  # noqa: BLE001
+        context["vote_weight_error"] = type(exc).__name__
     done = [run_symbol(session, s, timeframe, bridge=bridge, events=events, record=True,
                        skip=skip, context=context) for s in symbols[:max_symbols]]
     learning = agent_learning.learning_cycle(session) if learn else None
@@ -191,7 +264,12 @@ def main() -> int:
     from app.services import agent_account
 
     with session_scope() as session:
-        print(run_cycle(session, bridge=agent_account._provider(None, session)))
+        bridge = agent_account._provider(None, session)
+        why = due(session, bridge=bridge)
+        if why is None:
+            print("skip: no new close or move")
+            return 0
+        print({"trigger": why, **run_cycle(session, bridge=bridge)})
     return 0
 
 

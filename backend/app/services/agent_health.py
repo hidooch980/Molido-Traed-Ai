@@ -168,6 +168,8 @@ def explain(run: dict[str, Any]) -> dict[str, Any]:
             "brain01": brain["evidence"] if brain else [],
             "decision": "NO ORDER - analyzers advise only; Risk Brain is the final authority "
                         "and live execution is not connected to agents",
+            "weighted_vote": run.get("vote"),
+            "regime": run.get("regime"),
             "trace": trace}
 
 

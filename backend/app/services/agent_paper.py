@@ -86,6 +86,12 @@ def _symbol_point(session: Session, symbol: Any) -> float | None:
     return None
 
 
+def _loss_setups(session: Session, limit: int = 500) -> list[dict]:
+    rows = memory.recall(session, kind="pattern", limit=limit)
+    return [r.content | {"at": r.content.get("at") or r.created_at.isoformat()}
+            for r in rows if (r.content or {}).get("event") == "loss_setup"]
+
+
 def run_cycle(session: Session, timeframe: Timeframe = Timeframe.H1, *,
               account_key: str | None = None, now: datetime | None = None,
               risk_ctx: RiskContext | None = None, record: bool = True) -> dict[str, Any]:
@@ -113,6 +119,17 @@ def run_cycle(session: Session, timeframe: Timeframe = Timeframe.H1, *,
                             source_ref=trade["trade_id"],
                             content={"mode": "paper", "event": "close", "account": account,
                                      "trade_id": trade["trade_id"], **outcome})
+            if outcome.get("r") is not None and float(outcome["r"]) < 0:
+                memory.remember(
+                    session, "EX04", "pattern",
+                    f"loss setup {trade['symbol']} {trade.get('direction')}",
+                    symbol=trade["symbol"], source_ref=trade["trade_id"],
+                    content={"event": "loss_setup", "account": account,
+                             "symbol": trade["symbol"],
+                             "direction": trade.get("direction"),
+                             "regime": trade.get("regime") or "",
+                             "r": outcome.get("r"), "at": now.isoformat()},
+                )
             closed += 1
     scan = agent_scan.scan(session, timeframe, risk_ctx=ctx, as_of=now,
                            symbols=agent_symbols.universe(session)["symbols"],
@@ -128,10 +145,20 @@ def run_cycle(session: Session, timeframe: Timeframe = Timeframe.H1, *,
     from app.services import agent_slippage
 
     slip_fills = agent_slippage.fills_for(session)
+    from app.agents.guards import correlated, loss_factor
+    open_syms = list(ctx.open_symbols or ()) + [t["symbol"] for t in open_trades]
+    losses = _loss_setups(session)
     for sig in scan["signals"] if allowed else []:
         slip = slippage_decide(slip_fills, symbol=str(sig.get("symbol") or ""),
                                default_point=_symbol_point(session, sig.get("symbol")))
         if slip.blocks:
+            continue
+        why = correlated(str(sig.get("symbol") or ""), open_syms)
+        if why:
+            continue
+        setup = {"symbol": sig.get("symbol"), "direction": sig.get("direction"),
+                 "regime": (sig.get("regime") or "")}
+        if loss_factor(setup, losses, now=now) <= 0.5:
             continue
         trade = open_trade(sig, sig["risk_review"])
         if trade is None:

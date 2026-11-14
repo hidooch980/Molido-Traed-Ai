@@ -70,6 +70,23 @@ def config(session: Session | None = None, *, running_version: str | None = None
     from app.services import agent_backtest_gate
 
     out.update(agent_backtest_gate.ea_advertise(session, ea_release()))
+    if session is not None:
+        try:
+            from app.services import agent_voting
+
+            votes = agent_voting.votes_from_latest_runs(session)
+            if votes:
+                out["agent_votes"] = {
+                    sym: {"vote": v.get("recommendation"), "score": v.get("score"),
+                          "regime": v.get("regime"), "as_of": v.get("as_of"),
+                          "withheld": bool(v.get("withheld"))}
+                    for sym, v in votes.items()
+                }
+                out["agent_votes_note"] = (
+                    "advisory confirmation only; Risk Brain remains the authority"
+                )
+        except Exception as exc:  # noqa: BLE001
+            out["agent_votes_error"] = type(exc).__name__
     out["ea_download_url"] = os.environ.get("MOLIDO_EA_DOWNLOAD_URL") or None
     out["config_version"] = hashlib.sha256(
         repr(sorted((k, v) for k, v in out.items())).encode()).hexdigest()[:16]

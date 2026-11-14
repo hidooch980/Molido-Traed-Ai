@@ -117,7 +117,11 @@ def test_notify_off_without_env_and_dedups(session, monkeypatch):
     assert agent_notify.cycle(session, now=now, risk_ctx=ctx)["configured"] is False
     sent = []
     out = agent_notify.cycle(session, now=now, risk_ctx=ctx, send=lambda t: sent.append(t) or True)
-    assert out["sent"] == 3 and any("Kill switch" in t for t in sent)
+    assert out["sent"] == 3 and any("کلید اضطراری" in t for t in sent)
+    assert any("معامله آزمایشی باز شد" in t for t in sent)
+    assert any("زیان روزانه" in t for t in sent)
+    assert all("Kill switch" not in t and "Paper OPEN" not in t and "Daily loss" not in t
+               for t in sent)
     assert agent_notify.cycle(session, now=now, risk_ctx=ctx, send=lambda t: True)["sent"] == 0
     assert agent_notify.telegram_send("x") is False
 
@@ -128,7 +132,8 @@ def test_nightly_report_once_per_day(session):
     assert agent_report.maybe_run(session, now=early) is None
     sent = []
     r = agent_report.maybe_run(session, now=late, send=lambda t: sent.append(t) or True)
-    assert r["date"] == "2026-11-14" and r["delivered"] and "nightly report" in sent[0]
+    assert r["date"] == "2026-11-14" and r["delivered"] and "گزارش شبانه" in sent[0]
+    assert "Molido nightly report" not in sent[0]
     assert agent_report.maybe_run(session, now=late) is None
     assert agent_report.latest(session)[0]["date"] == "2026-11-14"
 

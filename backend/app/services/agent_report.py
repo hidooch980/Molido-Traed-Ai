@@ -6,7 +6,7 @@ Telegram when that is configured. Built once per Tehran day after REPORT_HOUR.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -77,20 +77,23 @@ def build(session: Session, *, now: datetime | None = None) -> dict[str, Any]:
 
 def text(r: dict[str, Any]) -> str:
     p = r["paper"]
-    lines = [f"📊 Molido nightly report {r['date']} (paper/shadow)",
-             f"Paper: total {p['total_r']}R, closed {p['closed']}, open {p['open']}, "
-             f"win rate {p['win_rate'] if p['win_rate'] is not None else '—'}"]
-    lines += [f"  {acc}: {a['total_r']}R ({a['closed']} closed, {a['opened_today']} today)"
+    wr = p["win_rate"]
+    wr_s = f"{wr:.0%}" if wr is not None else "نامشخص"
+    lines = [f"📊 گزارش شبانه مولیدو {r['date']} (پیپر/سایه)",
+             f"پیپر: مجموع {p['total_r']}R، بسته‌شده {p['closed']}، باز {p['open']}، "
+             f"نرخ برد {wr_s}"]
+    lines += [f"  {acc}: {a['total_r']}R (بسته‌شده {a['closed']}، امروز {a['opened_today']} باز شد)"
               for acc, a in sorted(p["accounts"].items())]
-    top = ", ".join(f"{a['id']} {a['hit_rate']:.0%}" for a in r["agents"]["top"]
+    top = "، ".join(f"{a['id']} {a['hit_rate']:.0%}" for a in r["agents"]["top"]
                     if a["hit_rate"] is not None)
-    lines.append(f"Top agents: {top or '—'}")
+    lines.append(f"برترین ایجنت‌ها: {top or '—'}")
     lr = r["learning"]
-    lines.append(f"Learning: weights v{lr['weights']}, {len(lr['changes_today'])} change(s) today, "
-                 f"quarantined {', '.join(lr['quarantined']) or '—'}")
+    quarantined = "، ".join(lr["quarantined"]) or "—"
+    lines.append(f"یادگیری: وزن‌ها نسخه {lr['weights']}، "
+                 f"{len(lr['changes_today'])} تغییر امروز، قرنطینه {quarantined}")
     if lr["brain_shadow"]:
-        lines.append(f"Brain+agents shadow: {lr['brain_shadow']['status']}")
-    lines.append(f"Backtest gate: {r['backtest_gate'] or '—'}")
+        lines.append(f"سایه مغز و ایجنت‌ها: {lr['brain_shadow']['status']}")
+    lines.append(f"دروازه بک‌تست: {r['backtest_gate'] or '—'}")
     return "\n".join(lines)
 
 
@@ -123,3 +126,121 @@ def maybe_run(session: Session, *, now: datetime | None = None, send: Any = None
     return report
 
 
+def _week_id(local: datetime) -> str:
+    year, week, _ = local.isocalendar()
+    return f"{year}-W{week:02d}"
+
+
+def _week_ref(week: str) -> str:
+    return f"weekly_report:{week}"
+
+
+def weekly_stress(session: Session, *, now: datetime | None = None,
+                  symbols: tuple[str, ...] = ("EURUSD", "XAUUSD", "GBPUSD"),
+                  top_days: int = 5) -> dict[str, Any]:
+    """Replay shadow runs on the most volatile recent days. No orders."""
+    from sqlalchemy import select as sel
+
+    from app.core.enums import Timeframe
+    from app.models.instruments import Instrument
+    from app.services import agent_run, agent_scan
+
+    now = now or datetime.now(UTC)
+    ranges: dict[Any, float] = {}
+    for name in symbols:
+        inst = session.scalars(sel(Instrument).where(Instrument.symbol == name)).first()
+        if inst is None:
+            continue
+        _, bars = agent_scan.candles(session, inst, Timeframe.H1, now, lookback=24 * 70)
+        for bar in bars:
+            day = bar.open_time.astimezone(UTC).date()
+            ranges[day] = ranges.get(day, 0.0) + float(bar.high - bar.low)
+    ranked = sorted(ranges, key=lambda d: ranges[d], reverse=True)[:top_days]
+    results = []
+    for day in ranked:
+        as_of = datetime(day.year, day.month, day.day, 21, 0, tzinfo=UTC)
+        day_rows: list[dict[str, Any]] = []
+        for name in symbols:
+            try:
+                out = agent_run.run_symbol(session, name, Timeframe.H1, as_of=as_of,
+                                           record=False)
+            except Exception as exc:  # noqa: BLE001
+                day_rows.append({"symbol": name, "status": "error",
+                                 "reason": type(exc).__name__})
+                continue
+            vote = out.get("vote") or {}
+            day_rows.append({"symbol": name, "status": str(out.get("status") or ""),
+                             "regime": (out.get("regime") or {}).get("regime"),
+                             "vote": vote.get("recommendation"),
+                             "withheld": vote.get("withheld")})
+        results.append({"day": day.isoformat(), "range_score": round(ranges[day], 5),
+                        "symbols": day_rows})
+    return {"as_of": now.isoformat(), "volatile_days": [d.isoformat() for d in ranked],
+            "results": results, "note": "shadow replay only; not a live test"}
+
+
+def build_weekly(session: Session, *, now: datetime | None = None) -> dict[str, Any]:
+    now = now or datetime.now(UTC)
+    local = now.astimezone(TEHRAN)
+    start = (local - timedelta(days=7)).astimezone(UTC)
+    daily = build(session, now=now)
+    from app.services import agent_paper, agent_voting
+
+    book = agent_paper.book(session, limit=5000)
+    week_closed = [t for t in book["trades"]
+                   if t.get("r") is not None and t.get("opened_at")
+                   and datetime.fromisoformat(t["opened_at"]) >= start]
+    rs = [float(t["r"]) for t in week_closed]
+    return {
+        "week": _week_id(local), "date": local.date().isoformat(),
+        "as_of": now.isoformat(), "mode": "paper/shadow",
+        "paper_week": {"trades": len(rs), "total_r": round(sum(rs), 4) if rs else 0.0,
+                       "win_rate": round(sum(1 for r in rs if r > 0) / len(rs), 4) if rs else None},
+        "agents": daily["agents"],
+        "underperformers": (agent_voting.latest_report(session) or {}).get("flagged") or [],
+        "stress": weekly_stress(session, now=now),
+        "backtest_gate": daily["backtest_gate"],
+    }
+
+
+def text_weekly(r: dict[str, Any]) -> str:
+    p = r["paper_week"]
+    wr = p["win_rate"]
+    wr_s = f"{wr:.0%}" if wr is not None else "نامشخص"
+    lines = [f"📅 گزارش هفتگی مولیدو {r['week']} (پیپر/سایه)",
+             f"پیپر این هفته: {p['trades']} معامله، مجموع {p['total_r']}R، نرخ برد {wr_s}"]
+    top = "، ".join(f"{a['id']} {a['hit_rate']:.0%}" for a in r["agents"]["top"]
+                    if a.get("hit_rate") is not None)
+    lines.append(f"برترین ایجنت‌ها: {top or '—'}")
+    flagged = r.get("underperformers") or []
+    if flagged:
+        names = "، ".join(f"{f['id']} ({f.get('proposal')})" for f in flagged[:8])
+        lines.append(f"کم‌بازده‌ها (فقط پیشنهاد): {names}")
+    stress = r.get("stress") or {}
+    days = "، ".join(stress.get("volatile_days") or []) or "—"
+    lines.append(f"تست فشار روی روزهای پرنوسان: {days}")
+    lines.append(f"دروازه بک‌تست: {r.get('backtest_gate') or '—'}")
+    return "\n".join(lines)
+
+
+def maybe_weekly(session: Session, *, now: datetime | None = None, send: Any = None,
+                 force: bool = False) -> dict[str, Any] | None:
+    now = now or datetime.now(UTC)
+    local = now.astimezone(TEHRAN)
+    if not force and (local.isoweekday() != 5 or local.hour < REPORT_HOUR):
+        return None
+    week = _week_id(local)
+    exists = session.scalar(select(AgentMemoryEntry.id).where(
+        AgentMemoryEntry.kind == "strategy",
+        AgentMemoryEntry.source_ref == _week_ref(week)).limit(1))
+    if exists is not None and not force:
+        return None
+    report = build_weekly(session, now=now)
+    from app.services import agent_notify
+
+    sender = send or (agent_notify.telegram_send if agent_notify.configured() else None)
+    body = text_weekly(report)
+    report["delivered"] = bool(sender(body)) if sender else False
+    memory.remember(session, "BRAIN-01", "strategy", f"weekly report {week}", content=report,
+                    source_ref=_week_ref(week))
+    return report
