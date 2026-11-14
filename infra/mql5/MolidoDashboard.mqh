@@ -46,11 +46,14 @@ bool MolidoDashEnsure()
      }
    if(g_dash_ready)
       return(true);
-   if(!g_dash.CreateBitmapLabel(0, 0, DASH_NAME, DashX, DashY, DASH_W, DASH_H, DashCorner))
+   if(!g_dash.CreateBitmapLabel(DASH_NAME, DashX, DashY, DASH_W, DASH_H, COLOR_FORMAT_ARGB_NORMALIZE))
      {
       Print("MolidoDash: cannot create canvas (", GetLastError(), ")");
       return(false);
      }
+   ObjectSetInteger(0, DASH_NAME, OBJPROP_CORNER, DashCorner);
+   ObjectSetInteger(0, DASH_NAME, OBJPROP_XDISTANCE, DashX);
+   ObjectSetInteger(0, DASH_NAME, OBJPROP_YDISTANCE, DashY);
    ObjectSetInteger(0, DASH_NAME, OBJPROP_SELECTABLE, false);
    ObjectSetInteger(0, DASH_NAME, OBJPROP_HIDDEN, true);
    ObjectSetInteger(0, DASH_NAME, OBJPROP_BACK, false);

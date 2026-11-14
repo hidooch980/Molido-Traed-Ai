@@ -8,6 +8,9 @@
 
 #define NEWS_MAX_EVENTS   64
 #define NEWS_LOOKAHEAD_H  24
+#define NEWS_IMP_LOW       1
+#define NEWS_IMP_MOD       2
+#define NEWS_IMP_HIGH      3
 
 struct MolidoNewsEvent
   {
@@ -27,7 +30,7 @@ datetime        g_news_tighten_for = 0;
 
 int NewsMinImportanceValue()
   {
-   return(CAL_IMPORTANCE_HIGH);
+   return(NEWS_IMP_HIGH);
   }
 
 string NewsModeName()
@@ -79,11 +82,11 @@ void NewsParseServerCsv(const string csv)
       string cur = parts[1];
       string imp = parts[2];
       string name = (ArraySize(parts) > 3 ? parts[3] : imp);
-      int importance = CAL_IMPORTANCE_HIGH;
+      int importance = NEWS_IMP_HIGH;
       if(imp == "LOW")
-         importance = CAL_IMPORTANCE_LOW;
+         importance = NEWS_IMP_LOW;
       else if(imp == "MODERATE" || imp == "MED")
-         importance = CAL_IMPORTANCE_MODERATE;
+         importance = NEWS_IMP_MOD;
       NewsPush(t, name, cur, importance, (ulong)(1000000 + i));
      }
   }
