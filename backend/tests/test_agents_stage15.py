@@ -183,7 +183,8 @@ class TestRunAndHealth:
         monkeypatch.setitem(ANALYZERS, "TA02", boom)
         messages, health = run_timed(ctx_for(walk(100)))
         assert health["TA02"]["ok"] is False and "bad input" in health["TA02"]["error"]
-        assert sum(h["ok"] for h in health.values()) == len(ANALYZERS) - 1
+        assert sum(h["ok"] for h in health.values()) == len(ANALYZERS)
+        assert health["BRAIN-01"]["ok"] is True
         assert messages[-1].agent_id == "BRAIN-01"
 
     def test_read_ticks_converts_server_time(self, tmp_path):
@@ -222,5 +223,5 @@ class TestRunAndHealth:
         from app.core.enums import Timeframe
         out = agent_run.run_symbol(session, "EURUSD", Timeframe.H1, as_of=now, record=True)
         assert out["status"] == "ran" and out["inputs"]["bars"] > 100
-        assert set(out["health"]) == set(ANALYZERS)
+        assert set(out["health"]) == set(ANALYZERS) | {"BRAIN-01"}
         assert memory.recall(session, kind="agent")[0].content["event"] == "run"

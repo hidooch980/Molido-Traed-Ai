@@ -44,12 +44,11 @@ def test_health_lists_all_51_and_flags_errors(session):
     by = {a["id"]: a for a in rep["agents"]}
     assert by["TA02"]["status"] == "degraded" and by["TA02"]["error_rate"] == 0.6
     assert by["SC01"]["status"] == "ok" and by["SC01"]["runs"] == 5
-    assert by["RK01"]["status"] == "not_an_analyzer"
+    assert by["RK01"]["status"] == "ok" and by["RK01"]["runs"] == 5
 
 
 def test_never_run_and_stale(session):
-    assert all(a["status"] in ("never_run", "not_an_analyzer")
-               for a in agent_health.health(session)["agents"])
+    assert all(a["status"] == "never_run" for a in agent_health.health(session)["agents"])
     record_run(session, {"SC01": {"ok": True, "ms": 1.0, "recommendation": "WAIT"}})
     later = datetime.now(UTC) + timedelta(days=2)
     by = {a["id"]: a for a in agent_health.health(session, now=later)["agents"]}

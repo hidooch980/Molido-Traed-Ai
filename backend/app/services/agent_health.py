@@ -51,9 +51,10 @@ def health(session: Session, *, now: datetime | None = None, limit: int = 500) -
             s["last_run_at"] = _when(row).isoformat()
             s["last_symbol"] = row.symbol
             s["last_recommendation"] = h.get("recommendation")
+    running = set(ANALYZERS) | {"BRAIN-01"}
     agents = []
     for role in registry.all_roles():
-        if role.id not in ANALYZERS:
+        if role.id not in running:
             agents.append({"id": role.id, "status": "not_an_analyzer",
                            "note": "checked by its own module and tests, not by agent runs"})
             continue

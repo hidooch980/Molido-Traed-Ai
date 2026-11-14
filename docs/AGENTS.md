@@ -56,7 +56,7 @@ Kill Switch و gate نوع حساب ارسال می‌کند.
 
 ## وضعیت ۵۱ نقش
 
-خلاصه (پس از مرحله ۱۵): **50 IMPLEMENTED**، **1 PARTIAL** (EX02: دادهٔ قیمت درخواستی در برابر قیمت پر شده برای آمار لغزش وجود ندارد)، **0 NOT_IMPLEMENTED**. پس از مرحله ۱۲: 42 / 9 / 0. در مرحله ۱: 14 / 21 / 16.
+خلاصه (پس از مرحله ۲۰): **51 IMPLEMENTED**، **0 PARTIAL**، **0 NOT_IMPLEMENTED**. پس از مرحله ۱۲: 42 / 9 / 0. در مرحله ۱: 14 / 21 / 16.
 
 همه نقش‌های موجود قانون‌محور و قطعی‌اند. «IMPLEMENTED» یعنی کد موجود کار نقش را انجام می‌دهد، نه اینکه یک ایجنت هوش مصنوعی مستقل با این شناسه اجرا می‌شود.
 
@@ -98,7 +98,7 @@ Kill Switch و gate نوع حساب ارسال می‌کند.
 | RK04 | هوش مدیریت ریسک پرتفوی | L4 | IMPLEMENTED | `backend/app/brain/portfolio.py`<br>`backend/app/workers/autotrade.py` |
 | RK05 | ناظر قوانین FTMO | L4 | IMPLEMENTED | `backend/app/brain/challenge.py`<br>`backend/app/brain/rulebooks.py`<br>`backend/app/services/challenge_accounts.py` |
 | EX01 | ایجنت اجرای معاملات متاتریدر | L4 | IMPLEMENTED | `backend/app/execution/metatrader_broker.py`<br>`backend/app/execution/paper_broker.py`<br>`infra/mql5/MolidoBridge.mq5` |
-| EX02 | هوش کنترل لغزش قیمت | L4 | PARTIAL | `backend/app/execution/broker.py`<br>`infra/mql5/MolidoBridge.mq5` |
+| EX02 | هوش کنترل لغزش قیمت | L4 | IMPLEMENTED | `backend/app/agents/slippage.py`<br>`backend/app/agents/analyzers/fleet.py`<br>`backend/app/services/agent_slippage.py`<br>`backend/app/execution/broker.py`<br>`infra/mql5/MolidoBridge.mq5` |
 | EX03 | ناظر هوشمند معاملات | L4 | IMPLEMENTED | `backend/app/execution/engine.py`<br>`backend/app/api/v1/execution.py`<br>`backend/app/workers/trailing.py` |
 | EX04 | مدیر دفتر ثبت معاملات | L1 | IMPLEMENTED | `backend/app/brain/journal.py`<br>`backend/app/services/journal_log.py`<br>`backend/app/services/audit.py` |
 | EX05 | فرمانده کل معاملات | L4 | IMPLEMENTED | `backend/app/execution/autopilot.py`<br>`backend/app/workers/autotrade.py`<br>`backend/app/execution/modes.py` |
@@ -293,3 +293,9 @@ API فقط‌خواندنی: `/api/v1/agents/memory`، `/agents/council/decision
 - وزن‌های ensemble ایجنت‌ها: فقط وقتی اعمال می‌شود که روی ۳۰٪ جدیدتر داده (hold-out زمانی) دست‌کم ۲ واحد درصد بهتر باشد؛ هر نسخه با شواهد و نسخهٔ قبلی ثبت می‌شود؛ اگر در استفادهٔ رو به جلو ۵ واحد بدتر شود، خودکار rollback می‌شود.
 - `GET /agents/learning-status`.
 - مغزهای تولیدی (learning/rules، شورا، meta، MLP) و اجرا از این حلقه تغییر نمی‌کنند؛ هر تغییری در آن‌ها فقط پیشنهاد است.
+
+
+## مرحله ۲۰ — EX02 و اجرای هر ۵۱ نقش در چرخهٔ سایه
+
+- **EX02:** قیمت درخواستی در برابر قیمت پر شده ثبت می‌شود (حافظه، event=`slippage_fill`). آمار قطعی (میانگین، میانه، p90) به‌ازای نماد محاسبه می‌شود. اگر برآورد (p90) از سقف پیش‌فرض ۳۰ پوینت بیشتر باشد اجرا رد می‌شود (BLOCK). اگر نمونه کافی نباشد یا اندازهٔ پوینت معلوم نباشد، لغزش صفر فرض نمی‌شود و نتیجه WAIT است. هیچ ایجنتی، از جمله EX02، حکم BLOCK مغز ریسک را عوض نمی‌کند.
+- **چرخهٔ ایجنت‌ها:** هر ۵۱ نقش در `agent_run` روی نمادها اجرا می‌شوند (تحلیلگرهای قبلی به‌علاوهٔ ناوگان سایه در `analyzers/fleet.py` و BRAIN-01). دادهٔ گم‌شده WAIT یا ABSTAIN است. اجرا و پرچم‌های زنده دست نخورده‌اند؛ این لایه فقط paper/سایه است.

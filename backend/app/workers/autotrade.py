@@ -2687,6 +2687,7 @@ def run_cycle(
                 "state": str(report.state),
                 "ticket": report.broker_order_id,
                 "fill": report.average_price,
+                "requested_price": float(price) if price is not None else None,
                 # The gap between the price the rule decided on and the price
                 # the account got. This is the number the whole dual-series
                 # argument was about, and now it is measured per order rather

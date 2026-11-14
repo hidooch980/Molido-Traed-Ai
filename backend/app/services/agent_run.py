@@ -98,7 +98,8 @@ def minutes_to_event(events: list[dict[str, Any]] | None, symbol: str,
 def run_symbol(session: Session, symbol: str, timeframe: Timeframe, *,
                as_of: datetime | None = None, bridge: Any = None,
                events: list[dict[str, Any]] | None = None, record: bool = False,
-               skip: set[str] | None = None) -> dict[str, Any]:
+               skip: set[str] | None = None,
+               context: dict[str, Any] | None = None) -> dict[str, Any]:
     as_of = (as_of or datetime.now(UTC)).astimezone(UTC)
     inst = session.scalars(select(Instrument).where(Instrument.symbol == symbol)).first()
     if inst is None:
@@ -115,7 +116,7 @@ def run_symbol(session: Session, symbol: str, timeframe: Timeframe, *,
         except Exception:  # noqa: BLE001
             spread = None
         ticks = read_ticks(bridge.directory, symbol, as_of)
-    extras: dict[str, Any] = {}
+    extras: dict[str, Any] = dict(context or {})
     if ticks:
         extras["ticks"] = ticks
     if events is not None:
@@ -163,8 +164,11 @@ def run_cycle(session: Session, timeframe: Timeframe = Timeframe.H1, *,
 
     events = agent_events.high_impact()
     skip = agent_learning.quarantined(session)
+    from app.services import agent_slippage
+
+    context = agent_slippage.cycle_context(session, bridge=bridge)
     done = [run_symbol(session, s, timeframe, bridge=bridge, events=events, record=True,
-                       skip=skip) for s in symbols[:max_symbols]]
+                       skip=skip, context=context) for s in symbols[:max_symbols]]
     learning = agent_learning.learning_cycle(session) if learn else None
     from app.services import agent_brain_shadow
 

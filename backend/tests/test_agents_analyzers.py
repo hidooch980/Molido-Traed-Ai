@@ -65,8 +65,7 @@ class TestPointInTime:
 
 class TestCoverage:
     def test_analyzers_cover_the_target_roles(self):
-        expected = {f"SC{i:02d}" for i in range(1, 11)} | {f"SM{i:02d}" for i in range(1, 11)} \
-            | {f"RT{i:02d}" for i in range(1, 11)} | {"AI02", "TA02", "TA03", "RK02"}
+        expected = {r.id for r in registry.all_roles() if r.id != "BRAIN-01"}
         assert set(ANALYZERS) == expected
         assert all(registry.get(k) for k in ANALYZERS)
 

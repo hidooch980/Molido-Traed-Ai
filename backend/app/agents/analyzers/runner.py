@@ -6,7 +6,7 @@ import time
 from collections.abc import Callable
 from typing import Any
 
-from app.agents.analyzers import ai02, extra, rocket, scalping, smc
+from app.agents.analyzers import ai02, extra, fleet, rocket, scalping, smc
 from app.agents.analyzers.bars import AnalysisContext
 from app.agents.analyzers.brain01 import brain01_message
 from app.agents.analyzers.common import abstain
@@ -15,6 +15,7 @@ from app.agents.selfheal import finite_output
 
 ANALYZERS: dict[str, Callable[[AnalysisContext], AgentMessage]] = {
     **scalping.ANALYZERS, **smc.ANALYZERS, **rocket.ANALYZERS, **extra.ANALYZERS,
+    **fleet.ANALYZERS,
     "AI02": ai02.ai02_forecast,
 }
 
@@ -46,7 +47,12 @@ def run_timed(ctx: AnalysisContext, skip: frozenset[str] | set[str] = frozenset(
                             "ms": round((time.perf_counter() - started) * 1000, 2),
                             "recommendation": msg.recommendation.value,
                             "confidence": msg.confidence}
-    messages.append(brain01_message(messages, messages[0]))
+    brain = brain01_message(messages, messages[0])
+    messages.append(brain)
+    health["BRAIN-01"] = {
+        "ok": True, "error": None, "ms": 0.0,
+        "recommendation": brain.recommendation.value, "confidence": brain.confidence,
+    }
     return messages, health
 
 

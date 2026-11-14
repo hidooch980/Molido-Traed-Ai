@@ -77,11 +77,15 @@ class MetaTraderBroker:
     #: Injected so tests never sleep and never touch a real terminal.
     clock: Any = time.monotonic
     sleeper: Any = time.sleep
+    #: Requested price per client order id, so a fill can be compared later.
+    requested_prices: dict[str, float] = field(default_factory=dict)
 
     def submit(self, intent: OrderIntent) -> ExecutionReport:
         """Write the request, then wait for the expert to answer it."""
         client_order_id = str(intent.intent_id)
         lots = float(intent.metadata.get("lots") or 0.0)
+        if intent.entry is not None:
+            self.requested_prices[client_order_id] = float(intent.entry)
 
         if lots <= 0:
             # Refused here rather than sent as zero. The expert would reject it
@@ -335,6 +339,7 @@ class MetaTraderBroker:
             raw={
                 **body,
                 "volume_is_requested_not_confirmed": True,
+                "requested_price": self.requested_prices.get(client_order_id),
                 "note": (
                     "the expert does not report executed volume, so a partial "
                     "fill would arrive as a full one"

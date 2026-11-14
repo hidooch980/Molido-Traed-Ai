@@ -68,6 +68,24 @@ def book(session: Session, *, limit: int = 100,
     }
 
 
+def _symbol_point(session: Session, symbol: Any) -> float | None:
+    if not symbol:
+        return None
+    inst = session.scalar(select(Instrument).where(Instrument.symbol == str(symbol)))
+    if inst is None:
+        return None
+    for value in (getattr(inst, "point", None), getattr(inst, "tick_size", None)):
+        if value is None:
+            continue
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            continue
+        if number > 0:
+            return number
+    return None
+
+
 def run_cycle(session: Session, timeframe: Timeframe = Timeframe.H1, *,
               account_key: str | None = None, now: datetime | None = None,
               risk_ctx: RiskContext | None = None, record: bool = True) -> dict[str, Any]:
@@ -106,7 +124,15 @@ def run_cycle(session: Session, timeframe: Timeframe = Timeframe.H1, *,
     from app.services import agent_backtest_gate
 
     allowed, gate_why = agent_backtest_gate.paper_allowed(session)
+    from app.agents.slippage import decide as slippage_decide
+    from app.services import agent_slippage
+
+    slip_fills = agent_slippage.fills_for(session)
     for sig in scan["signals"] if allowed else []:
+        slip = slippage_decide(slip_fills, symbol=str(sig.get("symbol") or ""),
+                               default_point=_symbol_point(session, sig.get("symbol")))
+        if slip.blocks:
+            continue
         trade = open_trade(sig, sig["risk_review"])
         if trade is None:
             continue

@@ -125,11 +125,13 @@ class TestHonesty:
             assert role is not None
             assert any("agents/analyzers/" in m for m in role.modules), agent_id
 
-    def test_unwired_roles_stay_partial(self):
-        for agent_id in ("EX02",):
-            role = registry.get(agent_id)
-            assert role is not None
-            assert role.status is ImplementationStatus.PARTIAL, agent_id
+    def test_all_51_roles_are_implemented(self):
+        counts = registry.status_counts()
+        assert counts.get(ImplementationStatus.IMPLEMENTED, 0) == 51
+        assert counts.get(ImplementationStatus.PARTIAL, 0) == 0
+        assert counts.get(ImplementationStatus.NOT_IMPLEMENTED, 0) == 0
+        for role in registry.all_roles():
+            assert role.status is ImplementationStatus.IMPLEMENTED, role.id
 
     def test_no_role_claims_a_language_model_it_does_not_have(self):
         for role in registry.all_roles():
