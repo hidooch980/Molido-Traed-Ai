@@ -2,6 +2,7 @@ from fastapi import APIRouter
 
 from app.api.v1 import (
     access,
+    agents,
     auth,
     brain,
     bridge_ingest,
@@ -62,5 +63,6 @@ api_router.include_router(system.router)
 api_router.include_router(market_map.router)
 api_router.include_router(brokers.router)
 api_router.include_router(security.router)
+api_router.include_router(agents.router)
 
 __all__ = ["api_router"]
