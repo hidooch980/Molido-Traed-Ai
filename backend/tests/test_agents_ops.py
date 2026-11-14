@@ -50,9 +50,9 @@ def test_shadow_records_and_evaluates_with_registry(session, instrument, provide
     for k in range(70, 5, -1):
         at = now - timedelta(hours=k)
         agent_brain_shadow.record(session, _run(calls=("SELL", "SELL")), {},
-                                  think=lambda *a: _Prop(_Dec("BUY")), now=at)
+                                  think=lambda *a: _Prop(_Dec("buy")), now=at)
     # a second call within the gap is skipped
-    assert agent_brain_shadow.record(session, _run(), {}, think=lambda *a: _Prop(_Dec("BUY")),
+    assert agent_brain_shadow.record(session, _run(), {}, think=lambda *a: _Prop(_Dec("buy")),
                                      now=now - timedelta(hours=6) + timedelta(minutes=5)) is None
     out = agent_brain_shadow.evaluate(session, now=now)
     assert out["production"]["n"] >= 60 and out["with_agents"]["n"] == 0

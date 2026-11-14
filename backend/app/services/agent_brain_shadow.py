@@ -87,7 +87,7 @@ def record(session: Session, run: dict[str, Any], weights: dict[str, float], *,
     if think is None:
         from app.brain.cognitive import think as think
     proposal = think(session, inst.id, tf, now)
-    production = proposal.decision.value
+    production = str(proposal.decision.value).upper()  # core Decision values are lowercase
     content = {"event": REF, "timeframe": tf.value, "as_of": now.isoformat(),
                "bar_time": bars[-1].open_time.isoformat(), "close": bars[-1].close,
                "production": production, "conviction": proposal.conviction,
@@ -153,8 +153,10 @@ def evaluate(session: Session, *, now: datetime | None = None, limit: int = 3000
             move = closed[later[HORIZON_BARS - 1]].close - float(c["close"])
             if move == 0:
                 continue
+            prod = str(c.get("production") or "").upper()
+            picks = {"production": prod, "with_agents": combine(prod, str(c.get("agents")))}
             for key in scored:
-                d = c.get(key)
+                d = picks[key]
                 if d not in ("BUY", "SELL"):
                     continue
                 signed = move if d == "BUY" else -move
