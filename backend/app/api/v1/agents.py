@@ -20,6 +20,7 @@ from app.agents.gateway import config as gateway_config
 from app.agents.gateway.budget import Budget
 from app.agents.gateway.ledger import since_days, today_totals, usage_summary
 from app.agents.messages import Market
+from app.agents.risk_gate import RiskContext, review_signal
 from app.api.deps import Principal, require
 from app.core.enums import AssetClass, Permission, Timeframe
 from app.core.timeframes import catalogue
@@ -142,6 +143,7 @@ def rocket_scan(
     bars is used and named in the row, so the choice is visible rather than hidden.
     """
     as_of = datetime.now(UTC)
+    risk_ctx = RiskContext(source="none: account state not wired (stage 9)")
     instruments = session.scalars(
         select(Instrument).where(Instrument.is_active.is_(True)).order_by(Instrument.symbol)
     ).all()
@@ -168,7 +170,9 @@ def rocket_scan(
                         "bars": len(ctx.bars), "recommendation": msg.recommendation.value,
                         "reason": msg.analysis})
         if sig is not None:
-            signals.append(sig.as_dict())
+            row = sig.as_dict()
+            row["risk_review"] = review_signal(row, risk_ctx).as_dict()
+            signals.append(row)
     signals.sort(key=lambda s: s.get("score", 0), reverse=True)
     return {
         "as_of": as_of.isoformat(),

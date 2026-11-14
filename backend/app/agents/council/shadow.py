@@ -16,6 +16,7 @@ from app.agents.council.analysts import convene
 from app.agents.council.credibility import CredibilityBook
 from app.agents.council.meta import Verdict, aggregate
 from app.agents.council.weights import WeightStore
+from app.agents.risk_gate import RiskContext, review_council
 
 FLAG = "MOLIDO_AGENT_COUNCIL_LIVE"
 log = logging.getLogger("molido.agents.council")
@@ -40,6 +41,7 @@ def evaluate(world: dict, *, store: WeightStore | None = None,
         "verdict": verdict.as_dict(),
         "opinions": [o.as_dict() for o in opinions],
     }
+    record["risk_review"] = review_council(record, RiskContext()).as_dict()
     log.info("agent council shadow verdict %s %s", record["symbol"], verdict.direction)
     if sink is not None:
         sink(record)
