@@ -457,9 +457,9 @@ ROLES: tuple[AgentRole, ...] = (
     _role(
         "RT06", "تحلیلگر اخبار محرک", "Catalyst News Analyst", G.ROCKET,
         ("بررسی رویدادهای اقتصادی اثرگذار",),
-        P.ANALYZE, S.PARTIAL,
-        modules=("agents/analyzers/rocket.py", "brain/challenge.py"),
-        notes="تحلیلگر آماده است ولی فید تقویم اقتصادی هنوز به آن وصل نشده (ورودی events). تحلیلگر قطعی در حالت سایه؛ به مسیر تصمیم وصل نیست؛ لبهٔ سودده آن سنجیده نشده.",
+        P.ANALYZE, S.IMPLEMENTED,
+        modules=("agents/analyzers/rocket.py", "services/agent_events.py", "services/calendar.py"),
+        notes="تقویم اقتصادی از فید رایگان و بدون کلید ForexFactory (مرحله ۱۲)؛ با MOLIDO_AGENT_CALENDAR=1 روشن می‌شود و پیش‌فرض خاموش است. اگر فید خاموش باشد یا خطا بدهد، RT06 ABSTAIN می‌دهد. تحلیلگر قطعی در حالت سایه.",
         restrictions=(NO_ORDERS, "خبر تأییدنشده را واقعیت اعلام نمی‌کند."),
         triggers=(ON_NEWS,),
     ),

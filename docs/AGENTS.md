@@ -56,7 +56,7 @@ Kill Switch و gate نوع حساب ارسال می‌کند.
 
 ## وضعیت ۵۱ نقش
 
-خلاصه (پس از مرحله ۶): **41 IMPLEMENTED**، **10 PARTIAL**، **0 NOT_IMPLEMENTED**. در مرحله ۱: 14 / 21 / 16.
+خلاصه (پس از مرحله ۱۲): **42 IMPLEMENTED**، **9 PARTIAL**، **0 NOT_IMPLEMENTED**. در مرحله ۱: 14 / 21 / 16.
 
 همه نقش‌های موجود قانون‌محور و قطعی‌اند. «IMPLEMENTED» یعنی کد موجود کار نقش را انجام می‌دهد، نه اینکه یک ایجنت هوش مصنوعی مستقل با این شناسه اجرا می‌شود.
 
@@ -108,7 +108,7 @@ Kill Switch و gate نوع حساب ارسال می‌کند.
 | RT03 | شکارچی شکست انفجاری | L2 | IMPLEMENTED | `backend/app/agents/analyzers/rocket.py` |
 | RT04 | تحلیلگر فشردگی قیمت | L2 | IMPLEMENTED | `backend/app/agents/analyzers/rocket.py` |
 | RT05 | شکارچی حجم غیرعادی | L2 | IMPLEMENTED | `backend/app/agents/analyzers/rocket.py` |
-| RT06 | تحلیلگر اخبار محرک | L2 | PARTIAL | `backend/app/agents/analyzers/rocket.py`<br>`backend/app/brain/challenge.py` |
+| RT06 | تحلیلگر اخبار محرک | L2 | IMPLEMENTED | `backend/app/agents/analyzers/rocket.py`<br>`backend/app/services/agent_events.py`<br>`backend/app/services/calendar.py` |
 | RT07 | شکارچی نقدینگی انفجاری | L2 | IMPLEMENTED | `backend/app/agents/analyzers/rocket.py` |
 | RT08 | پیش‌بینی‌کننده حرکت شارپی | L2 | IMPLEMENTED | `backend/app/agents/analyzers/rocket.py` |
 | RT09 | مدیر خروج موشکی | L3 | IMPLEMENTED | `backend/app/agents/analyzers/rocket.py` |
@@ -219,6 +219,14 @@ API فقط‌خواندنی: `/api/v1/agents/memory`، `/agents/council/decision
 - **`workers/live_bars.py`:** دوره‌های M2، M3، M4، M6، M10، M12، M20، H2، H6، H8 و H12 را با همان `fold` موجود از دوره‌های native می‌سازد. هر کندل همهٔ اجزایش را لازم دارد. خروجی زیر provider `metatrader-derived` ذخیره می‌شود. این کار فقط با `MOLIDO_DERIVE_EXTRA_TIMEFRAMES=1` روشن می‌شود و پیش‌فرض خاموش است.
 - **سیگنال‌های RT10:** هر سیگنال یک‌بار در حافظه ثبت می‌شود (kind=rocket، event=signal). سیگنال روی کندل‌های بستهٔ بعدی، فقط یک‌بار، حل می‌شود (event=outcome). نتیجه از `GET /agents/rocket/forward` خوانده می‌شود. چرخهٔ Paper این دو کار را خودش انجام می‌دهد.
 - **`GET /agents/rocket/walkforward?symbol=&timeframe=&folds=`:** RT10 را روی تاریخچهٔ ذخیره‌شده قدم‌به‌قدم و point-in-time اجرا می‌کند. هم‌زمان فقط یک پوزیشن باز است. نتیجه به تفکیک fold زمانی و رتبه گزارش می‌شود. چون پارامتری fit نمی‌شود، همه‌چیز out-of-sample است. هزینه‌ها (اسپرد و لغزش) فقط وقتی حساب می‌شوند که داده‌شان داده شود.
+
+## تقویم RT06 و لیست نماد پویا (مرحله ۱۲)
+
+- **`services/agent_events.py`:** رویدادهای High را از همان فید رایگان و بدون کلید `services/calendar.py` (ForexFactory XML) می‌خواند. با `MOLIDO_AGENT_CALENDAR=1` روشن می‌شود و پیش‌فرض خاموش است.
+  - اگر فید خاموش باشد، خطا بدهد یا ساعتش جابه‌جا به نظر برسد، نتیجه «نامعلوم» است و RT06 ABSTAIN می‌دهد. هیچ‌وقت «خبری نیست» گزارش نمی‌شود.
+  - برای هر نماد، از ۶۰ دقیقه قبل تا ۳۰ دقیقه بعد از خبر، Risk Gate حکم را REDUCE می‌کند. این بازه برای طلا رویدادهای USD را هم شامل می‌شود.
+  - خروجی از `GET /agents/calendar` خوانده می‌شود.
+- **`services/agent_symbols.py`:** اگر ترمینالی مشخصات قرارداد منتشر کند، فقط نمادهایی اسکن می‌شوند که بروکر واقعاً دارد. پسوندهای بروکر مثل `EURUSD.` و `EURUSDm` هم تطبیق داده می‌شوند. اگر هیچ ترمینالی مشخصات منتشر نکند، همهٔ نمادهای فعال اسکن می‌شوند و منبع ذکر می‌شود. فهرست از `GET /agents/symbols` می‌آید و اسکن و چرخهٔ Paper از همین فهرست استفاده می‌کنند.
 
 ## برنامه مرحله‌ای
 

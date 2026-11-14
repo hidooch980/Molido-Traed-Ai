@@ -126,7 +126,7 @@ class TestHonesty:
             assert any("agents/analyzers/" in m for m in role.modules), agent_id
 
     def test_bar_based_or_unwired_roles_stay_partial(self):
-        for agent_id in ("SC02", "SM10", "RT06", "AI02", "BRAIN-01"):
+        for agent_id in ("SC02", "SM10", "AI02", "BRAIN-01"):
             role = registry.get(agent_id)
             assert role is not None
             assert role.status is ImplementationStatus.PARTIAL, agent_id

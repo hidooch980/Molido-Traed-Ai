@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any
 
@@ -15,6 +16,7 @@ from app.agents.messages import Market
 from app.agents.risk_gate import RiskContext, review_signal
 from app.core.enums import AssetClass, Timeframe
 from app.models.instruments import Instrument
+from app.services.agent_events import news_soon
 from app.services.point_in_time import get_bars
 
 
@@ -42,12 +44,18 @@ def candles(session: Session, inst: Instrument, timeframe: Timeframe, as_of: dat
 
 
 def scan(session: Session, timeframe: Timeframe, *, max_symbols: int = 30,
-         risk_ctx: RiskContext | None = None, as_of: datetime | None = None) -> dict[str, Any]:
+         risk_ctx: RiskContext | None = None, as_of: datetime | None = None,
+         symbols: list[str] | None = None,
+         events: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    """`events` None means the calendar is unknown: RT06 abstains, no news penalty."""
     as_of = as_of or datetime.now(UTC)
     risk_ctx = risk_ctx or RiskContext(source="none")
     instruments = session.scalars(
         select(Instrument).where(Instrument.is_active.is_(True)).order_by(Instrument.symbol)
     ).all()
+    if symbols is not None:
+        wanted = set(symbols)
+        instruments = [i for i in instruments if i.symbol in wanted]
     signals: list[dict[str, Any]] = []
     scanned: list[dict[str, Any]] = []
     for inst in instruments[:max_symbols]:
@@ -60,14 +68,18 @@ def scan(session: Session, timeframe: Timeframe, *, max_symbols: int = 30,
         if not bars:
             scanned.append({"symbol": inst.symbol, "status": "no_data", "reason": "no bars"})
             continue
-        ctx = make_context(inst.symbol, market, timeframe.value, timeframe.delta, bars, as_of)
+        extras: dict[str, Any] = {} if events is None else {"events": events}
+        ctx = make_context(inst.symbol, market, timeframe.value, timeframe.delta, bars, as_of,
+                           extras=extras)
         msg, sig = rt10_evaluate(ctx)
         scanned.append({"symbol": inst.symbol, "status": "scanned", "provider_id": provider,
                         "bars": len(ctx.bars), "recommendation": msg.recommendation.value,
                         "reason": msg.analysis})
         if sig is not None:
             row = sig.as_dict()
-            row["risk_review"] = review_signal(row, risk_ctx).as_dict()
+            soon = bool(news_soon(events, inst.symbol, as_of)) or risk_ctx.high_impact_news_soon
+            sym_ctx = replace(risk_ctx, high_impact_news_soon=soon)
+            row["risk_review"] = review_signal(row, sym_ctx).as_dict()
             signals.append(row)
     signals.sort(key=lambda s: s.get("score", 0), reverse=True)
     return {
@@ -75,6 +87,7 @@ def scan(session: Session, timeframe: Timeframe, *, max_symbols: int = 30,
         "timeframe": timeframe.value,
         "mode": "shadow_only",
         "risk_context_source": risk_ctx.source,
+        "calendar": "unknown (feed off or failed)" if events is None else f"{len(events)} events",
         "signals": signals,
         "scanned": scanned,
         "note": "Deterministic, unvalidated. PROPOSED only; never submitted to risk or execution.",

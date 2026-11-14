@@ -20,7 +20,7 @@ from app.agents.paper import open_trade, resolve
 from app.agents.risk_gate import RiskContext
 from app.core.enums import Timeframe
 from app.models.instruments import Instrument
-from app.services import agent_account, agent_scan, agent_walkforward
+from app.services import agent_account, agent_events, agent_scan, agent_symbols, agent_walkforward
 
 FLAG = "MOLIDO_AGENT_PAPER"
 
@@ -86,7 +86,9 @@ def run_cycle(session: Session, timeframe: Timeframe = Timeframe.H1, *,
                             content={"mode": "paper", "event": "close",
                                      "trade_id": trade["trade_id"], **outcome})
             closed += 1
-    scan = agent_scan.scan(session, timeframe, risk_ctx=ctx, as_of=now)
+    scan = agent_scan.scan(session, timeframe, risk_ctx=ctx, as_of=now,
+                           symbols=agent_symbols.universe(session)["symbols"],
+                           events=agent_events.high_impact())
     recorded = agent_walkforward.record_signals(session, scan)
     resolved = agent_walkforward.resolve_recorded(session, now=now)
     known = {t["trade_id"] for t in state["trades"]}

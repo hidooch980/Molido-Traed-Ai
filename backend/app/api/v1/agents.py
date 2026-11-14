@@ -20,7 +20,14 @@ from app.core.enums import Permission, Timeframe
 from app.core.timeframes import catalogue
 from app.db.session import get_db
 from app.models.agent_memory import CouncilDecisionRecord, FailureRecord, LearningRecord
-from app.services import agent_account, agent_paper, agent_scan, agent_walkforward
+from app.services import (
+    agent_account,
+    agent_events,
+    agent_paper,
+    agent_scan,
+    agent_symbols,
+    agent_walkforward,
+)
 
 router = APIRouter(prefix="/agents", tags=["agents"])
 
@@ -124,7 +131,26 @@ def rocket_scan(
 ) -> dict[str, Any]:
     """RT10 over stored bars, read at now, reviewed by the agent risk gate in shadow."""
     ctx = agent_account.risk_context(account_key, session=session)
-    return agent_scan.scan(session, timeframe, max_symbols=max_symbols, risk_ctx=ctx)
+    uni = agent_symbols.universe(session)
+    out = agent_scan.scan(session, timeframe, max_symbols=max_symbols, risk_ctx=ctx,
+                          symbols=uni["symbols"], events=agent_events.high_impact())
+    out["universe_source"] = uni["source"]
+    return out
+
+
+@router.get("/symbols")
+def read_symbols(session: Session = Depends(get_db), _: Principal = READ) -> dict[str, Any]:
+    """The dynamic universe agents scan, and where it came from."""
+    return agent_symbols.universe(session)
+
+
+@router.get("/calendar")
+def read_agent_calendar(_: Principal = READ) -> dict[str, Any]:
+    """High-impact events as RT06 sees them; null while the feed flag is off."""
+    events = agent_events.high_impact()
+    return {"enabled": agent_events.enabled(), "flag": agent_events.FLAG,
+            "events": None if events is None else [
+                {**e, "time": e["time"].isoformat()} for e in events]}
 
 
 @router.get("/account")
