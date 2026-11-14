@@ -116,15 +116,20 @@ class TestHonesty:
             else:
                 assert role.modules, role.id
 
-    def test_groups_the_audit_found_missing_are_not_upgraded(self):
-        """SMC/ICT order blocks, FVG, BOS/CHoCH and most Rocket roles do not
-        exist in code. Changing that status needs code, not an edit here."""
-        for agent_id in ("SM01", "SM02", "SM03", "SM04", "SM05", "SM07",
-                         "RT01", "RT02", "RT05", "RT07", "RT08", "RT09", "RT10",
-                         "SC01", "SC02", "SC04"):
+    def test_upgraded_roles_point_at_their_analyzer(self):
+        """A role marked as done by an analyzer must actually have one."""
+        from app.agents.analyzers.runner import ANALYZERS
+
+        for agent_id in ANALYZERS:
             role = registry.get(agent_id)
             assert role is not None
-            assert role.status is ImplementationStatus.NOT_IMPLEMENTED, agent_id
+            assert any("agents/analyzers/" in m for m in role.modules), agent_id
+
+    def test_bar_based_or_unwired_roles_stay_partial(self):
+        for agent_id in ("SC02", "SM10", "RT06", "AI02", "BRAIN-01"):
+            role = registry.get(agent_id)
+            assert role is not None
+            assert role.status is ImplementationStatus.PARTIAL, agent_id
 
     def test_no_role_claims_a_language_model_it_does_not_have(self):
         for role in registry.all_roles():
@@ -157,7 +162,7 @@ class TestPermissions:
         base = registry.get("RT01")
         assert base is not None
         with pytest.raises(ValueError):
-            AgentRole(**{**base.__dict__, "modules": ("backend/app/brain/risk.py",)})
+            AgentRole(**{**base.__dict__, "status": ImplementationStatus.NOT_IMPLEMENTED})
 
     def test_only_risk_and_execution_roles_hold_control(self):
         for role in registry.all_roles():
