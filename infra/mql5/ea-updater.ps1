@@ -14,7 +14,7 @@
 [CmdletBinding()]
 param(
   [string]$Repo = "hidooch980/Molido-Traed-Ai",
-  [string]$Branch = "agents/stage-15-complete-agents",
+  [string]$Branch = "agents/stage-17-demo-scalper",
   [string]$SourceUrl = "",
   [string]$ChecksumUrl = "",
   [string]$ExpectedSha256 = "",
@@ -99,10 +99,31 @@ try {
     Log "backup: $backup"
   }
   Copy-Item $tmp $target -Force
+
+  $incName = "MolidoDemoScalper.mqh"
+  $incUrl = $SourceUrl -replace [regex]::Escape($name), $incName
+  $incSumUrl = $incUrl + ".sha256"
+  $incTarget = Join-Path $ExpertsDir $incName
+  $incTmp = Join-Path $WorkDir "download.mqh"
+  $incBackup = $null
+  Invoke-WebRequest -Uri $incUrl -OutFile $incTmp -UseBasicParsing
+  $incSumLine = (Invoke-WebRequest -Uri $incSumUrl -UseBasicParsing).Content
+  if ($incSumLine -is [byte[]]) { $incSumLine = [Text.Encoding]::ASCII.GetString($incSumLine) }
+  $incPublished = ($incSumLine.Trim() -split '\s+')[0].ToLower()
+  $incActual = (Get-FileHash -Path $incTmp -Algorithm SHA256).Hash.ToLower()
+  if ($incActual -ne $incPublished) { throw "include checksum mismatch: file $incActual, published $incPublished" }
+  if (Test-Path $incTarget) {
+    $incBackup = Join-Path "$WorkDir\backup" ("MolidoDemoScalper-{0:yyyyMMdd-HHmmss}.mqh" -f (Get-Date))
+    Copy-Item $incTarget $incBackup -Force
+  }
+  Copy-Item $incTmp $incTarget -Force
+
   if (Compile $target) { Log "installed $new"; exit 0 }
 
   Log "compile failed - restoring the previous version"
-  if ($backup) { Copy-Item $backup $target -Force; [void](Compile $target) }
+  if ($backup) { Copy-Item $backup $target -Force }
+  if ($incBackup) { Copy-Item $incBackup $incTarget -Force }
+  if ($backup) { [void](Compile $target) }
   exit 2
 }
 catch {

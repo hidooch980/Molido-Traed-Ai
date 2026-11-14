@@ -2,7 +2,8 @@
 
 Only tunables are served: symbol list, refresh period, bar counts, and the
 latest EA version with its checksum and download URL. The EA's safety inputs
-(AllowTrading, AllowRealAccount, ExpectedLogin) are not part of this payload
+(AllowTrading, AllowRealAccount, ExpectedLogin, EnableDemoScalper,
+ScalperKillSwitch) are not part of this payload
 and the EA has no code path that would read them from it.
 
 Everything is environment-driven; an unset value is omitted so the EA keeps its

@@ -31,10 +31,12 @@ def test_guards_stay_hard_coded():
     assert "input bool   AllowTrading    = false;" in SRC
     assert "input bool   AllowRealAccount = false;" in SRC
     remote = _remote_section()
-    for guard in ("AllowTrading", "AllowRealAccount", "ExpectedLogin"):
+    for guard in ("AllowTrading", "AllowRealAccount", "ExpectedLogin",
+                  "EnableDemoScalper", "ScalperKillSwitch"):
         assert re.search(rf"\b{guard}\s*=", remote) is None
         assert f'JsonValue(body, "{guard}' not in remote
-    for name in ("g_AllowTrading", "g_AllowRealAccount", "g_ExpectedLogin"):
+    for name in ("g_AllowTrading", "g_AllowRealAccount", "g_ExpectedLogin",
+                 "g_EnableDemoScalper", "g_ScalperKillSwitch"):
         assert name not in SRC
 
 
@@ -52,7 +54,8 @@ def test_config_payload(monkeypatch):
     assert out["symbols_csv"] == "EURUSD,XAUUSD,GBPUSD."
     assert out["refresh_seconds"] == 5 and out["bar_count"] == 5000
     assert out["guards_remote_controllable"] is False
-    assert not {"AllowTrading", "AllowRealAccount", "ExpectedLogin"} & set(out)
+    assert not {"AllowTrading", "AllowRealAccount", "ExpectedLogin",
+                "EnableDemoScalper", "ScalperKillSwitch"} & set(out)
     assert out["ea_sha256"] == hashlib.sha256(EA.read_bytes()).hexdigest()
 
 
@@ -78,3 +81,11 @@ def test_endpoint_needs_broker_permission_and_returns_config(session, monkeypatc
     assert res.status_code in (200, 401, 403)
     if res.status_code == 200:
         assert res.json()["running_version"] == "1.10"
+
+
+def test_demo_scalper_is_included_and_checksummed():
+    mqh = EA.parent / "MolidoDemoScalper.mqh"
+    assert mqh.is_file()
+    assert '#include "MolidoDemoScalper.mqh"' in SRC
+    recorded = (EA.parent / "MolidoDemoScalper.mqh.sha256").read_text().split()[0]
+    assert recorded == hashlib.sha256(mqh.read_bytes()).hexdigest()

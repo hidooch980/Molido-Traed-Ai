@@ -13,11 +13,13 @@
 //| that directory directly. It is slower than an in-process call and |
 //| completely reliable, which is the correct trade for hourly bars.  |
 //|                                                                  |
-//| Read-only on purpose. This service places no orders and reads no  |
-//| command file: an order path that exists is an order path that can |
-//| fire, and this deployment has no proven edge for it to act on.    |
-//| When that changes, the gate belongs in the risk layer that        |
-//| already exists, not in a service nobody is watching.               |
+//| Demo scalper (v1.40): may place orders ONLY on ACCOUNT_TRADE_     |
+//| MODE_DEMO login 68531270, and only when AllowTrading and          |
+//| EnableDemoScalper are both on. Every new order is gated by a      |
+//| Risk Brain (APPROVE/REDUCE/BLOCK) with hard limits: 0.5% risk,    |
+//| 2% daily loss, 2.0 lots, 2 positions, mandatory stop. Missing     |
+//| data, a kill switch, or a BLOCK means no trade. Real accounts     |
+//| are refused even if AllowRealAccount is later flipped.            |
 //+------------------------------------------------------------------+
 //--- An expert rather than a service. A service starts only from the
 //--- Navigator panel, and that panel does not render its expanders under
@@ -25,7 +27,7 @@
 //--- in a startup config file, which the terminal reads from the command
 //--- line - no window, no click, and it survives every restart.
 #property copyright "MolidoTrade AI"
-#property version   "1.30"
+#property version   "1.40"
 
 //--- Written to the common folder rather than the terminal's own, so the path
 //--- does not move when the terminal is reinstalled or run portable.
@@ -98,14 +100,25 @@ input bool HideUnlistedSymbols = true;
 
 //--- Runtime copies of the tunable inputs. They start as the inputs and may be
 //--- replaced by the platform's remote config (symbols, refresh, bar counts).
-//--- The safety inputs - AllowTrading, AllowRealAccount, ExpectedLogin - have
-//--- no runtime copy, so no remote message can change them.
-#define MOLIDO_EA_VERSION "1.30"
+//--- The safety inputs - AllowTrading, AllowRealAccount, ExpectedLogin,
+//--- EnableDemoScalper and ScalperKillSwitch - have no runtime copy, so no
+//--- remote message can change them.
+#define MOLIDO_EA_VERSION "1.40"
 int    g_RefreshSeconds   = 20;
 int    g_BarCount         = 500;
 int    g_IntradayBarCount = 240;
 string g_Symbols          = "";
 int    g_TickCount        = 0;   // 0 = no tick files; the platform may turn it on
+
+//--- Demo scalper hooks. Defined in MolidoDemoScalper.mqh, included at the
+//--- end of this file so they can call helpers declared above them.
+bool DemoTradingAllowed();
+bool DemoScalperOnInit();
+void DemoScalperOnTick();
+void DemoScalperOnTimer();
+bool DemoRefuseUnsafeOpen(const string id, const string symbol, const string side,
+                          const double lots, const double sl, const double tp,
+                          const double sl_gap);
 
 string TimeframeName(ENUM_TIMEFRAMES period)
   {
@@ -352,7 +365,7 @@ void WriteHeartbeat(int cycle)
    json += "\"build\":" + IntegerToString(TerminalInfoInteger(TERMINAL_BUILD)) + ",";
    json += "\"refresh_seconds\":" + IntegerToString(g_RefreshSeconds) + ",";
    json += "\"ea_version\":\"" + MOLIDO_EA_VERSION + "\",";
-   json += "\"places_orders\":false";
+   json += "\"places_orders\":" + ((AllowTrading && EnableDemoScalper) ? "true" : "false");
    json += "}";
    FileWriteString(handle, json);
    FileClose(handle);
@@ -374,6 +387,8 @@ int OnInit()
    PublishAvailableSymbols();
    FetchRemoteConfig(true);
    SelectExtraSymbols();
+   if(!DemoScalperOnInit())
+      return INIT_FAILED;
    EventSetTimer(g_RefreshSeconds);
    Publish();
    return INIT_SUCCEEDED;
@@ -509,7 +524,7 @@ input bool   AllowRealAccount = false;
 //--- unless AllowRealAccount is set, so a demo setup copied onto a funded
 //--- terminal stops visibly instead of publishing or trading there.
 //--- ExpectedLogin pins the expert to one account; 0 accepts any demo login.
-input long ExpectedLogin = 0;
+input long ExpectedLogin = 68531270;
 
 bool AccountAllowed()
   {
@@ -552,8 +567,15 @@ bool AccountAllowed()
 //--- worth ~0.72 per tick, so the same dollars at risk need more lots than a
 //--- USD-quoted pair. Ten still catches a sizing error an order of magnitude
 //--- out, which is what this line exists for.
-input double MaxLots         = 10.00;
+input double MaxLots         = 2.00;
 input int    MaxSlippagePts  = 30;
+
+input group "Demo Scalper (login 68531270 only)"
+input bool              EnableDemoScalper   = false;          // off until you set it in Inputs
+input string            ScalperSymbols      = "XAUUSD,EURUSD";
+input ENUM_TIMEFRAMES   ScalperTF           = PERIOD_M5;
+input int               ScalperMaxSpreadPts = 40;             // 0 = ATR filter only
+input bool              ScalperKillSwitch   = false;          // input kill switch
 
 //--- Where requests arrive and results are written. Common folder, same as
 //--- everything else the bridge exchanges with the platform.
@@ -1013,6 +1035,8 @@ void ExecuteOne(string filename)
      }
    if(RealAccountRefused(id))
       return;
+   if(DemoRefuseUnsafeOpen(id, symbol, side, lots, sl, tp, sl_gap))
+      return;
    if(symbol == "" || lots <= 0.0)
      {
       WriteResult(id, false, 0, 0.0, "request has no symbol or no size");
@@ -1187,6 +1211,7 @@ void OnTimer()
    FetchRemoteConfig(false);
    Publish();
    ExecutePending();
+   DemoScalperOnTimer();
   }
 
 //--- Required for an expert, and deliberately empty. Publishing is on the
@@ -1194,6 +1219,7 @@ void OnTimer()
 //--- minute for no extra information.
 void OnTick()
   {
+   DemoScalperOnTick();
   }
 
 
@@ -1437,8 +1463,9 @@ void Publish()
 //| The EA stays a thin bridge: the symbol list, refresh period and    |
 //| bar counts come from the platform (GET .../bridge/config) so they  |
 //| change without touching this file. Only those four values are read.|
-//| AllowTrading, AllowRealAccount and ExpectedLogin are inputs with no |
-//| runtime copy, so the config cannot reach them. Values are clamped,  |
+//| AllowTrading, AllowRealAccount, ExpectedLogin, EnableDemoScalper    |
+//| and ScalperKillSwitch are inputs with no runtime copy, so the       |
+//| config cannot reach them. Values are clamped,                       |
 //| symbol names are character-checked, and a failed fetch keeps the    |
 //| current settings.                                                   |
 //+------------------------------------------------------------------+
@@ -1607,3 +1634,7 @@ void WriteTicks(string symbol)
                 DoubleToString(ticks[i].ask, 8));
    FileClose(handle);
   }
+
+//--- Demo scalper and Risk Brain. Included last so it can call MolidoFilling,
+//--- Reanchor, WriteResult, Escape and the trading inputs declared above.
+#include "MolidoDemoScalper.mqh"
