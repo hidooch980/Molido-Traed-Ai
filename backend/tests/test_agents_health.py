@@ -11,6 +11,7 @@ from app.agents.risk_gate import RiskContext
 from app.core.enums import Timeframe
 from app.services import agent_health, agent_run
 from tests.conftest import insert_bar
+from tests.test_agents_dashboard_api import client  # noqa: F401
 
 
 def seed_bars(session, instrument, provider, now, n=150, drift=0.0):
@@ -112,3 +113,20 @@ def test_run_cycle_records_and_feeds_health(session, instrument, provider):
 def test_run_flag_off_by_default(monkeypatch, capsys):
     monkeypatch.delenv(agent_run.RUN_FLAG, raising=False)
     assert agent_run.main() == 0 and "off" in capsys.readouterr().out
+
+
+def test_symbol_view_collects_everything(session, instrument, provider):
+    from app.services import agent_symbol_view
+    now = datetime.now(UTC).replace(minute=0, second=0, microsecond=0)
+    seed_bars(session, instrument, provider, now)
+    v = agent_symbol_view.view(session, "eurusd", Timeframe.H1, now=now)
+    assert v["status"] == "ran" and v["mode"] == "shadow_only"
+    assert len(v["explain"]["trace"]) == len(ANALYZERS)
+    assert v["ensemble"]["decision"] in ("BUY", "SELL", "WAIT")
+    assert v["calendar"] is None and "signals" in v["rocket"]
+    assert agent_symbol_view.view(session, "NOPE", now=now)["status"] == "unknown_symbol"
+
+
+def test_symbol_endpoint(client):  # noqa: F811
+    r = client.get("/api/v1/agents/symbol/EURUSD")
+    assert r.status_code == 200 and r.json()["status"] in ("unknown_symbol", "ran")

@@ -1434,7 +1434,72 @@ export interface FtmoMonitorView {
   note: string;
 }
 
+export interface SymbolTraceRow {
+  agent: string;
+  says: string;
+  confidence: number;
+  because: string;
+  evidence: string[];
+}
+
+export interface SymbolRocketSignal {
+  symbol: string;
+  direction: string;
+  rocket_rank: string;
+  score?: number;
+  entry_zone?: number[];
+  stop_loss?: number;
+  take_profit?: number;
+  risk_review?: { verdict: string; reasons?: string[]; risk_pct?: number };
+}
+
+export interface SymbolView {
+  symbol: string;
+  status: string;
+  instrument_id?: string;
+  timeframe?: string;
+  as_of?: string;
+  mode?: string;
+  inputs?: Record<string, unknown>;
+  explain?: {
+    votes: Record<string, number>;
+    lean: string;
+    dissent: string[];
+    missing_inputs: string[];
+    brain01: string[];
+    decision: string;
+    trace: SymbolTraceRow[];
+  };
+  ensemble?: { decision: string; weights_version: number; directional_votes: number };
+  rocket?: { signals: SymbolRocketSignal[]; scanned: Array<Record<string, unknown>> };
+  risk?: {
+    source: string;
+    equity: number | null;
+    daily_pnl_pct: number | null;
+    kill_switch: boolean;
+    data_fresh: boolean | null;
+  };
+  paper_trades?: Array<Record<string, unknown>>;
+  health?: {
+    last_run_at: string | null;
+    agents: Record<string, { ok?: boolean; ms?: number; error?: string | null; skipped?: boolean }>;
+  };
+  calendar?: Array<{ time: string; currency: string; title: string }> | null;
+  learning?: { version: number; quarantined: string[] };
+}
+
+export interface HeadlinesView {
+  items?: Array<Record<string, unknown>>;
+  headlines?: Array<Record<string, unknown>>;
+}
+
 export const api = {
+  symbolView: (symbol: string, timeframe = "H1") =>
+    request<SymbolView>(
+      `/api/v1/agents/symbol/${encodeURIComponent(symbol)}?timeframe=${timeframe}`,
+    ),
+  headlines: (tag: string, limit = 8) =>
+    request<HeadlinesView>(`/api/v1/news/headlines?tag=${encodeURIComponent(tag)}&limit=${limit}`),
   ftmoMonitor: () => request<FtmoMonitorView>("/api/v1/agents/ftmo-monitor"),
   agentHealth: () => request<AgentHealthView>("/api/v1/agents/health"),
   agentAlerts: () => request<AgentAlertsView>("/api/v1/agents/alerts"),

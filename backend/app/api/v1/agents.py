@@ -30,6 +30,7 @@ from app.services import (
     agent_paper,
     agent_run,
     agent_scan,
+    agent_symbol_view,
     agent_symbols,
     agent_walkforward,
 )
@@ -259,3 +260,16 @@ def agents_alerts(session: Session = Depends(get_db), _: Principal = READ) -> di
 def learning_status(session: Session = Depends(get_db), _: Principal = READ) -> dict[str, Any]:
     """Shadow ensemble weight versions (with rollback trail) and quarantined agents."""
     return agent_learning.status(session)
+
+
+@router.get("/symbol/{symbol}")
+def symbol_view(
+    symbol: str,
+    timeframe: Timeframe = Timeframe.H1,
+    session: Session = Depends(get_db),
+    _: Principal = READ,
+) -> dict[str, Any]:
+    """One symbol: agent votes and trace, ensemble, rocket + risk verdict, paper trades,
+    health, calendar and learning state. Nothing is stored or sent."""
+    bridge = agent_account._provider(None, session)
+    return agent_symbol_view.view(session, symbol, timeframe, bridge=bridge)
