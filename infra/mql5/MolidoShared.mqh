@@ -22,7 +22,7 @@
 #define MOLIDO_EA_NAME "MolidoBridge"
 #endif
 #ifndef MOLIDO_EA_VERSION
-#define MOLIDO_EA_VERSION "1.45"
+#define MOLIDO_EA_VERSION "1.46"
 #endif
 #ifndef MOLIDO_DEFAULT_PROFILE
 #define MOLIDO_DEFAULT_PROFILE PROFILE_DEMO

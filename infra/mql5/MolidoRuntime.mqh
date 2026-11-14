@@ -132,7 +132,7 @@ input bool HideUnlistedSymbols = true;
 //--- copy, so no remote message can change them.
 #include "MolidoShared.mqh"
 #ifndef MOLIDO_EA_VERSION
-#define MOLIDO_EA_VERSION "1.45"
+#define MOLIDO_EA_VERSION "1.46"
 #endif
 int    g_RefreshSeconds   = 20;
 int    g_BarCount         = 500;

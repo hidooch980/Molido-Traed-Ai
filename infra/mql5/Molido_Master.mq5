@@ -2,7 +2,7 @@
 //| Molido_Master.mq5 - Molido Master: one EA, automatic account type, no real-account trading yet
 //+------------------------------------------------------------------+
 #property copyright   "MolidoTrade AI"
-#property version     "1.45"
+#property version     "1.46"
 #property description "Molido Master: one EA, automatic account type, no real-account trading yet"
 #define MOLIDO_EA_NAME          "Molido_Master"
 #define MOLIDO_MAGIC            685408
@@ -18,5 +18,5 @@
 #define MOLIDO_DEFAULT_REHEARSAL true
 #define MOLIDO_USE_FIBO         false
 #define MOLIDO_REAL_SUPPORTED   false
-#define MOLIDO_EA_VERSION       "1.45"
+#define MOLIDO_EA_VERSION       "1.46"
 #include "MolidoRuntime.mqh"

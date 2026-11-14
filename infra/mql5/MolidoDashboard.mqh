@@ -18,6 +18,22 @@ void MolidoDashCapture();
 #define DASH_BTN_AU    "MolidoDash_btnAuto"
 #define DASH_BTN_FB    "MolidoDash_btnFibo"
 #define DASH_BTN_UPD   "MolidoDash_btnUpdate"
+#define DASH_BTN_UP    "MolidoDash_btnUp"
+#define DASH_BTN_DN    "MolidoDash_btnDn"
+
+#define DASH_NAVY   C'10,16,34'
+#define DASH_PANEL  C'16,24,44'
+#define DASH_CARD   C'22,32,54'
+#define DASH_EDGE   C'44,60,90'
+#define DASH_TEAL   C'46,204,170'
+#define DASH_AMBER  C'245,186,74'
+#define DASH_CORAL  C'255,107,107'
+#define DASH_TEXT   C'230,236,246'
+#define DASH_MUTED  C'140,158,186'
+#define DASH_HEAD   C'120,200,196'
+#define DASH_RULE   C'48,68,102'
+#define DASH_METER  C'28,38,58'
+#define DASH_GOLD   C'212,175,90'
 #define DASH_MARK      "MolidoTrade_"
 #define DASH_GV_FOLD   "Molido.DashCollapsed"
 
@@ -28,6 +44,8 @@ uint    g_dash_last_ms = 0;
 int     g_dash_w       = 0;
 int     g_dash_h       = 0;
 bool    g_dash_fold    = false;
+int     g_dash_scroll  = 0;
+int     g_dash_content_h = 0;
 string  g_marks_sig    = "";
 
 double DashScale()
@@ -61,19 +79,55 @@ int DashPanelW()
    return(DashPx(336));
   }
 
-int DashPanelH()
+int DashHeaderH()
   {
    if(g_dash_fold)
       return(DashPx(MolidoRealBlocked() ? 72 : 52));
-   int h = 698;
-   if(ProfileIsProp())
-      h += 120;
-   h += 70;
-   if(g_update_ready || g_update_pending)
-      h += 46;
-   if(!MolidoLinkHealthy())
-      h += 24;
+   int h = 56;
+   if(MolidoRealBlocked() || !MolidoLinkHealthy())
+      h = 72;
    return(DashPx(h));
+  }
+
+int DashFooterH()
+  {
+   int h = 68;
+   if(g_update_ready || g_update_pending)
+      h += 30;
+   return(DashPx(h));
+  }
+
+int DashChartAvailH()
+  {
+   int ch = (int)ChartGetInteger(0, CHART_HEIGHT_IN_PIXELS);
+   int avail = ch - DashY - DashPx(24);
+   int min_h = DashHeaderH() + DashFooterH() + DashPx(72);
+   if(avail < min_h)
+      avail = min_h;
+   return(avail);
+  }
+
+int DashPanelH()
+  {
+   if(g_dash_fold)
+      return(DashHeaderH());
+   int avail = DashChartAvailH();
+   int body = g_dash_content_h;
+   if(body < DashPx(160))
+      body = DashPx(520);
+   int need = DashHeaderH() + body + DashFooterH();
+   if(need < avail)
+      return(need);
+   return(avail);
+  }
+
+int DashMaxScroll()
+  {
+   int room = DashPanelH() - DashHeaderH() - DashFooterH();
+   int mx = g_dash_content_h - room;
+   if(mx < 0)
+      mx = 0;
+   return(mx);
   }
 
 void DashFont(const string face, const int base)
@@ -118,7 +172,7 @@ void DashFillRound(const int x1, const int y1, const int x2, const int y2,
 void DashLine(const int x, const int y, const string label, const string value,
               const color value_col, const int col2)
   {
-   color muted = C'148,156,176';
+   color muted = DASH_MUTED;
    DashFont("Segoe UI", 11);
    g_dash.TextOut(x, y, label, DashArgb(muted), 0);
    DashFont("Segoe UI Semibold", 12);
@@ -129,22 +183,23 @@ void DashLine(const int x, const int y, const string label, const string value,
 
 void DashSection(int &y, const int x, const int w, const string title)
   {
-   y += DashPx(6);
-   int h = DashPx(18);
+   y += DashPx(4);
+   int h = DashPx(16);
    DashFont("Segoe UI Semibold", 9);
    if(!g_dash.FontSet("Segoe UI Semibold", DashFontSize(9)))
       DashFont("Segoe UI", 9);
-   g_dash.TextOut(x, y, title, DashArgb(C'168,150,86'), 0);
+   g_dash.TextOut(x, y, title, DashArgb(DASH_HEAD), 0);
    int tw = (int)(StringLen(title) * DashPx(7)) + DashPx(8);
    int ly = y + DashPx(8);
-   g_dash.FillRectangle(x + tw, ly, x + w, ly + 1, DashArgb(C'52,58,74'));
+   g_dash.FillRectangle(x + tw, ly, x + w, ly + 1, DashArgb(DASH_RULE));
    y += h;
   }
 
 void MolidoDashDestroyButtons()
   {
    string names[] = {DASH_BTN_KILL, DASH_BTN_FOLD, DASH_BTN_SC, DASH_BTN_NX,
-                     DASH_BTN_TR, DASH_BTN_AU, DASH_BTN_FB, DASH_BTN_UPD};
+                     DASH_BTN_TR, DASH_BTN_AU, DASH_BTN_FB, DASH_BTN_UPD,
+                     DASH_BTN_UP, DASH_BTN_DN};
    for(int i = 0; i < ArraySize(names); i++)
      {
       if(ObjectFind(0, names[i]) >= 0)
@@ -217,7 +272,7 @@ void DashPlaceButton(const string name, const string caption, const int x,
    ObjectSetInteger(0, name, OBJPROP_YSIZE, h);
    ObjectSetInteger(0, name, OBJPROP_BGCOLOR, bg);
    ObjectSetInteger(0, name, OBJPROP_COLOR, fg);
-   ObjectSetInteger(0, name, OBJPROP_BORDER_COLOR, C'42,47,58');
+   ObjectSetInteger(0, name, OBJPROP_BORDER_COLOR, DASH_EDGE);
    ObjectSetString(0, name, OBJPROP_FONT, MolidoUiFont(true));
    ObjectSetInteger(0, name, OBJPROP_FONTSIZE, DashFontSize(9));
    ObjectSetString(0, name, OBJPROP_TEXT, caption);
@@ -232,36 +287,35 @@ void MolidoDashPlaceButtons()
    int x = DashX;
    int y = DashY;
    int w = DashPanelW();
-   int bw = DashPx(54);
-   int bh = DashPx(22);
+   int bw = DashPx(22);
+   int bh = DashPx(20);
    int fold_x = x + w - bw - DashPx(10);
    int fold_y = y + DashPx(8);
    DashPlaceButton(DASH_BTN_FOLD, (g_dash_fold ? "+" : "-"), fold_x, fold_y,
-                   bw, bh, C'36,40,52', C'232,236,241');
+                   bw, bh, DASH_CARD, DASH_TEXT);
    if(g_dash_fold)
      {
       if(ObjectFind(0, DASH_BTN_KILL) >= 0)
          ObjectDelete(0, DASH_BTN_KILL);
+      string hide[] = {DASH_BTN_SC, DASH_BTN_NX, DASH_BTN_TR, DASH_BTN_AU,
+                       DASH_BTN_FB, DASH_BTN_UPD, DASH_BTN_UP, DASH_BTN_DN};
+      for(int i = 0; i < ArraySize(hide); i++)
+        {
+         if(ObjectFind(0, hide[i]) >= 0)
+            ObjectDelete(0, hide[i]);
+        }
       return;
      }
-   bool killed = DemoKillEngaged();
-   color kbg = killed ? C'140,36,52' : C'92,28,36';
-   color kfg = killed ? C'255,200,206' : C'255,228,230';
-   string cap = killed ? Tr("kill_on") : Tr("kill");
-   int kx = x + DashPx(14);
-   int ky = y + DashPanelH() - DashPx(36);
-   if(g_update_ready || g_update_pending)
-      ky -= DashPx(34);
-   DashPlaceButton(DASH_BTN_KILL, cap, kx, ky, DashPx(90), DashPx(24), kbg, kfg);
 
-   int sy = ky - DashPx(32);
-   int bw2 = DashPx(58);
+   int fy = y + DashPanelH() - DashFooterH();
+   int sx = x + DashPx(12);
+   int sy = fy + DashPx(8);
+   int bw2 = DashPx(56);
    int gap = DashPx(5);
-   int sx = x + DashPx(14);
-   color on_bg = C'20,72,52';
-   color off_bg = C'42,46,58';
-   color on_fg = C'180,255,210';
-   color off_fg = C'168,174,188';
+   color on_bg  = C'14,86,74';
+   color off_bg = DASH_CARD;
+   color on_fg  = DASH_TEAL;
+   color off_fg = DASH_MUTED;
    DashPlaceButton(DASH_BTN_SC, (StratUseScalper() ? "SC " + Tr("on") : "SC " + Tr("off")), sx, sy, bw2, DashPx(22),
                    (StratUseScalper() ? on_bg : off_bg), (StratUseScalper() ? on_fg : off_fg));
    DashPlaceButton(DASH_BTN_NX, (StratUseNews() ? "NX " + Tr("on") : "NX " + Tr("off")), sx + bw2 + gap, sy, bw2, DashPx(22),
@@ -273,18 +327,35 @@ void MolidoDashPlaceButtons()
    DashPlaceButton(DASH_BTN_FB, (StratUseFibo() ? "FB " + Tr("on") : "FB " + Tr("off")), sx + 4 * (bw2 + gap), sy, bw2, DashPx(22),
                    (StratUseFibo() ? on_bg : off_bg), (StratUseFibo() ? on_fg : off_fg));
 
-   if(g_update_ready)
-     {
-      DashPlaceButton(DASH_BTN_UPD, Tr("update_now"), x + DashPx(14), y + DashPanelH() - DashPx(32),
-                      w - DashPx(28), DashPx(24), C'160,110,20', C'255,242,214');
-     }
+   bool killed = DemoKillEngaged();
+   color kbg = killed ? C'150,42,56' : C'96,32,44';
+   color kfg = killed ? C'255,220,220' : C'255,186,186';
+   int ky = sy + DashPx(26);
+   DashPlaceButton(DASH_BTN_KILL, (killed ? Tr("kill_on") : Tr("kill")), sx, ky, DashPx(90), DashPx(22), kbg, kfg);
+
+   if(g_update_ready && !g_update_pending)
+      DashPlaceButton(DASH_BTN_UPD, Tr("update_now"), sx + DashPx(96), ky,
+                      w - DashPx(140), DashPx(22), C'140,96,24', C'255,236,200');
    else if(g_update_pending)
-     {
-      DashPlaceButton(DASH_BTN_UPD, Tr("updating"), x + DashPx(14), y + DashPanelH() - DashPx(32),
-                      w - DashPx(28), DashPx(24), C'36,40,52', C'200,206,214');
-     }
+      DashPlaceButton(DASH_BTN_UPD, Tr("updating"), sx + DashPx(96), ky,
+                      w - DashPx(140), DashPx(22), DASH_CARD, DASH_MUTED);
    else if(ObjectFind(0, DASH_BTN_UPD) >= 0)
       ObjectDelete(0, DASH_BTN_UPD);
+
+   int mx = DashMaxScroll();
+   if(mx > 0)
+     {
+      int ux = x + w - DashPx(28);
+      DashPlaceButton(DASH_BTN_UP, "^", ux, fy + DashPx(8), DashPx(20), DashPx(18), DASH_CARD, DASH_HEAD);
+      DashPlaceButton(DASH_BTN_DN, "v", ux, fy + DashPx(28), DashPx(20), DashPx(18), DASH_CARD, DASH_HEAD);
+     }
+   else
+     {
+      if(ObjectFind(0, DASH_BTN_UP) >= 0)
+         ObjectDelete(0, DASH_BTN_UP);
+      if(ObjectFind(0, DASH_BTN_DN) >= 0)
+         ObjectDelete(0, DASH_BTN_DN);
+     }
   }
 
 void MolidoMarkOne(const string name, const ENUM_OBJECT typ, const datetime t,
@@ -401,7 +472,7 @@ void MolidoMarksSync()
             datetime t = (datetime)HistoryDealGetInteger(deal, DEAL_TIME);
             double px = HistoryDealGetDouble(deal, DEAL_PRICE);
             color col = (HistoryDealGetDouble(deal, DEAL_PROFIT) >= 0.0)
-                        ? C'61,220,151' : C'255,92,122';
+                        ? DASH_TEAL : DASH_CORAL;
             MolidoMarkOne(DASH_MARK + "OUT_" + tk, OBJ_ARROW, t, px, col, 251);
             break;
            }
@@ -424,12 +495,12 @@ void MolidoMarksSync()
       double tp = PositionGetDouble(POSITION_TP);
       long kind = PositionGetInteger(POSITION_TYPE);
       int code = (kind == POSITION_TYPE_BUY) ? 233 : 234;
-      color entry_col = (kind == POSITION_TYPE_BUY) ? C'61,220,151' : C'255,92,122';
+      color entry_col = (kind == POSITION_TYPE_BUY) ? DASH_TEAL : DASH_CORAL;
       MolidoMarkOne(DASH_MARK + "IN_" + tk, OBJ_ARROW, t, open, entry_col, code);
       if(sl > 0.0)
-         MolidoMarkOne(DASH_MARK + "SL_" + tk, OBJ_HLINE, t, sl, C'255,92,122', 0);
+         MolidoMarkOne(DASH_MARK + "SL_" + tk, OBJ_HLINE, t, sl, DASH_CORAL, 0);
       if(tp > 0.0)
-         MolidoMarkOne(DASH_MARK + "TP_" + tk, OBJ_HLINE, t, tp, C'61,220,151', 0);
+         MolidoMarkOne(DASH_MARK + "TP_" + tk, OBJ_HLINE, t, tp, DASH_TEAL, 0);
      }
    g_marks_sig = sig;
   }
@@ -585,25 +656,25 @@ void MolidoDashRedraw()
    string acc = (mode == ACCOUNT_TRADE_MODE_DEMO ? Tr("demo") + " " : Tr("live") + " ")
                 + IntegerToString(login);
    string brain = "—";
-   color brain_col = C'148,156,176';
+   color brain_col = DASH_MUTED;
    if(StringLen(g_last_verdict) > 0 && g_last_verdict != "—")
      {
       brain = g_last_verdict;
       if(StringLen(g_last_verdict_symbol) > 0)
          brain += "  " + g_last_verdict_symbol;
-      if(g_last_verdict == "APPROVE") brain_col = C'61,220,151';
-      else if(g_last_verdict == "REDUCE") brain_col = C'245,192,106';
-      else if(g_last_verdict == "BLOCK") brain_col = C'255,92,122';
+      if(g_last_verdict == "APPROVE") brain_col = DASH_TEAL;
+      else if(g_last_verdict == "REDUCE") brain_col = DASH_AMBER;
+      else if(g_last_verdict == "BLOCK") brain_col = DASH_CORAL;
      }
-   color st_col = C'61,220,151';
+   color st_col = DASH_TEAL;
    if(StringFind(scalper_st, "ARMED") < 0)
-      st_col = C'255,92,122';
-   color day_col = C'232,236,241';
+      st_col = DASH_CORAL;
+   color day_col = DASH_TEXT;
    if(daily_ok && daily_pct < 0)
-      day_col = C'255,92,122';
+      day_col = DASH_CORAL;
    else if(daily_ok && daily_pct > 0)
-      day_col = C'61,220,151';
-   color flt_col = (flt > 0.0 ? C'61,220,151' : flt < 0.0 ? C'255,92,122' : C'232,236,241');
+      day_col = DASH_TEAL;
+   color flt_col = (flt > 0.0 ? DASH_TEAL : flt < 0.0 ? DASH_CORAL : DASH_TEXT);
 
    string day_line = (daily_ok ? ((daily_money >= 0 ? "+" : "") + DashMoney(daily_money) +
                       "   " + DoubleToString(daily_pct, 2) + "% / " + DoubleToString(cap, 2) + "%")
@@ -612,11 +683,11 @@ void MolidoDashRedraw()
       day_line += "   DD " + DoubleToString(dd_pct, 2) + "% / " + DoubleToString(DemoActiveMaxDdPct(), 2) + "%";
 
    string news_line = DemoNextNewsLine();
-   color news_col = C'232,236,241';
+   color news_col = DASH_TEXT;
    if(StringFind(news_line, "none soon") < 0)
-      news_col = C'245,192,106';
+      news_col = DASH_AMBER;
    string kill = DemoKillEngaged() ? "ON" : "off";
-   color kill_col = DemoKillEngaged() ? C'255,92,122' : C'148,156,176';
+   color kill_col = DemoKillEngaged() ? DASH_CORAL : DASH_MUTED;
    string preset = ProfileName();
    string ch_state = ProfileChallengeState();
    double daily_stop = DemoEffectiveDailyStopPct();
@@ -656,7 +727,7 @@ void MolidoDashRedraw()
                 DoubleToString(DashSpreadPts(), 1) + DashNextBar() + news_line + kill +
                 DashLinkStatus() + preset + ch_state + target_line + days_line + ddleft_line + smart1 + smart2 + weekly + safe + auto_line + IntegerToString(strength) +
                 IntegerToString((int)g_dash_fold) + DoubleToString(DashScale(), 2) +
-                IntegerToString((int)TerminalInfoInteger(TERMINAL_CONNECTED)) + IntegerToString((int)g_update_ready) + g_update_version + IntegerToString((int)g_update_pending) + IntegerToString((int)MolidoLinkHealthy()) + IntegerToString((int)StratUseScalper()) + IntegerToString((int)StratUseNews()) + IntegerToString((int)StratUseTrend()) + IntegerToString((int)StratUseAuto()) + IntegerToString((int)StratUseFibo()) + DemoDetectedLine() + IntegerToString((int)Language) + IntegerToString((int)g_i18n_fallback);
+                IntegerToString((int)TerminalInfoInteger(TERMINAL_CONNECTED)) + IntegerToString((int)g_update_ready) + g_update_version + IntegerToString((int)g_update_pending) + IntegerToString((int)MolidoLinkHealthy()) + IntegerToString((int)StratUseScalper()) + IntegerToString((int)StratUseNews()) + IntegerToString((int)StratUseTrend()) + IntegerToString((int)StratUseAuto()) + IntegerToString((int)StratUseFibo()) + DemoDetectedLine() + IntegerToString((int)Language) + IntegerToString((int)g_i18n_fallback) + IntegerToString((int)ChartGetInteger(0, CHART_HEIGHT_IN_PIXELS)) + IntegerToString(g_dash_scroll) + IntegerToString(DashPanelH());
    if(sig == g_dash_sig)
      {
       MolidoDashPlaceButtons();
@@ -665,14 +736,14 @@ void MolidoDashRedraw()
      }
    g_dash_sig = sig;
 
-   color bg     = C'12,14,20';
-   color panel  = C'18,21,29';
-   color card   = C'24,28,38';
-   color edge   = C'48,54,68';
-   color gold   = C'201,162,39';
-   color text   = C'232,236,241';
-   color muted  = C'148,156,176';
-   color accent = (flt > 0.0 ? C'61,220,151' : flt < 0.0 ? C'255,92,122' : gold);
+   color bg     = DASH_NAVY;
+   color panel  = DASH_PANEL;
+   color card   = DASH_CARD;
+   color edge   = DASH_EDGE;
+   color gold   = DASH_GOLD;
+   color text   = DASH_TEXT;
+   color muted  = DASH_MUTED;
+   color accent = (flt > 0.0 ? DASH_TEAL : flt < 0.0 ? DASH_CORAL : gold);
 
    g_dash.Erase(DashArgb(bg));
    DashFillRound(0, 0, g_dash_w - 1, g_dash_h - 1, DashPx(10), DashArgb(panel));
@@ -681,21 +752,16 @@ void MolidoDashRedraw()
    int pad = DashPx(14);
    int col2 = DashPx(102);
    int inner_w = g_dash_w - pad * 2;
-
-   DashFont("Segoe UI Bold", 16);
-   g_dash.TextOut(pad, DashPx(10), MOLIDO_EA_NAME + "  " + MOLIDO_EA_VERSION, DashArgb(text), 0);
-   DashFont("Segoe UI", 11);
-   g_dash.TextOut(pad + DashPx(168), DashPx(14), preset, DashArgb(gold), 0);
-   if(MolidoRealBlocked())
-      g_dash.TextOut(pad, DashPx(34), Tr("real_unsupported"), DashArgb(C'255,92,122'), 0);
-   else if(!MolidoLinkHealthy())
-      g_dash.TextOut(pad, DashPx(34), Tr("safe_disconnect"), DashArgb(C'255,92,122'), 0);
-   else
-      g_dash.TextOut(pad, DashPx(34), DemoDetectedLine(), DashArgb(C'168,150,86'), 0);
-
+   int header_h = DashHeaderH();
+   int footer_h = DashFooterH();
    if(g_dash_fold)
      {
-      //--- Real-account banner stays visible even when collapsed.
+      DashFont("Segoe UI Bold", 16);
+      g_dash.TextOut(pad, DashPx(10), MOLIDO_EA_NAME + "  " + MOLIDO_EA_VERSION, DashArgb(text), 0);
+      DashFont("Segoe UI", 11);
+      g_dash.TextOut(pad + DashPx(168), DashPx(14), preset, DashArgb(gold), 0);
+      if(MolidoRealBlocked())
+         g_dash.TextOut(pad, DashPx(34), Tr("real_unsupported"), DashArgb(DASH_CORAL), 0);
       DashFont("Segoe UI Semibold", 14);
       if(!g_dash.FontSet("Segoe UI Semibold", DashFontSize(14)))
          DashFont("Segoe UI", 14);
@@ -709,14 +775,19 @@ void MolidoDashRedraw()
       return;
      }
 
-   int y = DashPx(56);
+   if(g_dash_scroll > DashMaxScroll())
+      g_dash_scroll = DashMaxScroll();
+   if(g_dash_scroll < 0)
+      g_dash_scroll = 0;
+
+   int y = header_h + DashPx(2) - g_dash_scroll;
    int x = pad;
-   int row = DashPx(18);
+   int row = DashPx(16);
 
    DashSection(y, x, inner_w, "▸  " + Tr("sec_account"));
    DashFillRound(x - DashPx(4), y - DashPx(2), x + inner_w + DashPx(4),
                  y + DashPx(68), DashPx(8), DashArgb(card));
-   DashLine(x, y, Tr("account"), acc, (mode == ACCOUNT_TRADE_MODE_DEMO ? C'61,220,151' : C'255,92,122'), col2);
+   DashLine(x, y, Tr("account"), acc, (mode == ACCOUNT_TRADE_MODE_DEMO ? DASH_TEAL : DASH_CORAL), col2);
    y += row;
    DashLine(x, y, Tr("balance"), DashMoney(bal) + "    " + Tr("eq") + " " + DashMoney(eq), text, col2);
    y += row;
@@ -725,10 +796,10 @@ void MolidoDashRedraw()
 
    if(ProfileIsProp())
      {
-      color stc = C'61,220,151';
-      if(ch_state == "NEAR DD") stc = C'255,92,122';
-      else if(ch_state == "PACING" || ch_state == "CONSISTENCY") stc = C'245,192,106';
-      else if(ch_state == "TARGET HIT") stc = C'61,220,151';
+      color stc = DASH_TEAL;
+      if(ch_state == "NEAR DD") stc = DASH_CORAL;
+      else if(ch_state == "PACING" || ch_state == "CONSISTENCY") stc = DASH_AMBER;
+      else if(ch_state == "TARGET HIT") stc = DASH_TEAL;
       DashSection(y, x, inner_w, "▸  " + Tr("sec_challenge"));
       DashFillRound(x - DashPx(4), y - DashPx(2), x + inner_w + DashPx(4),
                     y + DashPx(128), DashPx(8), DashArgb(card));
@@ -736,15 +807,15 @@ void MolidoDashRedraw()
       g_dash.TextOut(x, y, preset + "  " + ch_state, DashArgb(stc), 0);
       y += DashPx(22);
       color tcol = (target_pct > 0.0 && profit_pct >= target_pct)
-                   ? C'61,220,151'
-                   : (profit_pct < 0.0 ? C'255,92,122' : text);
+                   ? DASH_TEAL
+                   : (profit_pct < 0.0 ? DASH_CORAL : text);
       DashLine(x, y, Tr("target"), target_line, tcol, col2);
       y += row;
       double tprog = (target_pct > 0.0 ? MathMax(0.0, MathMin(1.0, profit_pct / target_pct)) : 0.0);
-      color tbar = (tprog >= 1.0 ? C'61,220,151' : C'201,162,39');
+      color tbar = (tprog >= 1.0 ? DASH_TEAL : DASH_GOLD);
       DashFont("Segoe UI", 10);
       g_dash.TextOut(x, y, Tr("progress"), DashArgb(muted), 0);
-      DashMeter(x + col2, y + DashPx(4), inner_w - col2 - DashPx(40), DashPx(10), tprog, tbar, C'36,40,52');
+      DashMeter(x + col2, y + DashPx(4), inner_w - col2 - DashPx(40), DashPx(10), tprog, tbar, DASH_METER);
       DashFont("Segoe UI Semibold", 11);
       g_dash.TextOut(x + inner_w - DashPx(36), y, DoubleToString(tprog * 100.0, 0) + "%", DashArgb(tbar), 0);
       y += row;
@@ -752,7 +823,7 @@ void MolidoDashRedraw()
                       ? DoubleToString(dd_pct, 2) + "% / buf " + DoubleToString(dd_stop, 2) +
                         "% (lim " + DoubleToString(DemoActiveMaxDdPct(), 2) + "%)"
                       : "n/a");
-      color dcol = (dd_stop > 0.0 && dd_pct >= dd_stop * 0.8) ? C'255,92,122' : text;
+      color dcol = (dd_stop > 0.0 && dd_pct >= dd_stop * 0.8) ? DASH_CORAL : text;
       DashLine(x, y, Tr("dd"), ddbuf, dcol, col2);
       y += row;
       string daybuf = DoubleToString(daily_pct, 2) + "% / buf " + DoubleToString(daily_stop, 2) + "%";
@@ -767,16 +838,16 @@ void MolidoDashRedraw()
       DashFillRound(x - DashPx(4), y - DashPx(2), x + inner_w + DashPx(4),
                     y + DashPx(84), DashPx(8), DashArgb(card));
       color pcol = (ActiveProfile() == PROFILE_LIVE_REAL
-                    ? (DemoAccountOk() ? C'245,192,106' : C'255,92,122')
-                    : C'201,162,39');
+                    ? (DemoAccountOk() ? DASH_AMBER : DASH_CORAL)
+                    : DASH_GOLD);
       DashLine(x, y, Tr("profile"), preset, pcol, col2);
       y += row;
       color tcol = (target_pct > 0.0 && profit_pct >= target_pct)
-                   ? C'61,220,151'
-                   : (profit_pct < 0.0 ? C'255,92,122' : text);
+                   ? DASH_TEAL
+                   : (profit_pct < 0.0 ? DASH_CORAL : text);
       DashLine(x, y, Tr("target"), target_line, tcol, col2);
       y += row;
-      color dcol = (dd_left <= 0.0 && DemoActiveMaxDdPct() > 0.0) ? C'255,92,122' : text;
+      color dcol = (dd_left <= 0.0 && DemoActiveMaxDdPct() > 0.0) ? DASH_CORAL : text;
       DashLine(x, y, Tr("dd_left"), ddleft_line, dcol, col2);
       y += row;
       DashLine(x, y, Tr("days"), days_line, text, col2);
@@ -792,10 +863,10 @@ void MolidoDashRedraw()
    double cap_show = (ProfileIsProp() && daily_stop > 0.0 ? daily_stop : cap);
    if(daily_ok && cap_show > 0.0 && daily_pct < 0.0)
       used = MathMin(1.0, (-daily_pct) / cap_show);
-   color bar = (used >= 0.8 ? C'255,92,122' : used >= 0.5 ? C'245,192,106' : C'61,220,151');
+   color bar = (used >= 0.8 ? DASH_CORAL : used >= 0.5 ? DASH_AMBER : DASH_TEAL);
    DashFont("Segoe UI", 10);
    g_dash.TextOut(x, y, Tr("daily_cap"), DashArgb(muted), 0);
-   DashMeter(x + col2, y + DashPx(4), inner_w - col2, DashPx(10), used, bar, C'36,40,52');
+   DashMeter(x + col2, y + DashPx(4), inner_w - col2, DashPx(10), used, bar, DASH_METER);
    string used_txt = DoubleToString(used * 100.0, 0) + "%";
    DashFont("Segoe UI", 9);
    g_dash.TextOut(x + inner_w - DashPx(36), y - DashPx(1), used_txt, DashArgb(muted), 0);
@@ -822,9 +893,9 @@ void MolidoDashRedraw()
    y += row;
    DashFont("Segoe UI", 11);
    g_dash.TextOut(x, y, Tr("strength"), DashArgb(muted), 0);
-   color mcol = (strength >= 70 ? C'61,220,151' : strength >= 40 ? C'245,192,106' : C'255,92,122');
+   color mcol = (strength >= 70 ? DASH_TEAL : strength >= 40 ? DASH_AMBER : DASH_CORAL);
    DashMeter(x + col2, y + DashPx(4), inner_w - col2 - DashPx(40), DashPx(10),
-             strength / 100.0, mcol, C'36,40,52');
+             strength / 100.0, mcol, DASH_METER);
    DashFont("Segoe UI Semibold", 11);
    if(!g_dash.FontSet("Segoe UI Semibold", DashFontSize(11)))
       DashFont("Segoe UI", 11);
@@ -854,8 +925,8 @@ void MolidoDashRedraw()
    y += row;
    g_dash.TextOut(x, y, smart2, DashArgb(text), 0);
    y += row;
-   color scol = (StringFind(safe, "STOP") >= 0 ? C'255,92,122' :
-                 StringFind(safe, "REDUCE") >= 0 ? C'245,192,106' : text);
+   color scol = (StringFind(safe, "STOP") >= 0 ? DASH_CORAL :
+                 StringFind(safe, "REDUCE") >= 0 ? DASH_AMBER : text);
    DashLine(x, y, "Safe", safe, scol, col2);
    y += row;
    DashLine(x, y, "Week", weekly, text, col2);
@@ -867,26 +938,53 @@ void MolidoDashRedraw()
    DashLine(x, y, "Kill", kill, kill_col, col2);
    y += row;
    DashLine(x, y, Tr("link"), DashLinkStatus(), muted, col2);
+   y += DashPx(8);
+   g_dash_content_h = y + g_dash_scroll - (header_h + DashPx(2));
+   if(g_dash_content_h < 0)
+      g_dash_content_h = 0;
+   if(g_dash_scroll > DashMaxScroll())
+      g_dash_scroll = DashMaxScroll();
 
-   MolidoDashCapture();
+   // sticky header
+   g_dash.FillRectangle(0, 0, g_dash_w - 1, header_h, DashArgb(panel));
+   g_dash.FillRectangle(0, 0, g_dash_w - 1, DashPx(3), DashArgb(accent));
+   DashFont("Segoe UI Bold", 16);
+   g_dash.TextOut(pad, DashPx(10), MOLIDO_EA_NAME + "  " + MOLIDO_EA_VERSION, DashArgb(text), 0);
+   DashFont("Segoe UI", 11);
+   g_dash.TextOut(pad + DashPx(168), DashPx(14), preset, DashArgb(gold), 0);
+   if(MolidoRealBlocked())
+      g_dash.TextOut(pad, DashPx(34), Tr("real_unsupported"), DashArgb(DASH_CORAL), 0);
+   else if(!MolidoLinkHealthy())
+      g_dash.TextOut(pad, DashPx(34), Tr("safe_disconnect"), DashArgb(DASH_CORAL), 0);
+   else
+      g_dash.TextOut(pad, DashPx(34), DemoDetectedLine(), DashArgb(DASH_HEAD), 0);
+
+   // sticky footer so strategy + KILL stay on the chart
+   int fy = g_dash_h - footer_h;
+   g_dash.FillRectangle(0, fy, g_dash_w - 1, g_dash_h - 1, DashArgb(panel));
+   g_dash.FillRectangle(DashPx(10), fy, g_dash_w - DashPx(10), fy + 1, DashArgb(DASH_EDGE));
+
    g_dash.Update();
    MolidoDashPlaceButtons();
    MolidoMarksSync();
    ChartRedraw(0);
+   MolidoDashCapture();
   }
 
 
 void MolidoDashCapture()
   {
-   static bool done = false;
-   if(done || g_dash_fold)
+   static string captured = "";
+   if(g_dash_fold)
+      return;
+   if(captured == MOLIDO_EA_VERSION)
       return;
    int w = (int)ChartGetInteger(0, CHART_WIDTH_IN_PIXELS);
    int h = (int)ChartGetInteger(0, CHART_HEIGHT_IN_PIXELS);
    if(w < 640) w = 1280;
    if(h < 480) h = 900;
    if(ChartScreenShot(0, "master-dashboard.png", w, h, ALIGN_LEFT))
-      done = true;
+      captured = MOLIDO_EA_VERSION;
   }
 
 void MolidoDashOnInit()
@@ -930,8 +1028,34 @@ void MolidoDashOnDeinit()
 void MolidoDashOnChartEvent(const int id, const long &lparam,
                             const double &dparam, const string &sparam)
   {
+   if(id == CHARTEVENT_CHART_CHANGE)
+     {
+      g_dash_sig = "";
+      MolidoDashRedraw();
+      return;
+     }
    if(id != CHARTEVENT_OBJECT_CLICK)
       return;
+   if(sparam == DASH_BTN_UP)
+     {
+      ObjectSetInteger(0, DASH_BTN_UP, OBJPROP_STATE, false);
+      g_dash_scroll -= DashPx(56);
+      if(g_dash_scroll < 0)
+         g_dash_scroll = 0;
+      g_dash_sig = "";
+      MolidoDashRedraw();
+      return;
+     }
+   if(sparam == DASH_BTN_DN)
+     {
+      ObjectSetInteger(0, DASH_BTN_DN, OBJPROP_STATE, false);
+      g_dash_scroll += DashPx(56);
+      if(g_dash_scroll > DashMaxScroll())
+         g_dash_scroll = DashMaxScroll();
+      g_dash_sig = "";
+      MolidoDashRedraw();
+      return;
+     }
    if(sparam == DASH_BTN_FOLD)
      {
       ObjectSetInteger(0, DASH_BTN_FOLD, OBJPROP_STATE, false);

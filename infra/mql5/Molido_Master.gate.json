@@ -1,7 +1,7 @@
 {
   "ea": "Molido_Master",
-  "ea_version": "1.45",
-  "sha256": "78331527ab76694be004662b29b8d09ef7a85d28a3a622c11e7761089d16c564",
+  "ea_version": "1.46",
+  "sha256": "5a3bc369a181a5792a3dbdad861f741c7a51a7854c103c8d997021f7f88dfba5",
   "backtest": "PENDING",
   "note": "Walk-forward gate not yet PASS; auto-update offers a newer version only after sha256 + backtest PASS."
 }

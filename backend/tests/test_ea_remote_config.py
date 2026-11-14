@@ -107,8 +107,8 @@ def test_demo_scalper_is_included_and_checksummed():
             assert f'#include "{name}"' in SRC
         recorded = (EA.parent / f"{name}.sha256").read_text().split()[0]
         assert recorded == hashlib.sha256(mqh.read_bytes()).hexdigest()
-    assert '#property version     "1.45"' in EA.read_text(encoding="utf-8")
-    assert '#define MOLIDO_EA_VERSION       "1.45"' in EA.read_text(encoding="utf-8") or 'MOLIDO_EA_VERSION "1.45"' in SRC
+    assert '#property version     "1.46"' in EA.read_text(encoding="utf-8")
+    assert '#define MOLIDO_EA_VERSION       "1.46"' in EA.read_text(encoding="utf-8") or 'MOLIDO_EA_VERSION "1.46"' in SRC
     assert "NEWS_AVOID" in SRC and "NEWS_TRADE" in SRC
     assert "RISK_PRESET_FTMO" in SRC
     remote = _remote_section()

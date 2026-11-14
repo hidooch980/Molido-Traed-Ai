@@ -2,7 +2,7 @@
 //| Molido_News.mq5 - Molido News: trade around high-impact news only
 //+------------------------------------------------------------------+
 #property copyright   "MolidoTrade AI"
-#property version     "1.45"
+#property version     "1.46"
 #property description "Molido News: trade around high-impact news only"
 #define MOLIDO_EA_NAME          "Molido_News"
 #define MOLIDO_MAGIC            685405
@@ -16,5 +16,5 @@
 #define MOLIDO_USE_TREND        false
 #define MOLIDO_USE_AUTO         false
 #define MOLIDO_DEFAULT_REHEARSAL false
-#define MOLIDO_EA_VERSION       "1.45"
+#define MOLIDO_EA_VERSION       "1.46"
 #include "MolidoRuntime.mqh"
