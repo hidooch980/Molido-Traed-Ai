@@ -118,7 +118,7 @@ a{color:var(--accent)}
 <main>
 <section id="how">
   <h2>ربات چطور کار می‌کند</h2>
-  <p>ربات روی یک سرور لینوکسی (<span class="mono">178.33.150.51</span>) اجرا می‌شود. هر حساب بروکر داخل یک متاتریدر ۵ مخصوص خودش باز است. همهٔ تصمیم‌ها روی نمودار <b>یک‌ساعته (H1)</b> گرفته می‌شوند.</p>
+  <p>ربات روی یک سرور لینوکسی (<span class="mono"><SERVER_IP></span>) اجرا می‌شود. هر حساب بروکر داخل یک متاتریدر ۵ مخصوص خودش باز است. همهٔ تصمیم‌ها روی نمودار <b>یک‌ساعته (H1)</b> گرفته می‌شوند.</p>
   <div class="pipeline" role="list">
     <div role="listitem"><b>داده</b>قیمت‌ها از چند منبع جمع می‌شوند</div>
     <div role="listitem"><b>ویژگی</b>روند، نوسان و مانند آن محاسبه می‌شود</div>
@@ -195,13 +195,13 @@ a{color:var(--accent)}
   <h2>ترمینال‌ها</h2>
   <p>هر ترمینال یک متاتریدر ۵ جدا روی سرور است و در هر لحظه <b>یک حساب</b> نگه می‌دارد. هر ۷ ترمینال کاملاً آماده‌اند: اکسپرت ربات نصب است، در سرور، سایت و عامل ورود ثبت‌اند و نگهبان متاتریدر مراقبشان است.</p>
   <div class="slots">
-    <div class="slot"><span class="n">term-b</span><span class="l">67209473 · دمو</span></div>
-    <div class="slot"><span class="n">term-c</span><span class="l">67209482 · دمو</span></div>
-    <div class="slot"><span class="n">term-d</span><span class="l">67209480 · دمو</span></div>
-    <div class="slot"><span class="n">term-e</span><span class="l">67209483 · دمو</span></div>
-    <div class="slot"><span class="n">term-f</span><span class="l">67209485 · دمو</span></div>
-    <div class="slot"><span class="n">term-g</span><span class="l">67209487 · دمو</span></div>
-    <div class="slot"><span class="n">term-j</span><span class="l">1514533027 · FTMO</span></div>
+    <div class="slot"><span class="n">term-b</span><span class="l"><LOGIN-term-b> · دمو</span></div>
+    <div class="slot"><span class="n">term-c</span><span class="l"><LOGIN-term-c> · دمو</span></div>
+    <div class="slot"><span class="n">term-d</span><span class="l"><LOGIN-term-d> · دمو</span></div>
+    <div class="slot"><span class="n">term-e</span><span class="l"><LOGIN-term-e> · دمو</span></div>
+    <div class="slot"><span class="n">term-f</span><span class="l"><LOGIN-term-f> · دمو</span></div>
+    <div class="slot"><span class="n">term-g</span><span class="l"><LOGIN-term-g> · دمو</span></div>
+    <div class="slot"><span class="n">term-j</span><span class="l"><LOGIN-term-j> · FTMO</span></div>
     <div class="slot spare"><span class="n">main</span><span class="l">ذخیره · خاموش</span></div>
   </div>
   <p class="muted">ترمینال j نسخهٔ مخصوص FTMO است. بقیه متاتریدر عمومی‌اند.</p>
@@ -276,7 +276,7 @@ a{color:var(--accent)}
 
 <section id="dev">
   <h2>برای برنامه‌نویس</h2>
-  <p>این‌ها را به او بدهید: همین راهنما، <code>docs/WITHOUT-CLAUDE.md</code> و <code>docs/STATUS.md</code>، دسترسی SSH به <span class="mono">178.33.150.51</span> و پیام تلگرامی که آمده.</p>
+  <p>این‌ها را به او بدهید: همین راهنما، <code>docs/WITHOUT-CLAUDE.md</code> و <code>docs/STATUS.md</code>، دسترسی SSH به <span class="mono"><SERVER_IP></span> و پیام تلگرامی که آمده.</p>
   <h3>اولین دستور</h3>
   <pre>docker exec molidotrade-collector-1 python -m app.workers.health_report</pre>
   <h3>لاگ‌ها</h3>

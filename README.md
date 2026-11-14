@@ -6,11 +6,18 @@
 
 Global AI trading intelligence, risk and execution platform.
 
-Built to the *Trade-AI X v5.2 Master Build Prompt* specification. This repository
-is currently at **phases 0–6 of 53**: infrastructure, data model,
-market-data ingestion, data-quality engine, point-in-time integrity and the
-market session calendar. No broker execution code exists yet, by design — per the spec, the
-execution engine is only built after the risk brain that authorizes it.
+Built to the *Trade-AI X v5.2 Master Build Prompt* specification. The original
+53-phase build is complete (see [docs/STATUS.md](docs/STATUS.md) for the live,
+Persian status). Execution exists and is gated: it runs on demo accounts only,
+real-money orders are refused by the backend (`account_gate`,
+`MOLIDO_ALLOW_REAL_MONEY_ORDERS=false`) and, from agents stage 2, by the MT5
+expert itself (`AllowRealAccount=false`). **No profitable edge has been proven.**
+
+The 51-role agent layer (advisory, paper-only) is described in
+[docs/AGENTS.md](docs/AGENTS.md).
+
+Server addresses and account logins are kept out of the repository; docs use
+placeholders such as `<SERVER_IP>` and `<LOGIN-term-b>`.
 
 ## Core principle
 

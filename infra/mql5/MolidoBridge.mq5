@@ -477,6 +477,14 @@ void OnDeinit(const int reason)
 //--- account - and MOLIDO_ALLOW_REAL_MONEY_ORDERS is a separate refusal on top
 //--- of that.
 input bool   AllowTrading    = true;
+//--- Expert-side real-money guard (added 2026-11-14, agents stage 2).
+//--- The backend already refuses real accounts (autopilot.account_gate and
+//--- MOLIDO_ALLOW_REAL_MONEY_ORDERS); this is the same refusal one layer down,
+//--- so a backend defect alone cannot reach a funded account. Every trade
+//--- request - open, close and amend - is refused while the terminal reports
+//--- ACCOUNT_TRADE_MODE_REAL and this stays false. Changing it is an owner
+//--- (L5) decision. Needs a recompile on each terminal to take effect.
+input bool   AllowRealAccount = false;
 //--- Hard ceiling, whatever is asked. Raised from 0.10 after the first live
 //--- sizing run: 0.25% of a 10,000 account behind a real stop came out at 0.26
 //--- lots on USDCAD, which is correct risk and would have been refused by an
@@ -568,6 +576,21 @@ void WriteResult(string id, bool ok, ulong ticket, double price, string reason)
    FileWriteString(handle, "\"reason\":\"" + reason + "\",");
    FileWriteString(handle, "\"at\":\"" + TimeToString(TimeCurrent(), TIME_DATE | TIME_SECONDS) + "\"}");
    FileClose(handle);
+  }
+
+//+------------------------------------------------------------------+
+//| True (and a refusal written) when this is a real-money account    |
+//| and AllowRealAccount is off. Reads the terminal, never the name.  |
+//+------------------------------------------------------------------+
+bool RealAccountRefused(string id)
+  {
+   if(AllowRealAccount)
+      return(false);
+   if(AccountInfoInteger(ACCOUNT_TRADE_MODE) != ACCOUNT_TRADE_MODE_REAL)
+      return(false);
+   WriteResult(id, false, 0, 0.0,
+               "refused - real-money account and AllowRealAccount is off on the expert");
+   return(true);
   }
 
 //+------------------------------------------------------------------+
@@ -902,6 +925,8 @@ void ExecuteOne(string filename)
          WriteResult(id, false, 0, 0.0, "AllowTrading is off on the expert");
          return;
         }
+      if(RealAccountRefused(id))
+         return;
       CloseOne(id, (ulong)StringToInteger(closing));
       return;
      }
@@ -918,6 +943,8 @@ void ExecuteOne(string filename)
          WriteResult(id, false, 0, 0.0, "AllowTrading is off on the expert");
          return;
         }
+      if(RealAccountRefused(id))
+         return;
       AmendOne(id, (ulong)StringToInteger(amending),
                StringToDouble(JsonField(body, "stop")),
                StringToDouble(JsonField(body, "target")));
@@ -939,6 +966,8 @@ void ExecuteOne(string filename)
       WriteResult(id, false, 0, 0.0, "AllowTrading is off on the expert");
       return;
      }
+   if(RealAccountRefused(id))
+      return;
    if(symbol == "" || lots <= 0.0)
      {
       WriteResult(id, false, 0, 0.0, "request has no symbol or no size");

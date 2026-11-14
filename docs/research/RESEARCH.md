@@ -259,7 +259,7 @@ wrong — so the persistence is now printed beside every t.
 
 The owner asked for two prop accounts and two RoboForex, the rest off.
 
-Trading: `term-h` (FundedNext 34911052) and `term-j` (FTMO 1514533027), both
+Trading: `term-h` (FundedNext <LOGIN-term-h>) and `term-j` (FTMO <LOGIN-term-j>), both
 on `trend-following`; `term-c` (short-horizon-reversal) and `term-d`
 (stochastic-reversion).
 

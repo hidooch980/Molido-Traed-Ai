@@ -2,6 +2,8 @@
 
 *آخرین به‌روزرسانی: ۲۴ شهریور ۱۴۰۵ (15 Sep 2026)*
 
+> **۲۳ آبان ۱۴۰۵:** آدرس سرورها و شماره حساب‌های MT5 از مستندات حذف و با `<SERVER_IP>` و `<LOGIN-term-x>` جایگزین شدند. لایهٔ ۵۱ ایجنت در [`docs/AGENTS.md`](AGENTS.md). این سند از ۱۵ سپتامبر به بعد به‌روز نشده؛ برای تغییرات بعدی تاریخچهٔ commitها را ببینید.
+
 راهنمای مالک برای کار بدون برنامه‌نویس: [`docs/WITHOUT-CLAUDE.md`](WITHOUT-CLAUDE.md).
 
 ## ۱۶–۱۷ سپتامبر ۲۰۲۶ — علت ضررها و چهار اصلاح
@@ -19,7 +21,7 @@
 | #20 | `FLEET_SYMBOL_CAP = 2`: هر (نماد، جهت) حداکثر روی ۲ حساب | اولین چرخه: «4 accounts already hold NZDUSD sell, the fleet cap is 2» |
 | #21 | `FLEET_CURRENCY_CAP_PROP = 3`: فقط حساب پراپ (term-j، ثبت‌شده در `challenge_accounts`)، سقف اضافه روی *ارز مشترک* نه نماد دقیق — CHFJPY و USDJPY یک شرط روی ین‌اند و سقف نمادی این را نمی‌بیند؛ حساب‌های دمو (اندازه‌گیری مغزها) دست‌نخورده ماندند | تست‌ها: `test_prop_currency_cap_refuses_a_correlated_symbol_under_the_exact_cap`، `test_prop_currency_cap_does_not_bind_a_demo_account`، ۲۰۷ تست موجود سبز |
 | #22 | سقف پراپ روی *همبستگی سنجیده‌شدهٔ* روزانه (`refresh_dna_job`، ۰۲:۰۰ UTC، همان `CORRELATION_CLUSTER=0.7` مغز پورتفولیو) اضافه شد — روی سقف حرف ارز، نه به‌جای آن؛ جفت‌هایی بدون حرف مشترک ولی هم‌بسته (مثلاً AUDNZD و GBPJPY) را هم می‌گیرد. نامسنجیده = نادیده گرفته می‌شود (نه فرض هم‌بسته، نه فرض بی‌ربط)، و سقف حرف ارز همچنان کف محافظه‌کارانه است | تست‌ها: `test_prop_correlation_cap_refuses_a_symbol_sharing_no_letter`، `test_prop_correlation_cap_is_skipped_when_unmeasured`، ۴۱۵۲ تست کل پروژه سبز |
-| #23 | `account_policy` حالا لیست نماد هم دارد (`symbols`، مهاجرت `0027_account_symbols`) — یک حساب می‌تواند به چند نماد محدود شود، مستقل از سراسری (`MOLIDO_TRADED_SYMBOLS`)؛ فرم صفحهٔ حساب هم به‌روزرسانی شد. **فقط قابلیت ساخته شد** — تنظیم واقعی term-d (67209480) روی XAUUSD/EURUSD هنوز باید از صفحهٔ حساب روی سایت انجام شود (این session به سرور تولید دسترسی ندارد) | تست‌ها: `TestAnAccountCanBeConfinedToItsOwnList`، `TestSymbols` در `test_account_policy.py`، ۴۱۵۹ تست کل پروژه سبز، `tsc --noEmit` تمیز |
+| #23 | `account_policy` حالا لیست نماد هم دارد (`symbols`، مهاجرت `0027_account_symbols`) — یک حساب می‌تواند به چند نماد محدود شود، مستقل از سراسری (`MOLIDO_TRADED_SYMBOLS`)؛ فرم صفحهٔ حساب هم به‌روزرسانی شد. **فقط قابلیت ساخته شد** — تنظیم واقعی term-d (<LOGIN-term-d>) روی XAUUSD/EURUSD هنوز باید از صفحهٔ حساب روی سایت انجام شود (این session به سرور تولید دسترسی ندارد) | تست‌ها: `TestAnAccountCanBeConfinedToItsOwnList`، `TestSymbols` در `test_account_policy.py`، ۴۱۵۹ تست کل پروژه سبز، `tsc --noEmit` تمیز |
 | #24 | حساب جدید دیگر برای trailing و قفل آخر هفتهٔ پراپ به برنامه‌نویس نیاز ندارد (مهاجرت `0028_account_trailing_weekend`): `account_policy.trailing` یک کلید در صفحهٔ حساب است (پیش‌فرض خاموش، مثل قبل)؛ قفل آخر هفته از ثبت چالش خودش خوانده می‌شود (`_is_prop_account`/`_prop_registered_logins`)، نه از `MOLIDO_WEEKEND_LOCK_LOGINS`. یک باگ همراه پیدا و رفع شد: `tighten_stops` قفل آخر هفته را روی *همهٔ* حساب‌های trailing یک sweep می‌گذاشت اگر فقط یکی‌شان پراپ بود (`lock_at_r` سراسری به‌جای per-login) — حالا `locked_logins` در `trailing.run` این را per-login می‌کند. env varها هنوز کار می‌کنند، افزوده می‌شوند نه جایگزین | تست‌ها: `TestTheWeekendLockIsPerLogin`، `TestPropRegisteredLogins`، `TestIsPropAccount`، `TestTrailingLogins`، ۴۱۷۴ تست کل پروژه سبز، `tsc --noEmit` تمیز. **باز:** حساب هشتم به بعد (بیش از ۷ ترمینال) هنوز محدودیت زیرساخت/CPU سرور است، نه کد — تصمیم منابع سرور لازم دارد |
 
 پوزیشن‌های قدیمیِ بالای سقف بسته نشدند (NZDUSD فروش ×۴، USDJPY خرید ×۳ در لحظهٔ نصب)؛ فقط
@@ -119,7 +121,7 @@ stops risk 11,077, above 70% of the 6,000 daily allowance» — سفارش جد�
 `/root/hand-edits-20260915.patch` و `.tgz` ذخیره شد (۲۷ فایل)، درخت به `main` برگشت
 (`f43c8e9`، صفر تغییر باقی)، collector و api از git ساخته شدند و سالم‌اند؛ سایت 200.
 داخل کانتینرها: قفل پایان هفته، سقف ۲٪ هر سفارش، `worst_r_before_close` و خواندن
-همهٔ ترمینال‌ها (PR #11). `MOLIDO_WEEKEND_LOCK_LOGINS=1514533027` (FTMO؛ پشتیبان
+همهٔ ترمینال‌ها (PR #11). `MOLIDO_WEEKEND_LOCK_LOGINS=<LOGIN-term-j>` (FTMO؛ پشتیبان
 `.env.prod.bak-weekend-20260915`). انتشارهای بعدی دوباره با `infra/deploy.sh`.
 
 **مدیریت خروج با داده سنجیده شد (۱۵ سپتامبر، `geometry.sweep_exits`، خارج از سرور):**
@@ -140,7 +142,7 @@ time-series-momentum نتیجه داد: «بدون جابجایی» در هر ۴
 تا کف روزانه، ۱۲.۵٪ جای خالی تا کف کل، و نصف فاصله تا هدف (به 1.5R). بازهٔ شروع
 روز ۲۰ دقیقه. اولین چرخه (۱۹:۴۳): term-j «open stops risk 11,072, above 70% of
 the 6,000 daily allowance»؛ term-b هم زیر قاعدهٔ خودش آمد (دفترچهٔ ثبت‌شدهٔ
-RoboForex 67209473، حد روزانه ۵٪ = 10,000): «open stops risk 9,616, above 70%».
+RoboForex <LOGIN-term-b>، حد روزانه ۵٪ = 10,000): «open stops risk 9,616, above 70%».
 هر دو تا کم شدن ریسک باز سفارش جدید نمی‌گیرند.
 
 **انتخاب خودکار مغز — حالت پیشنهاد (۱۴ سپتامبر):** `learning/brain_selection`
@@ -169,7 +171,7 @@ time-series-momentum، mt5g → donchian-breakout. mt5b روی trend-following �
 پشتیبان‌ها روی سرور: `.env.prod.bak-risk-20260913` (۰.۷۵)،
 `.env.prod.bak-risk1-20260913` (۱)، `.env.prod.bak-risk2-20260913` (۲).
 
-**مغز mt5d عوض شد:** `67209480` از stochastic-reversion (۱ برد از ۲۱ پوزیشن
+**مغز mt5d عوض شد:** `<LOGIN-term-d>` از stochastic-reversion (۱ برد از ۲۱ پوزیشن
 مستقل) به **donchian-breakout** رفت (تصمیم مالک). پشتیبان:
 `.env.prod.bak-mt5d-brain-20260913`.
 
@@ -219,7 +221,7 @@ lookback محدود می‌کند؛ روی دادهٔ واقعی ۰.۳ تا ۰.�
 `/root/bridge-j-stale-bars-20260913` روی سرور منتقل شدند (حذف نشدند)؛ در هر
 چرخه خوانده می‌شدند.
 | جهان معاملاتی | ۲۰ ابزار، رتبه‌بندی مالک |
-| سرور | `178.33.150.51` |
+| سرور | `<SERVER_IP>` |
 | معاملهٔ واقعی | صفر |
 | لبهٔ اثبات‌شده | هیچ |
 
@@ -227,13 +229,13 @@ lookback محدود می‌کند؛ روی دادهٔ واقعی ۰.۳ تا ۰.�
 
 | ترمینال | حساب | بروکر | موجودی | مغز | ریسک | trailing |
 |---|---|---|---|---|---|---|
-| term-b | 67209473 | RoboForex-ECN | ۲۰۰٬۰۰۰ | trend-following | ۲٪ | روشن |
-| term-c | 67209482 | RoboForex-ECN | ۲۰۰٬۰۰۰ | time-series-momentum | ۱۹٪ | خاموش |
-| term-d | 67209480 | RoboForex-ECN | ۲۰۰٬۰۰۰ | donchian-breakout | ۱۹٪ | روشن |
-| term-e | 67209483 | RoboForex-ECN | ۲۰۰٬۰۰۰ | carry-differential | ۱۹٪ | روشن |
-| term-f | 67209485 | RoboForex-ECN | ۲۰۰٬۰۰۰ | time-series-momentum | ۱۹٪ | خاموش |
-| term-g | 67209487 | RoboForex-ECN | ۲۰۰٬۰۰۰ | donchian-breakout | ۱۹٪ | روشن |
-| **term-j** | **1514533027** | **FTMO-Demo** | ۲۰۰٬۰۰۰ | trend-following | ۱٪ | روشن |
+| term-b | <LOGIN-term-b> | RoboForex-ECN | ۲۰۰٬۰۰۰ | trend-following | ۲٪ | روشن |
+| term-c | <LOGIN-term-c> | RoboForex-ECN | ۲۰۰٬۰۰۰ | time-series-momentum | ۱۹٪ | خاموش |
+| term-d | <LOGIN-term-d> | RoboForex-ECN | ۲۰۰٬۰۰۰ | donchian-breakout | ۱۹٪ | روشن |
+| term-e | <LOGIN-term-e> | RoboForex-ECN | ۲۰۰٬۰۰۰ | carry-differential | ۱۹٪ | روشن |
+| term-f | <LOGIN-term-f> | RoboForex-ECN | ۲۰۰٬۰۰۰ | time-series-momentum | ۱۹٪ | خاموش |
+| term-g | <LOGIN-term-g> | RoboForex-ECN | ۲۰۰٬۰۰۰ | donchian-breakout | ۱۹٪ | روشن |
+| **term-j** | **<LOGIN-term-j>** | **FTMO-Demo** | ۲۰۰٬۰۰۰ | trend-following | ۱٪ | روشن |
 
 مغز و ریسک از جدول `account_policy` می‌آیند و بر `MOLIDO_ACCOUNT_STRATEGIES` مقدم‌اند؛
 گزارش سلامت تا ۱۵ سپتامبر فقط متغیر محیطی را چاپ می‌کرد و مغزهای قدیمی را نشان
