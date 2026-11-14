@@ -171,7 +171,7 @@ double DemoActiveRiskPct()
 
 bool ProfileIsFtmo()
   {
-   return(AccountProfile == PROFILE_PROP_FTMO);
+   return(ActiveProfile() == PROFILE_PROP_FTMO);
   }
 
 
@@ -179,6 +179,7 @@ bool g_rt_scalper = true;
 bool g_rt_news    = false;
 bool g_rt_trend   = false;
 bool g_rt_auto    = false;
+bool g_rt_fibo    = false;
 
 void MolidoStratInit()
   {
@@ -186,6 +187,7 @@ void MolidoStratInit()
    g_rt_news    = UseNews || (StrategyMode == STRAT_NEWS);
    g_rt_trend   = UseTrend || (StrategyMode == STRAT_TREND);
    g_rt_auto    = UseAutoSymbol || AutoSymbolMode || (StrategyMode == STRAT_AUTO);
+   g_rt_fibo    = UseFibo;
    if(GlobalVariableCheck("Molido.Strat.Scalper"))
       g_rt_scalper = (GlobalVariableGet("Molido.Strat.Scalper") > 0.5);
    if(GlobalVariableCheck("Molido.Strat.News"))
@@ -194,6 +196,8 @@ void MolidoStratInit()
       g_rt_trend = (GlobalVariableGet("Molido.Strat.Trend") > 0.5);
    if(GlobalVariableCheck("Molido.Strat.Auto"))
       g_rt_auto = (GlobalVariableGet("Molido.Strat.Auto") > 0.5);
+   if(GlobalVariableCheck("Molido.Strat.Fibo"))
+      g_rt_fibo = (GlobalVariableGet("Molido.Strat.Fibo") > 0.5);
    //--- Profile applies the strategy stack for Master-style use:
    //--- PROP keeps news trading off (avoid-only) even if the toggle is later re-enabled
    //--- via Advanced inputs; the dashboard can still turn legs on/off.
@@ -203,6 +207,7 @@ bool StratUseScalper() { return(g_rt_scalper); }
 bool StratUseNews()    { return(g_rt_news); }
 bool StratUseTrend()   { return(g_rt_trend); }
 bool StratUseAuto()    { return(g_rt_auto); }
+bool StratUseFibo()    { return(g_rt_fibo); }
 
 void StratSet(const string which, const bool on)
   {
@@ -210,15 +215,17 @@ void StratSet(const string which, const bool on)
    if(which == "news")    g_rt_news = on;
    if(which == "trend")   g_rt_trend = on;
    if(which == "auto")    g_rt_auto = on;
+   if(which == "fibo")    g_rt_fibo = on;
    if(which == "scalper") GlobalVariableSet("Molido.Strat.Scalper", on ? 1.0 : 0.0);
    if(which == "news")    GlobalVariableSet("Molido.Strat.News", on ? 1.0 : 0.0);
    if(which == "trend")   GlobalVariableSet("Molido.Strat.Trend", on ? 1.0 : 0.0);
    if(which == "auto")    GlobalVariableSet("Molido.Strat.Auto", on ? 1.0 : 0.0);
+   if(which == "fibo")    GlobalVariableSet("Molido.Strat.Fibo", on ? 1.0 : 0.0);
   }
 
 bool ProfileIsProp()
   {
-   return(AccountProfile == PROFILE_PROP_FTMO || AccountProfile == PROFILE_PROP_GENERIC);
+   return(ActiveProfile() == PROFILE_PROP_FTMO || ActiveProfile() == PROFILE_PROP_GENERIC);
   }
 
 bool ProfileForceNewsAvoid()
@@ -231,32 +238,58 @@ bool ProfileUsesWeekendHold()
    return(ProfileIsProp() && PropNoWeekendHold);
   }
 
+string ProfileLabelOf(const ENUM_ACCOUNT_PROFILE p)
+  {
+   if(p == PROFILE_PROP_FTMO)
+      return("FTMO");
+   if(p == PROFILE_PROP_GENERIC)
+      return("PROP");
+   if(p == PROFILE_LIVE_REAL)
+      return("LIVE");
+   if(p == PROFILE_AUTO)
+      return("AUTO");
+   if(RiskPreset == RISK_PRESET_FTMO)
+      return("Demo/FTMO");
+   return("DEMO");
+  }
+
 string ProfileName()
   {
-   string name = "DEMO";
-   if(AccountProfile == PROFILE_PROP_FTMO)
-      name = "FTMO";
-   else if(AccountProfile == PROFILE_PROP_GENERIC)
-      name = "PROP";
-   else if(AccountProfile == PROFILE_LIVE_REAL)
-      name = "LIVE";
-   else if(RiskPreset == RISK_PRESET_FTMO)
-      name = "Demo/FTMO";
+   if(MolidoRealBlocked())
+      return("REAL - not supported yet");
+   string name = ProfileLabelOf(ActiveProfile());
    if(RehearsalMode && ProfileIsProp())
       name = name + " REHEARSAL";
+   if(AccountProfile == PROFILE_AUTO)
+      name = name + " auto";
+   else if(AccountProfile != ActiveProfile())
+      name = name + " manual";
    return(name);
+  }
+
+string DemoDetectedLine()
+  {
+   if(MolidoRealBlocked())
+      return("Real account not supported yet");
+   string line = "Detected " + ProfileLabelOf(DetectedProfile());
+   string srv = AccountInfoString(ACCOUNT_SERVER);
+   if(StringLen(srv) > 0)
+      line = line + "  " + srv;
+   if(AccountProfile != PROFILE_AUTO && AccountProfile != ActiveProfile())
+      line = line + "  (manual override)";
+   return(line);
   }
 
 double ProfileProfitTargetPct()
   {
-   if(AccountProfile == PROFILE_PROP_FTMO)
+   if(ActiveProfile() == PROFILE_PROP_FTMO)
      {
       double v = PropProfitTargetPct;
       if(v < 0.0) v = 0.0;
       if(v > 30.0) v = 30.0;
       return(v);
      }
-   if(AccountProfile == PROFILE_PROP_GENERIC)
+   if(ActiveProfile() == PROFILE_PROP_GENERIC)
      {
       double v = PropGenericProfitTargetPct;
       if(v < 0.0) v = 0.0;
@@ -268,14 +301,14 @@ double ProfileProfitTargetPct()
 
 int ProfileMinTradingDays()
   {
-   if(AccountProfile == PROFILE_PROP_FTMO)
+   if(ActiveProfile() == PROFILE_PROP_FTMO)
      {
       int v = PropMinTradingDays;
       if(v < 0) v = 0;
       if(v > 30) v = 30;
       return(v);
      }
-   if(AccountProfile == PROFILE_PROP_GENERIC)
+   if(ActiveProfile() == PROFILE_PROP_GENERIC)
      {
       int v = PropGenericMinTradingDays;
       if(v < 0) v = 0;
@@ -290,9 +323,9 @@ double DemoActiveDailyPct()
    DemoCaps cap;
    if(DemoCapsFor(AccountInfoInteger(ACCOUNT_LOGIN), cap))
       return(MathMin(cap.daily_pct, HARD_MAX_DAILY_PCT));
-   if(AccountProfile == PROFILE_PROP_FTMO || RiskPreset == RISK_PRESET_FTMO)
+   if(ActiveProfile() == PROFILE_PROP_FTMO || RiskPreset == RISK_PRESET_FTMO)
       return(MathMin(FTMO_DAILY_LOSS_PCT, HARD_MAX_DAILY_PCT));
-   if(AccountProfile == PROFILE_PROP_GENERIC)
+   if(ActiveProfile() == PROFILE_PROP_GENERIC)
      {
       double v = PropGenericDailyLossPct;
       if(v < 0.1) v = 0.1;
@@ -307,9 +340,9 @@ double DemoActiveMaxDdPct()
    DemoCaps cap;
    if(DemoCapsFor(AccountInfoInteger(ACCOUNT_LOGIN), cap))
       return(MathMin(cap.max_dd_pct, HARD_MAX_DD_PCT));
-   if(AccountProfile == PROFILE_PROP_FTMO || RiskPreset == RISK_PRESET_FTMO)
+   if(ActiveProfile() == PROFILE_PROP_FTMO || RiskPreset == RISK_PRESET_FTMO)
       return(MathMin(FTMO_MAX_DD_PCT, HARD_MAX_DD_PCT));
-   if(AccountProfile == PROFILE_PROP_GENERIC)
+   if(ActiveProfile() == PROFILE_PROP_GENERIC)
      {
       double v = PropGenericMaxDdPct;
       if(v < 0.0) v = 0.0;
@@ -710,7 +743,7 @@ void DemoScalperStatus(string &status, string &reason)
    if(!DemoAccountOk())
      {
       status = "blocked";
-      reason = (AccountProfile == PROFILE_LIVE_REAL
+      reason = (ActiveProfile() == PROFILE_LIVE_REAL
                 ? "LIVE_REAL hard-locked"
                 : "login not in allowlist");
       return;
@@ -848,17 +881,19 @@ bool DemoAccountOk()
   {
    long mode  = AccountInfoInteger(ACCOUNT_TRADE_MODE);
    long login = AccountInfoInteger(ACCOUNT_LOGIN);
+   if(MolidoRealBlocked() || (mode == ACCOUNT_TRADE_MODE_REAL && !MOLIDO_REAL_SUPPORTED))
+      return(false);
    if(MolidoIsTester())
      {
-      if(AccountProfile == PROFILE_LIVE_REAL)
+      if(ActiveProfile() == PROFILE_LIVE_REAL)
          return(false);
       if(mode == ACCOUNT_TRADE_MODE_REAL)
-         return(AllowRealAccount && LoginInRealAllowlist(login));
+         return(false);
       return(true);
      }
    if(login <= 0)
       return(false);
-   if(AccountProfile == PROFILE_LIVE_REAL)
+   if(ActiveProfile() == PROFILE_LIVE_REAL)
      {
       //--- Hard lock: never trade a real account unless every unlock is set.
       if(mode != ACCOUNT_TRADE_MODE_REAL)
@@ -870,7 +905,7 @@ bool DemoAccountOk()
    //--- DEMO and PROP profiles never trade a real-money account.
    if(mode == ACCOUNT_TRADE_MODE_REAL)
       return(false);
-   if(AccountProfile == PROFILE_DEMO)
+   if(ActiveProfile() == PROFILE_DEMO)
      {
       if(mode != ACCOUNT_TRADE_MODE_DEMO)
          return(false);
@@ -1136,7 +1171,7 @@ ENUM_DEMO_VERDICT DemoReview(const string symbol, const string side,
 
    if(!DemoAccountOk())
      {
-      reasons = (AccountProfile == PROFILE_LIVE_REAL
+      reasons = (ActiveProfile() == PROFILE_LIVE_REAL
                  ? "LIVE_REAL hard-locked (AllowRealAccount + AllowedRealLogins)"
                  : "login not in allowlist or wrong trade mode");
       return(DEMO_BLOCK);
@@ -1425,7 +1460,7 @@ bool DemoScalperOnInit()
          Print("MolidoScalper: trading locked - profile=", ProfileName(),
                " mode=", AccountInfoInteger(ACCOUNT_TRADE_MODE),
                " login=", AccountInfoInteger(ACCOUNT_LOGIN),
-               (AccountProfile == PROFILE_LIVE_REAL
+               (ActiveProfile() == PROFILE_LIVE_REAL
                 ? " (LIVE_REAL stays hard-locked until AllowRealAccount=true and the login is in AllowedRealLogins)"
                 : " (login must be in AllowedLogins; real accounts are refused)"));
          //--- Keep the expert running so the dashboard can show the lock.
@@ -1652,9 +1687,11 @@ void DemoEvaluateSymbol(const string raw_name)
    bool got = false;
    if(StratUseTrend())
       got = DemoTrendSignal(symbol, side, entry, sl, tp, spread, atr, why);
+   if(!got && StratUseFibo())
+      got = DemoFiboSignal(symbol, side, entry, sl, tp, spread, atr, why);
    if(!got && StratUseScalper())
       got = DemoSignal(symbol, side, entry, sl, tp, spread, atr, why);
-   if(!got && !StratUseTrend() && !StratUseScalper())
+   if(!got && !StratUseTrend() && !StratUseFibo() && !StratUseScalper())
       why = "no entry strategy enabled";
    if(!got)
      {
@@ -1743,9 +1780,9 @@ void DemoScalperOnTick()
       return;
    if(StratUseNews())
       DemoNewsTradeActive();
-   if(StratUseNews() && !StratUseScalper() && !StratUseTrend() && !StratUseAuto())
+   if(StratUseNews() && !StratUseScalper() && !StratUseTrend() && !StratUseFibo() && !StratUseAuto())
       return;
-   if(DemoNewsTradeActive() && !StratUseScalper() && !StratUseTrend())
+   if(DemoNewsTradeActive() && !StratUseScalper() && !StratUseTrend() && !StratUseFibo())
       return;
 
    if(StratUseAuto())
@@ -1759,7 +1796,7 @@ void DemoScalperOnTick()
       string resolved;
       if(!DemoResolveSymbol(symbol, resolved))
          continue;
-      ENUM_TIMEFRAMES tf = (StratUseTrend() && !StratUseScalper() ? PERIOD_M15 : ScalperTF);
+      ENUM_TIMEFRAMES tf = ((StratUseTrend() || StratUseFibo()) && !StratUseScalper() ? PERIOD_M15 : ScalperTF);
       datetime bar = iTime(resolved, tf, 0);
       if(bar == 0)
          continue;

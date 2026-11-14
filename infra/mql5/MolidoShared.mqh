@@ -54,6 +54,12 @@
 #ifndef MOLIDO_DEFAULT_REHEARSAL
 #define MOLIDO_DEFAULT_REHEARSAL false
 #endif
+#ifndef MOLIDO_USE_FIBO
+#define MOLIDO_USE_FIBO false
+#endif
+#ifndef MOLIDO_REAL_SUPPORTED
+#define MOLIDO_REAL_SUPPORTED false
+#endif
 
 #define DEMO_SCALPER_MAGIC    MOLIDO_MAGIC
 

@@ -100,7 +100,7 @@ def test_endpoint_needs_broker_permission_and_returns_config(session, monkeypatc
 
 def test_demo_scalper_is_included_and_checksummed():
     for name in ("MolidoShared.mqh", "MolidoRuntime.mqh", "MolidoDemoScalper.mqh", "MolidoNews.mqh", "MolidoSmart.mqh",
-                 "MolidoProtect.mqh", "MolidoUniverse.mqh", "MolidoDashboard.mqh"):
+                 "MolidoProtect.mqh", "MolidoUniverse.mqh", "MolidoFibo.mqh", "MolidoDashboard.mqh"):
         mqh = EA.parent / name
         assert mqh.is_file(), name
         if name != "MolidoRuntime.mqh":
@@ -174,10 +174,13 @@ def test_split_eas_have_unique_magics():
     assert "PROFILE_LIVE_REAL" in (root / "Molido_Live.mq5").read_text(encoding="utf-8")
     assert "STRAT_TREND" in (root / "Molido_Trend.mq5").read_text(encoding="utf-8")
     assert "STRAT_AUTO" in (root / "Molido_AutoPortfolio.mq5").read_text(encoding="utf-8")
-    assert "PROFILE_DEMO" in (root / "Molido_Master.mq5").read_text(encoding="utf-8")
-    assert 'input group "Account type"' in SRC
+    assert "PROFILE_AUTO" in (root / "Molido_Master.mq5").read_text(encoding="utf-8")
     assert 'input group "Advanced (no need to change)"' in SRC
-    assert SRC.find('input group "Account type"') < SRC.find('input group "Advanced (no need to change)"')
+    assert "PROFILE_AUTO" in SRC and "DetectAccountProfile" in SRC
+    assert "MolidoRealBlocked" in SRC
+    assert "Real account not supported yet" in (root / "MolidoDashboard.mqh").read_text(encoding="utf-8")
+    assert "DemoFiboSignal" in (root / "MolidoFibo.mqh").read_text(encoding="utf-8")
+    assert "UseFibo            = MOLIDO_USE_FIBO" in SRC
     assert "MolidoIsTester" in SRC or "MolidoIsTester" in (root / "MolidoShared.mqh").read_text(encoding="utf-8")
     assert "molido_update_request.json" in SRC and "molido_daily_summary.json" in SRC
     assert "Update now?" in (root / "MolidoDashboard.mqh").read_text(encoding="utf-8")

@@ -16,5 +16,6 @@
 #define MOLIDO_USE_TREND        false
 #define MOLIDO_USE_AUTO         true
 #define MOLIDO_DEFAULT_REHEARSAL false
+#define MOLIDO_REAL_SUPPORTED   true
 #define MOLIDO_EA_VERSION       "1.44"
 #include "MolidoRuntime.mqh"

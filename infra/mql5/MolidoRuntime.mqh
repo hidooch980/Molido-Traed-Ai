@@ -43,13 +43,12 @@ enum ENUM_ACCOUNT_PROFILE
    PROFILE_DEMO         = 0,  // personal demo: 0.5% risk, 2% daily
    PROFILE_PROP_FTMO    = 1,  // 5% daily / 10% max DD, target, days, weekend
    PROFILE_PROP_GENERIC = 2,  // configurable DD / profit target
-   PROFILE_LIVE_REAL    = 3   // hard-locked unless explicitly unlocked
+   PROFILE_LIVE_REAL    = 3,  // real money (blocked on Master; Live EA still locked)
+   PROFILE_AUTO         = 4   // detect from trade mode, broker name, allowlist
   };
 
-input group "Account type"
-input ENUM_ACCOUNT_PROFILE AccountProfile = MOLIDO_DEFAULT_PROFILE;
-
 input group "Advanced (no need to change)"
+input ENUM_ACCOUNT_PROFILE AccountProfile = MOLIDO_DEFAULT_PROFILE;  // AUTO = detect; manual override only
 
 //--- How often to republish. Hourly bars do not reward a tighter loop, and a
 //--- service rewriting the same files every second would keep a disk busy for
@@ -149,12 +148,19 @@ void MolidoDashOnDeinit();
 void MolidoDashOnChartEvent(const int id, const long &lparam,
                             const double &dparam, const string &sparam);
 bool MolidoLinkHealthy();
+ENUM_ACCOUNT_PROFILE ActiveProfile();
+ENUM_ACCOUNT_PROFILE DetectedProfile();
+void RefreshActiveProfile();
+bool MolidoRealBlocked();
 bool MolidoRequestUpdate();
 void MolidoWriteSettingsSnapshot();
 
 int      g_publish_status = 0;   // 0 idle, 1 ok, -1 fail
 int      g_config_status  = 0;
 datetime g_initTime       = 0;
+ENUM_ACCOUNT_PROFILE g_detected_profile  = PROFILE_DEMO;
+ENUM_ACCOUNT_PROFILE g_effective_profile = PROFILE_DEMO;
+bool     g_real_unsupported = false;
 datetime g_lastServerOk   = 0;
 string   g_update_version = "";
 string   g_update_sha256  = "";
@@ -436,8 +442,10 @@ void WriteDailySummary()
    json += "\"login\":" + IntegerToString(AccountInfoInteger(ACCOUNT_LOGIN)) + ",";
    json += "\"ea\":\"" + MOLIDO_EA_NAME + "\",";
    json += "\"ea_version\":\"" + MOLIDO_EA_VERSION + "\",";
-   json += "\"profile\":" + IntegerToString((int)AccountProfile) + ",";
-   json += "\"rehearsal\":" + ((RehearsalMode && (AccountProfile == PROFILE_PROP_FTMO || AccountProfile == PROFILE_PROP_GENERIC)) ? "true" : "false") + ",";
+   json += "\"profile\":" + IntegerToString((int)ActiveProfile()) + ",";
+   json += "\"profile_detected\":" + IntegerToString((int)DetectedProfile()) + ",";
+   json += "\"real_unsupported\":" + (MolidoRealBlocked() ? "true" : "false") + ",";
+   json += "\"rehearsal\":" + ((RehearsalMode && (ActiveProfile() == PROFILE_PROP_FTMO || ActiveProfile() == PROFILE_PROP_GENERIC)) ? "true" : "false") + ",";
    json += "\"balance\":" + DoubleToString(AccountInfoDouble(ACCOUNT_BALANCE), 2) + ",";
    json += "\"equity\":" + DoubleToString(AccountInfoDouble(ACCOUNT_EQUITY), 2) + ",";
    json += "\"daily_pnl\":" + DoubleToString(daily_pnl, 2) + ",";
@@ -689,16 +697,123 @@ bool LoginInRealAllowlist(const long login)
    return(LoginInCsv(AllowedRealLogins, login));
   }
 
+bool MolidoHayHas(const string hay, const string needle)
+  {
+   if(StringLen(needle) <= 0)
+      return(false);
+   string h = hay;
+   string n = needle;
+   StringToUpper(h);
+   StringToUpper(n);
+   return(StringFind(h, n) >= 0);
+  }
+
+string MolidoBrokerHay()
+  {
+   return(AccountInfoString(ACCOUNT_SERVER) + " " + AccountInfoString(ACCOUNT_COMPANY));
+  }
+
+bool MolidoLooksLikeFtmo(const string hay)
+  {
+   return(MolidoHayHas(hay, "FTMO"));
+  }
+
+bool MolidoLooksLikeProp(const string hay)
+  {
+   if(MolidoLooksLikeFtmo(hay))
+      return(true);
+   string names[] = {
+      "FUNDED NEXT", "FUNDEDNEXT", "THE5ERS", "THE 5%ERS", "5ERS",
+      "E8 MARKETS", "E8 FUNDING", "E8FUNDING", "TOPSTEP",
+      "APEX TRADER", "FUNDED TRADING PLUS", "THE FUNDED TRADER",
+      "SMART PROP", "SURGETRADER", "SURGE TRADER", "LUX TRADING",
+      "MAVEN TRADING", "FUNDINGPIPS", "FUNDING PIPS", "GOAT FUNDED",
+      "CITY TRADERS IMPERIUM", "FINTOKEI", "BLUE GUARDIAN",
+      "FUNDED ENGINEER", "INSTANT FUNDING", "PROP FIRM", "PROP TRADING",
+      "EVALUATION ACCOUNT", "CHALLENGE ACCOUNT"
+   };
+   for(int i = 0; i < ArraySize(names); i++)
+      if(MolidoHayHas(hay, names[i]))
+         return(true);
+   return(false);
+  }
+
+ENUM_ACCOUNT_PROFILE DetectAccountProfile()
+  {
+   long mode = AccountInfoInteger(ACCOUNT_TRADE_MODE);
+   long login = AccountInfoInteger(ACCOUNT_LOGIN);
+   string hay = MolidoBrokerHay();
+   //--- Real accounts are never treated as demo/prop. Master blocks them
+   //--- outright; the Live EA may still use its hard-lock path later.
+   if(mode == ACCOUNT_TRADE_MODE_REAL)
+      return(PROFILE_LIVE_REAL);
+   if(MolidoLooksLikeFtmo(hay))
+      return(PROFILE_PROP_FTMO);
+   if(MolidoLooksLikeProp(hay))
+      return(PROFILE_PROP_GENERIC);
+   if(mode == ACCOUNT_TRADE_MODE_CONTEST)
+      return(PROFILE_PROP_GENERIC);
+   if(mode == ACCOUNT_TRADE_MODE_DEMO)
+     {
+      if(LoginInAllowlist(login))
+         return(PROFILE_DEMO);
+      //--- Uncertain demo: safest is prop rules.
+      return(PROFILE_PROP_GENERIC);
+     }
+   if(mode == ACCOUNT_TRADE_MODE_REAL)
+      return(PROFILE_LIVE_REAL);
+   return(PROFILE_PROP_GENERIC);
+  }
+
+bool MolidoRealBlocked()
+  {
+   return(AccountInfoInteger(ACCOUNT_TRADE_MODE) == ACCOUNT_TRADE_MODE_REAL
+          && !MOLIDO_REAL_SUPPORTED);
+  }
+
+void RefreshActiveProfile()
+  {
+   g_detected_profile = DetectAccountProfile();
+   g_real_unsupported = MolidoRealBlocked();
+   if(AccountInfoInteger(ACCOUNT_TRADE_MODE) == ACCOUNT_TRADE_MODE_REAL)
+     {
+      //--- Never allow a manual override to downgrade a real account.
+      g_effective_profile = PROFILE_LIVE_REAL;
+      return;
+     }
+   if(AccountProfile != PROFILE_AUTO)
+      g_effective_profile = AccountProfile;
+   else
+      g_effective_profile = g_detected_profile;
+  }
+
+ENUM_ACCOUNT_PROFILE ActiveProfile()
+  {
+   return(g_effective_profile);
+  }
+
+ENUM_ACCOUNT_PROFILE DetectedProfile()
+  {
+   return(g_detected_profile);
+  }
+
+
 bool AccountAllowed()
   {
+   RefreshActiveProfile();
    long mode = AccountInfoInteger(ACCOUNT_TRADE_MODE);
    long login = AccountInfoInteger(ACCOUNT_LOGIN);
    if(mode == ACCOUNT_TRADE_MODE_REAL)
      {
-      if(AccountProfile != PROFILE_LIVE_REAL || !AllowRealAccount || !LoginInRealAllowlist(login))
+      if(MolidoRealBlocked())
         {
-         Print("MolidoBridge: REAL account hard-locked - need AccountProfile=LIVE_REAL, ",
-               "AllowRealAccount=true, and this login in AllowedRealLogins (default empty)");
+         Print("Molido: Real account not supported yet - no trading on this expert");
+         return true;
+        }
+      if(!AllowRealAccount || !LoginInRealAllowlist(login))
+        {
+         Print("MolidoBridge: REAL account hard-locked - need AllowRealAccount=true ",
+               "and this login in AllowedRealLogins (default empty)");
          return false;
         }
      }
@@ -750,6 +865,13 @@ input bool              UseScalper         = MOLIDO_USE_SCALPER;
 input bool              UseNews            = MOLIDO_USE_NEWS;
 input bool              UseTrend           = MOLIDO_USE_TREND;
 input bool              UseAutoSymbol      = MOLIDO_USE_AUTO;
+input bool              UseFibo            = MOLIDO_USE_FIBO;  // off until OOS is positive
+input ENUM_TIMEFRAMES   FiboSwingTF        = PERIOD_M15;
+input int               FiboSwingStrength  = 3;
+input int               FiboLookbackBars   = 80;
+input bool              FiboUse382         = true;
+input bool              FiboUse50          = true;
+input bool              FiboUse618         = true;
 
 input bool              EnableDemoScalper   = true;           // armed for demo 68531270
 input bool              AutoSymbolMode      = MOLIDO_DEFAULT_AUTO;
@@ -1464,6 +1586,7 @@ void OnTimer()
 //--- minute for no extra information.
 void OnTick()
   {
+   RefreshActiveProfile();
    DemoScalperOnTick();
    MolidoDashOnTick();
   }
@@ -2028,7 +2151,9 @@ bool MolidoRequestUpdate()
    json += "\"to_version\":\"" + g_update_version + "\",";
    json += "\"sha256\":\"" + g_update_sha256 + "\",";
    json += "\"gate\":\"PASS\",";
-   json += "\"profile\":" + IntegerToString((int)AccountProfile) + ",";
+   json += "\"profile\":" + IntegerToString((int)ActiveProfile()) + ",";
+   json += "\"profile_detected\":" + IntegerToString((int)DetectedProfile()) + ",";
+   json += "\"real_unsupported\":" + (MolidoRealBlocked() ? "true" : "false") + ",";
    json += "\"open_positions\":" + IntegerToString(MolidoOwnOpenCount()) + ",";
    json += "\"stops_ok\":" + (MolidoPositionsHaveStops() ? "true" : "false") + ",";
    json += "\"chart_id\":" + IntegerToString(ChartID()) + ",";
@@ -2051,6 +2176,7 @@ bool MolidoRequestUpdate()
   }
 
 #include "MolidoDemoScalper.mqh"
+#include "MolidoFibo.mqh"
 #include "MolidoNews.mqh"
 #include "MolidoSmart.mqh"
 #include "MolidoProtect.mqh"
