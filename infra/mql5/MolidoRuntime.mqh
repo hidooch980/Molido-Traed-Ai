@@ -50,6 +50,15 @@ enum ENUM_ACCOUNT_PROFILE
 input group "Advanced (no need to change)"
 input ENUM_ACCOUNT_PROFILE AccountProfile = MOLIDO_DEFAULT_PROFILE;  // AUTO = detect; manual override only
 
+enum ENUM_MOLIDO_LANG
+  {
+   LANG_FA = 0,  // Persian (default)
+   LANG_EN = 1,
+   LANG_AR = 2,
+   LANG_TR = 3
+  };
+input ENUM_MOLIDO_LANG Language = LANG_FA;  // dashboard language; falls back to English if the font cannot render
+
 //--- How often to republish. Hourly bars do not reward a tighter loop, and a
 //--- service rewriting the same files every second would keep a disk busy for
 //--- nothing.
@@ -123,7 +132,7 @@ input bool HideUnlistedSymbols = true;
 //--- copy, so no remote message can change them.
 #include "MolidoShared.mqh"
 #ifndef MOLIDO_EA_VERSION
-#define MOLIDO_EA_VERSION "1.44"
+#define MOLIDO_EA_VERSION "1.45"
 #endif
 int    g_RefreshSeconds   = 20;
 int    g_BarCount         = 500;
@@ -152,6 +161,8 @@ ENUM_ACCOUNT_PROFILE ActiveProfile();
 ENUM_ACCOUNT_PROFILE DetectedProfile();
 void RefreshActiveProfile();
 bool MolidoRealBlocked();
+void MolidoI18nInit();
+string Tr(const string key);
 bool MolidoRequestUpdate();
 void MolidoWriteSettingsSnapshot();
 
@@ -490,6 +501,7 @@ int OnInit()
    if(!AccountAllowed())
       return INIT_FAILED;
    g_initTime = TimeCurrent();
+   MolidoI18nInit();
    g_RefreshSeconds = RefreshSeconds;
    g_BarCount = BarCount;
    g_IntradayBarCount = IntradayBarCount;
@@ -2175,6 +2187,7 @@ bool MolidoRequestUpdate()
    return(true);
   }
 
+#include "MolidoI18n.mqh"
 #include "MolidoDemoScalper.mqh"
 #include "MolidoFibo.mqh"
 #include "MolidoNews.mqh"

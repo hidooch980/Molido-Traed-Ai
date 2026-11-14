@@ -100,15 +100,15 @@ def test_endpoint_needs_broker_permission_and_returns_config(session, monkeypatc
 
 def test_demo_scalper_is_included_and_checksummed():
     for name in ("MolidoShared.mqh", "MolidoRuntime.mqh", "MolidoDemoScalper.mqh", "MolidoNews.mqh", "MolidoSmart.mqh",
-                 "MolidoProtect.mqh", "MolidoUniverse.mqh", "MolidoFibo.mqh", "MolidoDashboard.mqh"):
+                 "MolidoProtect.mqh", "MolidoUniverse.mqh", "MolidoFibo.mqh", "MolidoI18n.mqh", "MolidoDashboard.mqh"):
         mqh = EA.parent / name
         assert mqh.is_file(), name
         if name != "MolidoRuntime.mqh":
             assert f'#include "{name}"' in SRC
         recorded = (EA.parent / f"{name}.sha256").read_text().split()[0]
         assert recorded == hashlib.sha256(mqh.read_bytes()).hexdigest()
-    assert '#property version     "1.44"' in EA.read_text(encoding="utf-8")
-    assert '#define MOLIDO_EA_VERSION       "1.44"' in EA.read_text(encoding="utf-8") or 'MOLIDO_EA_VERSION "1.44"' in SRC
+    assert '#property version     "1.45"' in EA.read_text(encoding="utf-8")
+    assert '#define MOLIDO_EA_VERSION       "1.45"' in EA.read_text(encoding="utf-8") or 'MOLIDO_EA_VERSION "1.45"' in SRC
     assert "NEWS_AVOID" in SRC and "NEWS_TRADE" in SRC
     assert "RISK_PRESET_FTMO" in SRC
     remote = _remote_section()
@@ -178,9 +178,14 @@ def test_split_eas_have_unique_magics():
     assert 'input group "Advanced (no need to change)"' in SRC
     assert "PROFILE_AUTO" in SRC and "DetectAccountProfile" in SRC
     assert "MolidoRealBlocked" in SRC
-    assert "Real account not supported yet" in (root / "MolidoDashboard.mqh").read_text(encoding="utf-8")
+    assert "Real account not supported yet" in (root / "MolidoI18n.mqh").read_text(encoding="utf-8-sig")
+    assert 'Tr("real_unsupported")' in (root / "MolidoDashboard.mqh").read_text(encoding="utf-8")
     assert "DemoFiboSignal" in (root / "MolidoFibo.mqh").read_text(encoding="utf-8")
     assert "UseFibo            = MOLIDO_USE_FIBO" in SRC
+    assert "Language = LANG_FA" in SRC
+    assert "LANG_TR" in SRC and "LANG_AR" in SRC
+    assert 'JsonValue(body, "Language")' not in SRC
     assert "MolidoIsTester" in SRC or "MolidoIsTester" in (root / "MolidoShared.mqh").read_text(encoding="utf-8")
     assert "molido_update_request.json" in SRC and "molido_daily_summary.json" in SRC
-    assert "Update now?" in (root / "MolidoDashboard.mqh").read_text(encoding="utf-8")
+    assert "Update now?" in (root / "MolidoI18n.mqh").read_text(encoding="utf-8-sig")
+    assert 'Tr("update_now")' in (root / "MolidoDashboard.mqh").read_text(encoding="utf-8")

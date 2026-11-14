@@ -100,7 +100,7 @@ try {
   }
   Copy-Item $tmp $target -Force
 
-  $includes = @("MolidoShared.mqh","MolidoRuntime.mqh","MolidoDemoScalper.mqh","MolidoNews.mqh","MolidoSmart.mqh","MolidoProtect.mqh","MolidoUniverse.mqh","MolidoFibo.mqh","MolidoDashboard.mqh","molido-update-watch.ps1","Molido_Master.gate.json")
+  $includes = @("MolidoShared.mqh","MolidoI18n.mqh","MolidoRuntime.mqh","MolidoDemoScalper.mqh","MolidoNews.mqh","MolidoSmart.mqh","MolidoProtect.mqh","MolidoUniverse.mqh","MolidoFibo.mqh","MolidoDashboard.mqh","molido-update-watch.ps1","Molido_Master.gate.json")
   $incBackups = @()
   foreach ($incName in $includes) {
     $incUrl = $SourceUrl -replace [regex]::Escape($name), $incName

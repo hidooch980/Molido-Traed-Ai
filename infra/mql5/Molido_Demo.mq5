@@ -2,7 +2,7 @@
 //| Molido_Demo.mq5 - Molido Demo: personal demo scalper + auto symbols
 //+------------------------------------------------------------------+
 #property copyright   "MolidoTrade AI"
-#property version     "1.44"
+#property version     "1.45"
 #property description "Molido Demo: personal demo scalper + auto symbols"
 #define MOLIDO_EA_NAME          "Molido_Demo"
 #define MOLIDO_MAGIC            685401
@@ -16,5 +16,5 @@
 #define MOLIDO_USE_TREND        false
 #define MOLIDO_USE_AUTO         true
 #define MOLIDO_DEFAULT_REHEARSAL false
-#define MOLIDO_EA_VERSION       "1.44"
+#define MOLIDO_EA_VERSION       "1.45"
 #include "MolidoRuntime.mqh"

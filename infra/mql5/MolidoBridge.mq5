@@ -2,7 +2,7 @@
 //| MolidoBridge.mq5 - Molido Bridge (legacy compatible)
 //+------------------------------------------------------------------+
 #property copyright   "MolidoTrade AI"
-#property version     "1.44"
+#property version     "1.45"
 #property description "Molido Bridge (legacy compatible)"
 #define MOLIDO_EA_NAME          "MolidoBridge"
 #define MOLIDO_MAGIC            685317
@@ -16,5 +16,5 @@
 #define MOLIDO_USE_TREND        false
 #define MOLIDO_USE_AUTO         true
 #define MOLIDO_DEFAULT_REHEARSAL false
-#define MOLIDO_EA_VERSION       "1.44"
+#define MOLIDO_EA_VERSION       "1.45"
 #include "MolidoRuntime.mqh"

@@ -93,8 +93,14 @@ try {
   $setDst = Join-Path $Experts "Molido_Master.set"
   if (Test-Path $setSrc) {
     $s = Get-Content -Raw $setSrc
-    $prof = [regex]::Match($s, '"AccountProfile"\s*:\s*(\d+)').Groups[1].Value
-    if ($prof -ne "") { Set-Content -Path $setDst -Value ("AccountProfile=$prof") -Encoding ASCII }
+    $lines = @()
+    foreach ($key in @("AccountProfile","AllowTrading","AllowRealAccount","RehearsalMode","UseScalper","UseNews","UseTrend","UseAutoSymbol","UseFibo")) {
+      $m = [regex]::Match($s, '"' + $key + '"\s*:\s*([^,}]+)')
+      if ($m.Success) { $lines += ($key + "=" + $m.Groups[1].Value.Trim().Trim('"')) }
+    }
+    $login = [regex]::Match($s, '"AllowedLogins"\s*:\s*"([^"]*)"').Groups[1].Value
+    if ($login -ne "") { $lines += "AllowedLogins=$login" }
+    if ($lines.Count -gt 0) { Set-Content -Path $setDst -Value ($lines -join "`r`n") -Encoding ASCII }
   }
 
   Remove-Item $ReqPath -Force -ErrorAction SilentlyContinue

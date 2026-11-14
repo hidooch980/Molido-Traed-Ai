@@ -2,7 +2,7 @@
 //| Molido_AutoPortfolio.mq5 - Molido AutoPortfolio: account-wide auto symbol selection
 //+------------------------------------------------------------------+
 #property copyright   "MolidoTrade AI"
-#property version     "1.44"
+#property version     "1.45"
 #property description "Molido AutoPortfolio: account-wide auto symbol selection"
 #define MOLIDO_EA_NAME          "Molido_AutoPortfolio"
 #define MOLIDO_MAGIC            685407
@@ -16,5 +16,5 @@
 #define MOLIDO_USE_TREND        false
 #define MOLIDO_USE_AUTO         true
 #define MOLIDO_DEFAULT_REHEARSAL false
-#define MOLIDO_EA_VERSION       "1.44"
+#define MOLIDO_EA_VERSION       "1.45"
 #include "MolidoRuntime.mqh"

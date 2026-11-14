@@ -256,27 +256,27 @@ string ProfileLabelOf(const ENUM_ACCOUNT_PROFILE p)
 string ProfileName()
   {
    if(MolidoRealBlocked())
-      return("REAL - not supported yet");
+      return(Tr("real_unsupported"));
    string name = ProfileLabelOf(ActiveProfile());
    if(RehearsalMode && ProfileIsProp())
-      name = name + " REHEARSAL";
+      name = name + " " + Tr("rehearsal");
    if(AccountProfile == PROFILE_AUTO)
-      name = name + " auto";
+      name = name + " " + Tr("auto_tag");
    else if(AccountProfile != ActiveProfile())
-      name = name + " manual";
+      name = name + " " + Tr("manual_tag");
    return(name);
   }
 
 string DemoDetectedLine()
   {
    if(MolidoRealBlocked())
-      return("Real account not supported yet");
-   string line = "Detected " + ProfileLabelOf(DetectedProfile());
+      return(Tr("real_unsupported"));
+   string line = Tr("detected") + " " + ProfileLabelOf(DetectedProfile());
    string srv = AccountInfoString(ACCOUNT_SERVER);
    if(StringLen(srv) > 0)
       line = line + "  " + srv;
    if(AccountProfile != PROFILE_AUTO && AccountProfile != ActiveProfile())
-      line = line + "  (manual override)";
+      line = line + "  (" + Tr("manual_override") + ")";
    return(line);
   }
 

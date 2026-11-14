@@ -2,7 +2,7 @@
 //| Molido_Prop.mq5 - Molido Prop: FTMO/generic challenge, conservative DD protection
 //+------------------------------------------------------------------+
 #property copyright   "MolidoTrade AI"
-#property version     "1.44"
+#property version     "1.45"
 #property description "Molido Prop: FTMO/generic challenge, conservative DD protection"
 #define MOLIDO_EA_NAME          "Molido_Prop"
 #define MOLIDO_MAGIC            685402
@@ -16,5 +16,5 @@
 #define MOLIDO_USE_TREND        false
 #define MOLIDO_USE_AUTO         true
 #define MOLIDO_DEFAULT_REHEARSAL true
-#define MOLIDO_EA_VERSION       "1.44"
+#define MOLIDO_EA_VERSION       "1.45"
 #include "MolidoRuntime.mqh"
