@@ -1,4 +1,4 @@
-# اسکلپر دمو (نسخه 1.40) — حساب 68531270
+# اسکلپر دمو (نسخه 1.41) — حساب 68531270
 
 این نسخه فقط روی حساب **دمو** RoboForex با لاگین **68531270** معامله می‌کند.
 اگر حساب واقعی، مسابقه، یا لاگین دیگری باشد، EA یا اصلاً اجرا نمی‌شود یا هیچ سفارشی نمی‌فرستد.
@@ -29,24 +29,13 @@
 
 ## آنچه باید در چارت کلیک کنید
 
+پیش‌فرض‌های نسخهٔ ۱.۴۱ برای همین حساب دمو مسلح‌اند (`AllowTrading=true`، `EnableDemoScalper=true`، `ExpectedLogin=68531270`، `MaxLots=2.00`، `AllowRealAccount=false`). قفل‌های سخت همچنان پابرجاست: فقط حساب دمو با لاگین 68531270، مغز ریسک، حدها، استاپ اجباری و فایل kill switch.
+
 1. یک چارت باز کنید، مثلاً `XAUUSD` یا `EURUSD` روی M5 (نمادهای دیگر هم از Inputs خوانده می‌شوند).
 2. دکمهٔ **AutoTrading** (Algo Trading) بالای ترمینال را روشن کنید تا سبز شود.
 3. `MolidoBridge` را از Navigator روی چارت بکشید.
-4. در تب **Common**: گزینهٔ **Allow Algo Trading** را تیک بزنید.
-5. در تب **Inputs** این‌ها را تنظیم کنید و OK بزنید:
-
-| تنظیم | مقدار |
-|---|---|
-| AllowTrading | **true** |
-| AllowRealAccount | **false** (عوض نکنید) |
-| ExpectedLogin | **68531270** |
-| EnableDemoScalper | **true** |
-| ScalperKillSwitch | **false** |
-| ScalperSymbols | `XAUUSD,EURUSD` (اگر بروکر پسوند دارد، اسم درست را بگذارید) |
-| ScalperTF | M5 |
-| MaxLots | 2.00 یا کمتر |
-
-6. در تب Experts باید چیزی شبیه این را ببینید: `MolidoScalper: armed on demo 68531270`.
+4. در تب **Common** گزینهٔ **Allow Algo Trading** را اگر خالی است تیک بزنید و **OK** را بزنید. لازم نیست Inputs را عوض کنید.
+5. در تب Experts باید چیزی شبیه این را ببینید: `MolidoScalper: armed on demo 68531270`.
 
 اسکلپر فقط بعد از بسته شدن کندل M5 بعدی تصمیم می‌گیرد، نه بلافاصله بعد از اتصال.
 

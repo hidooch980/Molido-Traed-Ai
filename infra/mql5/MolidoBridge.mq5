@@ -13,9 +13,9 @@
 //| that directory directly. It is slower than an in-process call and |
 //| completely reliable, which is the correct trade for hourly bars.  |
 //|                                                                  |
-//| Demo scalper (v1.40): may place orders ONLY on ACCOUNT_TRADE_     |
-//| MODE_DEMO login 68531270, and only when AllowTrading and          |
-//| EnableDemoScalper are both on. Every new order is gated by a      |
+//| Demo scalper (v1.41): may place orders ONLY on ACCOUNT_TRADE_     |
+//| MODE_DEMO login 68531270. Defaults are armed (AllowTrading and    |
+//| EnableDemoScalper on) for this demo. Every new order is gated by a|
 //| Risk Brain (APPROVE/REDUCE/BLOCK) with hard limits: 0.5% risk,    |
 //| 2% daily loss, 2.0 lots, 2 positions, mandatory stop. Missing     |
 //| data, a kill switch, or a BLOCK means no trade. Real accounts     |
@@ -27,7 +27,7 @@
 //--- in a startup config file, which the terminal reads from the command
 //--- line - no window, no click, and it survives every restart.
 #property copyright "MolidoTrade AI"
-#property version   "1.40"
+#property version   "1.41"
 
 //--- Written to the common folder rather than the terminal's own, so the path
 //--- does not move when the terminal is reinstalled or run portable.
@@ -103,7 +103,7 @@ input bool HideUnlistedSymbols = true;
 //--- The safety inputs - AllowTrading, AllowRealAccount, ExpectedLogin,
 //--- EnableDemoScalper and ScalperKillSwitch - have no runtime copy, so no
 //--- remote message can change them.
-#define MOLIDO_EA_VERSION "1.40"
+#define MOLIDO_EA_VERSION "1.41"
 int    g_RefreshSeconds   = 20;
 int    g_BarCount         = 500;
 int    g_IntradayBarCount = 240;
@@ -510,7 +510,7 @@ void OnDeinit(const int reason)
 //--- absent field as real money, so this switch alone cannot reach a funded
 //--- account - and MOLIDO_ALLOW_REAL_MONEY_ORDERS is a separate refusal on top
 //--- of that.
-input bool   AllowTrading    = false;  // read-only by default; orders need an explicit opt-in
+input bool   AllowTrading    = true;   // armed for demo 68531270; hard account gate still applies
 //--- Expert-side real-money guard (added 2026-11-14, agents stage 2).
 //--- The backend already refuses real accounts (autopilot.account_gate and
 //--- MOLIDO_ALLOW_REAL_MONEY_ORDERS); this is the same refusal one layer down,
@@ -571,7 +571,7 @@ input double MaxLots         = 2.00;
 input int    MaxSlippagePts  = 30;
 
 input group "Demo Scalper (login 68531270 only)"
-input bool              EnableDemoScalper   = false;          // off until you set it in Inputs
+input bool              EnableDemoScalper   = true;           // armed for demo 68531270
 input string            ScalperSymbols      = "XAUUSD,EURUSD";
 input ENUM_TIMEFRAMES   ScalperTF           = PERIOD_M5;
 input int               ScalperMaxSpreadPts = 40;             // 0 = ATR filter only

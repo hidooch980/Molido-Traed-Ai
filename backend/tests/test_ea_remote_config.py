@@ -28,8 +28,12 @@ def test_version_define_matches_property():
 
 
 def test_guards_stay_hard_coded():
-    assert "input bool   AllowTrading    = false;" in SRC
+    assert "input bool   AllowTrading    = true;" in SRC
     assert "input bool   AllowRealAccount = false;" in SRC
+    assert "input long ExpectedLogin = 68531270;" in SRC
+    assert "EnableDemoScalper   = true;" in SRC
+    assert "ScalperKillSwitch   = false;" in SRC
+    assert "MaxLots         = 2.00;" in SRC
     remote = _remote_section()
     for guard in ("AllowTrading", "AllowRealAccount", "ExpectedLogin",
                   "EnableDemoScalper", "ScalperKillSwitch"):
