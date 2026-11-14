@@ -55,13 +55,16 @@ def snapshot(account_key: str | None = None, *, session: Any = None,
     equity = float(account.get("equity") or 0.0)
     daily_pnl_pct: float | None = None
     unparsed = 0
+    days: set[Any] = set()
     if balance > 0 and deals.get("available"):
         realised = 0.0
         for row in deals.get("deals", []):
             when = _when(row.get("closed_at"))
             if when is None:
                 unparsed += 1
-            elif when.date() == now.date():
+                continue
+            days.add(when.date())
+            if when.date() == now.date():
                 realised += float(row.get("net") or row.get("profit") or 0.0)
         if unparsed == 0:
             daily_pnl_pct = round((realised + equity - balance) / balance * 100, 4)
@@ -80,6 +83,7 @@ def snapshot(account_key: str | None = None, *, session: Any = None,
         "equity": equity,
         "daily_pnl_pct": daily_pnl_pct,
         "deals_with_unreadable_time": unparsed,
+        "days_traded": len(days),
         "open_symbols": symbols,
     }
 

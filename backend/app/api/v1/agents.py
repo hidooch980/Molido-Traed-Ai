@@ -23,6 +23,7 @@ from app.models.agent_memory import CouncilDecisionRecord, FailureRecord, Learni
 from app.services import (
     agent_account,
     agent_events,
+    agent_ftmo,
     agent_paper,
     agent_scan,
     agent_symbols,
@@ -186,3 +187,9 @@ def rocket_walkforward(
 ) -> dict[str, Any]:
     """RT10 stepped point-in-time over stored history, outcomes per fold."""
     return agent_walkforward.historical(session, symbol, timeframe, folds=folds)
+
+
+@router.get("/ftmo-monitor")
+def ftmo_monitor(session: Session = Depends(get_db), _: Principal = READ) -> dict[str, Any]:
+    """Recorded challenge accounts checked against live bridge data (read-only)."""
+    return agent_ftmo.monitor(session)

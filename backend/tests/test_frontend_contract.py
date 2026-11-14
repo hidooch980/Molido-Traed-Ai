@@ -75,6 +75,7 @@ class TestTheFrontendTypesMatchTheApi:
             ("GatewayView", "/api/v1/agents/gateway"),
             ("GatewayUsageView", "/api/v1/agents/gateway/usage"),
             ("RocketScanView", "/api/v1/agents/rocket/scan"),
+            ("FtmoMonitorView", "/api/v1/agents/ftmo-monitor"),
         ],
     )
     def test_every_declared_field_is_actually_returned(self, client, interface, path):

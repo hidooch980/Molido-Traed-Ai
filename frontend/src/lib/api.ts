@@ -1368,7 +1368,28 @@ export interface GatewayUsageView {
   }>;
 }
 
+export interface FtmoMonitorRow {
+  account: { id: string; label: string; rulebook_key: string | null; program: string | null;
+    phase: string | null; starting_balance: number; currency: string };
+  bridge_account_key: string | null;
+  status: "monitored" | "not_linked" | "no_live_data" | "no_rulebook" | "unknown_daily";
+  reason?: string | null;
+  live?: { equity: number; balance: number; daily_pnl_pct: number | null; login?: number;
+    days_traded?: number };
+  verdict?: { verdict: string; warnings?: string[]; unverified?: string[];
+    daily?: Record<string, unknown>; total?: Record<string, unknown> };
+}
+
+export interface FtmoMonitorView {
+  as_of: string;
+  mode: string;
+  bridge_accounts: string[];
+  accounts: FtmoMonitorRow[];
+  note: string;
+}
+
 export const api = {
+  ftmoMonitor: () => request<FtmoMonitorView>("/api/v1/agents/ftmo-monitor"),
   agentRegistry: () => request<AgentRegistryView>("/api/v1/agents/registry"),
   rocketScan: (timeframe = "H1") =>
     request<RocketScanView>(`/api/v1/agents/rocket/scan?timeframe=${timeframe}`),

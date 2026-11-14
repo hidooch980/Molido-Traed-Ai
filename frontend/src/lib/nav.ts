@@ -40,6 +40,7 @@ export const NAV: NavItem[] = [
   { key: "orders", labelKey: "nav.orders", href: "/orders", group: "trading" },
   { key: "risk", labelKey: "nav.risk", href: "/risk", group: "trading" },
   { key: "challenge", labelKey: "nav.challenge", href: "/challenge", group: "trading" },
+  { key: "ftmo", labelKey: "nav.ftmo", href: "/ftmo", group: "trading" },
   { key: "execution", labelKey: "nav.execution", href: "/execution", group: "trading" },
   { key: "journal", labelKey: "nav.journal", href: "/journal", group: "trading" },
   { key: "lab", labelKey: "nav.lab", href: "/lab", group: "learning" },
