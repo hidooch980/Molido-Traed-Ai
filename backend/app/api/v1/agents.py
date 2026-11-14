@@ -20,7 +20,7 @@ from app.core.enums import Permission, Timeframe
 from app.core.timeframes import catalogue
 from app.db.session import get_db
 from app.models.agent_memory import CouncilDecisionRecord, FailureRecord, LearningRecord
-from app.services import agent_account, agent_paper, agent_scan
+from app.services import agent_account, agent_paper, agent_scan, agent_walkforward
 
 router = APIRouter(prefix="/agents", tags=["agents"])
 
@@ -142,3 +142,21 @@ def read_paper(
     _: Principal = READ,
 ) -> dict[str, Any]:
     return agent_paper.book(session, limit=limit)
+
+
+@router.get("/rocket/forward")
+def rocket_forward(session: Session = Depends(get_db), _: Principal = READ) -> dict[str, Any]:
+    """Stored rocket signals and their resolved forward outcomes."""
+    return agent_walkforward.forward_summary(session)
+
+
+@router.get("/rocket/walkforward")
+def rocket_walkforward(
+    symbol: str,
+    timeframe: Timeframe = Timeframe.H1,
+    folds: int = Query(default=4, ge=2, le=10),
+    session: Session = Depends(get_db),
+    _: Principal = READ,
+) -> dict[str, Any]:
+    """RT10 stepped point-in-time over stored history, outcomes per fold."""
+    return agent_walkforward.historical(session, symbol, timeframe, folds=folds)

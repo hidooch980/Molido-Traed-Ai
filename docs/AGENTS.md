@@ -214,6 +214,12 @@ API فقط‌خواندنی: `/api/v1/agents/memory`، `/agents/council/decision
   - نتیجه‌ها از `GET /agents/paper` خوانده می‌شوند.
 - **EA (نسخه 1.10):** حالا `AllowTrading=false` پیش‌فرض است. روی حساب Real، EA اجرا نمی‌شود (`INIT_FAILED`) مگر اینکه `AllowRealAccount=true` شود. با `ExpectedLogin` می‌شود EA را به یک login مشخص قفل کرد.
 
+## جمع‌آوری تایم‌فریم‌های مشتق و Walk-forward (مرحله ۱۱)
+
+- **`workers/live_bars.py`:** دوره‌های M2، M3، M4، M6، M10، M12، M20، H2، H6، H8 و H12 را با همان `fold` موجود از دوره‌های native می‌سازد. هر کندل همهٔ اجزایش را لازم دارد. خروجی زیر provider `metatrader-derived` ذخیره می‌شود. این کار فقط با `MOLIDO_DERIVE_EXTRA_TIMEFRAMES=1` روشن می‌شود و پیش‌فرض خاموش است.
+- **سیگنال‌های RT10:** هر سیگنال یک‌بار در حافظه ثبت می‌شود (kind=rocket، event=signal). سیگنال روی کندل‌های بستهٔ بعدی، فقط یک‌بار، حل می‌شود (event=outcome). نتیجه از `GET /agents/rocket/forward` خوانده می‌شود. چرخهٔ Paper این دو کار را خودش انجام می‌دهد.
+- **`GET /agents/rocket/walkforward?symbol=&timeframe=&folds=`:** RT10 را روی تاریخچهٔ ذخیره‌شده قدم‌به‌قدم و point-in-time اجرا می‌کند. هم‌زمان فقط یک پوزیشن باز است. نتیجه به تفکیک fold زمانی و رتبه گزارش می‌شود. چون پارامتری fit نمی‌شود، همه‌چیز out-of-sample است. هزینه‌ها (اسپرد و لغزش) فقط وقتی حساب می‌شوند که داده‌شان داده شود.
+
 ## برنامه مرحله‌ای
 
 هر مرحله روی شاخه جدا، با تست، و فقط با تأیید مالک merge می‌شود. هیچ مرحله‌ای LIVE را فعال نمی‌کند.

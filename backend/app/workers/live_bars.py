@@ -28,6 +28,7 @@ Nothing here sends, changes or reads an order.
 from __future__ import annotations
 
 import math
+import os
 import pathlib
 from collections import defaultdict
 from collections.abc import Iterable
@@ -91,6 +92,35 @@ DERIVE_LOOKBACK: dict[Timeframe, timedelta] = {
     Timeframe.H4: timedelta(days=21),
     Timeframe.D1: timedelta(days=30),
 }
+
+#: The rest of MT5's periods (stage 7), built only when
+#: MOLIDO_DERIVE_EXTRA_TIMEFRAMES is on. Each needs every part: a two-minute bar
+#: with one minute missing is half a candle. Sources are periods the bridge
+#: publishes natively (see app/core/timeframes.py).
+EXTRA_DERIVED: dict[Timeframe, tuple[Timeframe, int]] = {
+    Timeframe.M2: (Timeframe.M1, 2),
+    Timeframe.M3: (Timeframe.M1, 3),
+    Timeframe.M4: (Timeframe.M1, 4),
+    Timeframe.M6: (Timeframe.M1, 6),
+    Timeframe.M10: (Timeframe.M5, 2),
+    Timeframe.M12: (Timeframe.M1, 12),
+    Timeframe.M20: (Timeframe.M5, 4),
+    Timeframe.H2: (Timeframe.H1, 2),
+    Timeframe.H6: (Timeframe.H1, 6),
+    Timeframe.H8: (Timeframe.H4, 2),
+    Timeframe.H12: (Timeframe.H4, 3),
+}
+EXTRA_FLAG = "MOLIDO_DERIVE_EXTRA_TIMEFRAMES"
+for _tf in EXTRA_DERIVED:
+    DERIVE_LOOKBACK[_tf] = timedelta(days=3) if _tf.delta < timedelta(hours=1) else timedelta(
+        days=21)
+
+
+def derived_targets() -> dict[Timeframe, tuple[Timeframe, int]]:
+    """DERIVED, plus the extra periods when their default-off flag is set."""
+    flag = os.environ.get(EXTRA_FLAG, "").strip().lower() in ("1", "true", "yes", "on")
+    return {**DERIVED, **EXTRA_DERIVED} if flag else dict(DERIVED)
+
 
 #: Buckets behind the newest derived one that are rebuilt each pass, because
 #: their source bars can still be restated or backfilled.
@@ -277,7 +307,7 @@ def derive(
     source rather than weeks. `since` reaches further back when the source
     was just backfilled.
     """
-    source, min_parts = DERIVED[target]
+    source, min_parts = {**DERIVED, **EXTRA_DERIVED}[target]
     moment = now.astimezone(UTC)
     observed = _provider_id(session, broker_bars.PROVIDER_CODE, create=False)
     if observed is None:
@@ -728,7 +758,7 @@ def refresh(
         ingested[timeframe.value]["backfill_since"] = report.get("backfill_since")
 
     derived: dict[str, Any] = {}
-    for target, (source, _) in DERIVED.items():
+    for target, (source, _) in derived_targets().items():
         since_raw = (ingested.get(source.value) or {}).get("backfill_since")
         since = _aware(datetime.fromisoformat(since_raw)) if since_raw else None
         kwargs: dict[str, Any] = {}
