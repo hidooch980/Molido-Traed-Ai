@@ -14,7 +14,7 @@
 [CmdletBinding()]
 param(
   [string]$Repo = "hidooch980/Molido-Traed-Ai",
-  [string]$Branch = "agents/stage-14-ea-remote-config",
+  [string]$Branch = "agents/stage-15-complete-agents",
   [string]$SourceUrl = "",
   [string]$ChecksumUrl = "",
   [string]$ExpectedSha256 = "",

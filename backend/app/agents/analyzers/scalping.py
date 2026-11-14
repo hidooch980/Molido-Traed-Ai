@@ -7,6 +7,7 @@ decision path, so this is microstructure as far as bars can show it.
 from __future__ import annotations
 
 import statistics
+from datetime import datetime
 
 from app.agents.analyzers.bars import AnalysisContext, atr, ema
 from app.agents.analyzers.common import abstain, direction, message
@@ -21,13 +22,46 @@ def _close_location(c) -> float:
     return 0.0 if rng <= 0 else 2 * (c.close - c.low) / rng - 1
 
 
+def tick_features(ticks: list[dict], as_of: datetime) -> dict[str, float] | None:
+    """Tick-level microstructure from (time, bid, ask) ticks known at `as_of`."""
+    seen = [t for t in ticks if isinstance(t.get("time"), datetime) and t["time"] <= as_of
+            and t.get("bid") and t.get("ask") and t["ask"] >= t["bid"]]
+    seen.sort(key=lambda t: t["time"])
+    if len(seen) < 50:
+        return None
+    mids = [(t["bid"] + t["ask"]) / 2 for t in seen]
+    ups = sum(1 for a, b in zip(mids, mids[1:], strict=False) if b > a)
+    downs = sum(1 for a, b in zip(mids, mids[1:], strict=False) if b < a)
+    spreads = [t["ask"] - t["bid"] for t in seen]
+    minutes = max((seen[-1]["time"] - seen[0]["time"]).total_seconds() / 60, 1 / 60)
+    return {
+        "ticks": float(len(seen)),
+        "imbalance": (ups - downs) / max(1, ups + downs),
+        "spread_median": statistics.median(spreads),
+        "spread_last": spreads[-1],
+        "ticks_per_minute": len(seen) / minutes,
+    }
+
+
 def sc02_microstructure(ctx: AnalysisContext) -> AgentMessage:
+    ticks = ctx.extras.get("ticks")
+    feats = tick_features(ticks, ctx.as_of) if isinstance(ticks, list) else None
+    if feats is not None:
+        wide = feats["spread_median"] > 0 and feats["spread_last"] > 2 * feats["spread_median"]
+        ev = [f"{feats['ticks']:.0f} ticks, {feats['ticks_per_minute']:.1f}/min",
+              f"signed tick imbalance {feats['imbalance']:+.2f}",
+              f"spread last {feats['spread_last']:g} vs median {feats['spread_median']:g}"]
+        rec = Rec.WAIT if wide else direction(feats["imbalance"], 0.2)
+        return message("SC02", ctx, rec, min(0.6, abs(feats["imbalance"])),
+                       "tick-level order-flow proxy (quote ticks, not exchange volume)", ev,
+                       risk="WIDE_SPREAD" if wide else "normal spread")
     if len(ctx.bars) < 5:
-        return abstain("SC02", ctx, "fewer than 5 closed bars")
+        return abstain("SC02", ctx, "no ticks and fewer than 5 closed bars")
     last = ctx.bars[-3:]
     score = statistics.fmean(_close_location(b) for b in last)
-    ev = [f"close location last 3 bars {score:+.2f} (-1 lows, +1 highs)"]
-    return message("SC02", ctx, direction(score, 0.4), min(0.6, abs(score)),
+    ev = ["no ticks given - bar fallback",
+          f"close location last 3 bars {score:+.2f} (-1 lows, +1 highs)"]
+    return message("SC02", ctx, direction(score, 0.4), min(0.4, abs(score)),
                    "bar-level pressure from where bars close in their range", ev)
 
 

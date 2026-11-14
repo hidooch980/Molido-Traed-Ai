@@ -22,9 +22,11 @@ from app.db.session import get_db
 from app.models.agent_memory import CouncilDecisionRecord, FailureRecord, LearningRecord
 from app.services import (
     agent_account,
+    agent_council,
     agent_events,
     agent_ftmo,
     agent_paper,
+    agent_run,
     agent_scan,
     agent_symbols,
     agent_walkforward,
@@ -193,3 +195,22 @@ def rocket_walkforward(
 def ftmo_monitor(session: Session = Depends(get_db), _: Principal = READ) -> dict[str, Any]:
     """Recorded challenge accounts checked against live bridge data (read-only)."""
     return agent_ftmo.monitor(session)
+
+
+@router.get("/run")
+def run_agents(
+    symbol: str,
+    timeframe: Timeframe = Timeframe.H1,
+    session: Session = Depends(get_db),
+    _: Principal = READ,
+) -> dict[str, Any]:
+    """Every analyzer on one symbol with per-agent health; nothing is stored."""
+    bridge = agent_account._provider(None, session)
+    return agent_run.run_symbol(session, symbol, timeframe, bridge=bridge,
+                                events=agent_events.high_impact())
+
+
+@router.get("/council/versions")
+def council_versions(session: Session = Depends(get_db), _: Principal = READ) -> dict[str, Any]:
+    """AI03 proposal replayed against the current weights on resolved decisions (BRAIN-01)."""
+    return agent_council.versions(session)

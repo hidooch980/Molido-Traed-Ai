@@ -25,7 +25,7 @@
 //--- in a startup config file, which the terminal reads from the command
 //--- line - no window, no click, and it survives every restart.
 #property copyright "MolidoTrade AI"
-#property version   "1.20"
+#property version   "1.30"
 
 //--- Written to the common folder rather than the terminal's own, so the path
 //--- does not move when the terminal is reinstalled or run portable.
@@ -100,11 +100,12 @@ input bool HideUnlistedSymbols = true;
 //--- replaced by the platform's remote config (symbols, refresh, bar counts).
 //--- The safety inputs - AllowTrading, AllowRealAccount, ExpectedLogin - have
 //--- no runtime copy, so no remote message can change them.
-#define MOLIDO_EA_VERSION "1.20"
+#define MOLIDO_EA_VERSION "1.30"
 int    g_RefreshSeconds   = 20;
 int    g_BarCount         = 500;
 int    g_IntradayBarCount = 240;
 string g_Symbols          = "";
+int    g_TickCount        = 0;   // 0 = no tick files; the platform may turn it on
 
 string TimeframeName(ENUM_TIMEFRAMES period)
   {
@@ -1406,6 +1407,7 @@ void Publish()
       //--- the edge does. Publishing the data settles that with evidence
       //--- rather than with either of our opinions.
       WriteBars(name, PERIOD_M5);
+      WriteTicks(name);
       cursor = i + 1;
       //--- M1 is not published, and its absence is a measurement rather than
       //--- a preference. `collector._broker_timeframes` stopped ingesting it
@@ -1567,6 +1569,9 @@ void FetchRemoteConfig(bool force)
    string bars = JsonValue(body, "bar_count");
    if(StringLen(bars) > 0)
       g_BarCount = Clamp((int)StringToInteger(bars), 50, 5000);
+   string ticks = JsonValue(body, "tick_count");
+   if(StringLen(ticks) > 0)
+      g_TickCount = Clamp((int)StringToInteger(ticks), 0, 1000);
    string intraday = JsonValue(body, "intraday_bar_count");
    if(StringLen(intraday) > 0)
       g_IntradayBarCount = Clamp((int)StringToInteger(intraday), 50, 2000);
@@ -1578,4 +1583,27 @@ void FetchRemoteConfig(bool force)
       Print("MolidoBridge: a newer EA is available (", latest, ", running ", MOLIDO_EA_VERSION,
             "). The updater script installs it; nothing changes until then.");
      }
+  }
+
+//+------------------------------------------------------------------+
+//| Recent quote ticks for the microstructure agent (SC02).           |
+//| Off unless the platform sets tick_count; written in the same      |
+//| bounded slice as bars so a pass stays short.                      |
+//+------------------------------------------------------------------+
+void WriteTicks(string symbol)
+  {
+   if(g_TickCount <= 0)
+      return;
+   MqlTick ticks[];
+   int got = CopyTicks(symbol, ticks, COPY_TICKS_INFO, 0, g_TickCount);
+   if(got <= 0)
+      return;
+   int handle = FileOpen("molido_ticks_" + symbol + ".csv", FLAGS | FILE_CSV, ',');
+   if(handle == INVALID_HANDLE)
+      return;
+   FileWrite(handle, "time_msc", "bid", "ask");
+   for(int i = 0; i < got; i++)
+      FileWrite(handle, IntegerToString(ticks[i].time_msc), DoubleToString(ticks[i].bid, 8),
+                DoubleToString(ticks[i].ask, 8));
+   FileClose(handle);
   }

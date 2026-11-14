@@ -56,14 +56,14 @@ Kill Switch و gate نوع حساب ارسال می‌کند.
 
 ## وضعیت ۵۱ نقش
 
-خلاصه (پس از مرحله ۱۲): **42 IMPLEMENTED**، **9 PARTIAL**، **0 NOT_IMPLEMENTED**. در مرحله ۱: 14 / 21 / 16.
+خلاصه (پس از مرحله ۱۵): **50 IMPLEMENTED**، **1 PARTIAL** (EX02: دادهٔ قیمت درخواستی در برابر قیمت پر شده برای آمار لغزش وجود ندارد)، **0 NOT_IMPLEMENTED**. پس از مرحله ۱۲: 42 / 9 / 0. در مرحله ۱: 14 / 21 / 16.
 
 همه نقش‌های موجود قانون‌محور و قطعی‌اند. «IMPLEMENTED» یعنی کد موجود کار نقش را انجام می‌دهد، نه اینکه یک ایجنت هوش مصنوعی مستقل با این شناسه اجرا می‌شود.
 
 | شناسه | نام | سطح | وضعیت | ماژول‌های موجود |
 |---|---|---|---|---|
 | SC01 | فرمانده اسکالپینگ | L3 | IMPLEMENTED | `backend/app/agents/analyzers/scalping.py` |
-| SC02 | تحلیلگر ریزساختار بازار | L2 | PARTIAL | `backend/app/agents/analyzers/scalping.py` |
+| SC02 | تحلیلگر ریزساختار بازار | L2 | IMPLEMENTED | `backend/app/agents/analyzers/scalping.py`<br>`backend/app/services/agent_run.py` |
 | SC03 | شکارچی مومنتوم | L2 | IMPLEMENTED | `backend/app/agents/analyzers/scalping.py` |
 | SC04 | شکارچی نقدینگی | L2 | IMPLEMENTED | `backend/app/agents/analyzers/scalping.py` |
 | SC05 | هوش تحلیل اسپرد | L2 | IMPLEMENTED | `backend/app/agents/analyzers/scalping.py`<br>`backend/app/workers/autotrade.py` |
@@ -81,19 +81,19 @@ Kill Switch و gate نوع حساب ارسال می‌کند.
 | SM07 | تحلیلگر نقدینگی سمت خرید و فروش | L2 | IMPLEMENTED | `backend/app/agents/analyzers/smc.py` |
 | SM08 | تحلیلگر Premium و Discount | L2 | IMPLEMENTED | `backend/app/agents/analyzers/smc.py` |
 | SM09 | تحلیلگر سشن‌های معاملاتی ICT | L2 | IMPLEMENTED | `backend/app/agents/analyzers/smc.py` |
-| SM10 | تحلیلگر ردپای مؤسسات مالی | L2 | PARTIAL | `backend/app/agents/analyzers/smc.py`<br>`backend/app/services/positioning.py` |
+| SM10 | تحلیلگر ردپای مؤسسات مالی | L2 | IMPLEMENTED | `backend/app/agents/analyzers/smc.py`<br>`backend/app/services/positioning.py`<br>`backend/app/services/agent_run.py` |
 | TA01 | تحلیلگر تکنیکال | L2 | IMPLEMENTED | `backend/app/features/indicators.py`<br>`backend/app/services/feature_store.py`<br>`backend/app/brain/council.py` |
-| TA02 | تحلیلگر چندتایم‌فریمی | L2 | PARTIAL | `backend/app/workers/autotrade.py`<br>`backend/app/core/enums.py`<br>`backend/app/services/point_in_time.py` |
-| TA03 | تحلیلگر پرایس اکشن | L2 | PARTIAL | `backend/app/brain/strategy.py` |
+| TA02 | تحلیلگر چندتایم‌فریمی | L2 | IMPLEMENTED | `backend/app/agents/analyzers/extra.py`<br>`backend/app/core/timeframes.py`<br>`backend/app/workers/autotrade.py` |
+| TA03 | تحلیلگر پرایس اکشن | L2 | IMPLEMENTED | `backend/app/agents/analyzers/extra.py`<br>`backend/app/brain/strategy.py` |
 | TA04 | تشخیص‌دهنده روند | L2 | IMPLEMENTED | `backend/app/brain/council.py`<br>`backend/app/learning/rules.py` |
 | TA05 | شکارچی نقاط بازگشت | L2 | IMPLEMENTED | `backend/app/learning/rules.py` |
 | TA06 | متخصص شکست قیمت | L2 | IMPLEMENTED | `backend/app/learning/rules.py`<br>`backend/app/brain/strategy.py` |
 | AI01 | هوش تشخیص وضعیت بازار | L2 | IMPLEMENTED | `backend/app/services/regime.py`<br>`backend/app/learning/regimes.py`<br>`backend/app/brain/council.py` |
-| AI02 | هوش پیش‌بینی بازار | L2 | PARTIAL | `backend/app/agents/analyzers/ai02.py`<br>`backend/app/brain/expected_value.py`<br>`backend/app/brain/calibration.py` |
-| AI03 | هوش یادگیری تطبیقی | L3 | PARTIAL | `backend/app/learning/brain_selection.py`<br>`backend/app/learning/drift.py`<br>`backend/app/learning/registry.py`<br>`backend/app/learning/lab.py` |
+| AI02 | هوش پیش‌بینی بازار | L2 | IMPLEMENTED | `backend/app/agents/analyzers/ai02.py`<br>`backend/app/agents/analyzers/ml.py`<br>`backend/app/brain/calibration.py` |
+| AI03 | هوش یادگیری تطبیقی | L3 | IMPLEMENTED | `backend/app/agents/council/versions.py`<br>`backend/app/services/agent_council.py`<br>`backend/app/learning/brain_selection.py`<br>`backend/app/learning/drift.py`<br>`backend/app/learning/registry.py`<br>`backend/app/learning/lab.py` |
 | AI04 | هوش تحلیل خصمانه | L2 | IMPLEMENTED | `backend/app/brain/meta.py` |
 | RK01 | نگهبان اصلی ریسک | L4 | IMPLEMENTED | `backend/app/brain/risk.py`<br>`backend/app/execution/safety.py`<br>`backend/app/execution/killswitch_store.py`<br>`backend/app/core/safe_mode.py` |
-| RK02 | هوش حد ضرر و حد سود پویا | L3 | PARTIAL | `backend/app/learning/exits.py`<br>`backend/app/learning/geometry.py`<br>`backend/app/workers/trailing.py` |
+| RK02 | هوش حد ضرر و حد سود پویا | L3 | IMPLEMENTED | `backend/app/agents/analyzers/extra.py`<br>`backend/app/learning/exits.py`<br>`backend/app/workers/trailing.py` |
 | RK03 | هوش محاسبه حجم معامله | L4 | IMPLEMENTED | `backend/app/services/calculators.py`<br>`backend/app/workers/autotrade.py` |
 | RK04 | هوش مدیریت ریسک پرتفوی | L4 | IMPLEMENTED | `backend/app/brain/portfolio.py`<br>`backend/app/workers/autotrade.py` |
 | RK05 | ناظر قوانین FTMO | L4 | IMPLEMENTED | `backend/app/brain/challenge.py`<br>`backend/app/brain/rulebooks.py`<br>`backend/app/services/challenge_accounts.py` |
@@ -102,7 +102,7 @@ Kill Switch و gate نوع حساب ارسال می‌کند.
 | EX03 | ناظر هوشمند معاملات | L4 | IMPLEMENTED | `backend/app/execution/engine.py`<br>`backend/app/api/v1/execution.py`<br>`backend/app/workers/trailing.py` |
 | EX04 | مدیر دفتر ثبت معاملات | L1 | IMPLEMENTED | `backend/app/brain/journal.py`<br>`backend/app/services/journal_log.py`<br>`backend/app/services/audit.py` |
 | EX05 | فرمانده کل معاملات | L4 | IMPLEMENTED | `backend/app/execution/autopilot.py`<br>`backend/app/workers/autotrade.py`<br>`backend/app/execution/modes.py` |
-| BRAIN-01 | تحلیلگر مغزها و هوش جمعی | L2 | PARTIAL | `backend/app/agents/analyzers/brain01.py`<br>`backend/app/brain/analyst.py`<br>`backend/app/agents/gateway/ledger.py` |
+| BRAIN-01 | تحلیلگر مغزها و هوش جمعی | L2 | IMPLEMENTED | `backend/app/agents/analyzers/brain01.py`<br>`backend/app/agents/council/versions.py`<br>`backend/app/agents/analyzers/runner.py`<br>`backend/app/agents/gateway/ledger.py` |
 | RT01 | شکارچی انفجار قیمت | L2 | IMPLEMENTED | `backend/app/agents/analyzers/rocket.py` |
 | RT02 | تحلیلگر جهش مومنتوم | L2 | IMPLEMENTED | `backend/app/agents/analyzers/rocket.py` |
 | RT03 | شکارچی شکست انفجاری | L2 | IMPLEMENTED | `backend/app/agents/analyzers/rocket.py` |
@@ -264,3 +264,14 @@ API فقط‌خواندنی: `/api/v1/agents/memory`، `/agents/council/decision
 | ۱۱ | تست جامع و regression | پیوسته |
 
 تغییر وضعیت یک نقش در `roles.py` یک ادعاست و commit آن باید شاهد (کد و تست) داشته باشد.
+
+
+## مرحله ۱۵ — تکمیل نقش‌ها (فقط سایه)
+
+- TA02/TA03/RK02: `agents/analyzers/extra.py` (چندتایم‌فریمی از گروه‌های کامل، الگوهای کندلی، پیشنهاد SL/TP).
+- SC02: تیک‌های quote از EA 1.30 (`molido_ticks_<SYM>.csv`، فقط وقتی `MOLIDO_EA_TICK_COUNT` بیشتر از صفر باشد)؛ بدون تیک برمی‌گردد به کندل.
+- AI02: رگرسیون لجستیک پایتون خالص (`analyzers/ml.py`)، Brier خارج از نمونه؛ بدون مهارت = WAIT.
+- SM10: CFTC COT با `MOLIDO_AGENT_COT` (پیش‌فرض خاموش).
+- BRAIN-01/AI03: `agents/council/versions.py` و `services/agent_council.py`: بازپخش تصمیم‌های ثبت‌شده با دو نسخهٔ وزن در حافظه؛ پیشنهاد وزن فقط به صورت PROPOSED.
+- `GET /agents/run?symbol=` همهٔ تحلیلگرها با سلامت هر ایجنت؛ `GET /agents/council/versions`.
+- اصلاح باگ: EA فقط M5، M15 و H1 را منتشر می‌کند (نه هفت تایم‌فریم)؛ برچسب Native و تایم‌فریم‌های مشتق‌شدهٔ اضافه اصلاح شد (M2/M3/M4/M6/M12 منبع ندارند).

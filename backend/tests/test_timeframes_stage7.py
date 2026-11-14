@@ -46,16 +46,17 @@ def test_every_requested_period_exists_with_a_duration():
 def test_labels_follow_what_the_bridge_publishes():
     ea = open("../infra/mql5/MolidoBridge.mq5", encoding="utf-8", errors="ignore").read()
     for tf in MT5_BRIDGE_NATIVE:
-        assert f'return "{tf.value}";' in ea
-    assert source_kind(Timeframe.H4) is Source.NATIVE
+        assert f"WriteBars(name, PERIOD_{tf.value});" in ea
+    assert source_kind(Timeframe.H1) is Source.NATIVE
+    assert source_kind(Timeframe.H4) is Source.DERIVED
     for name in NEW:
         assert source_kind(Timeframe(name)) is Source.DERIVED
 
 
 @pytest.mark.parametrize(
     ("tf", "base"),
-    [("M2", "M1"), ("M10", "M5"), ("M20", "M5"), ("H2", "H1"), ("H8", "H4"),
-     ("H12", "H4"), ("H6", "H1"), ("H3", "H1"), ("W1", "D1")],
+    [("M2", None), ("M10", "M5"), ("M20", "M5"), ("H2", "H1"), ("H8", "H1"),
+     ("H12", "H1"), ("H6", "H1"), ("H3", "H1"), ("W1", None), ("H4", "H1"), ("M30", "M15")],
 )
 def test_derivation_base(tf, base):
     got = derivation_base(Timeframe(tf))

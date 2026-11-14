@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from app.agents.analyzers.bars import AnalysisContext
 from app.agents.analyzers.common import abstain, message
+from app.agents.analyzers.ml import train_eval
 from app.agents.messages import AgentMessage
 from app.agents.messages import Recommendation as Rec
 
@@ -47,7 +48,27 @@ def forecast(closes: list[float], lookback: int = 5) -> dict[str, float] | None:
             "signal": signal, "brier_model": brier_model, "brier_base": brier_base}
 
 
+MIN_ML_BARS = 300
+MIN_SKILL = 0.002  # OOS Brier improvement over the base rate required to speak
+
+
 def ai02_forecast(ctx: AnalysisContext) -> AgentMessage:
+    if len(ctx.bars) >= MIN_ML_BARS:
+        m = train_eval(list(ctx.bars))
+        if m is not None:
+            ev = [f"logistic regression, train {m['n_train']} / test {m['n_test']} "
+                  "(chronological)",
+                  f"P(next up)={m['p_up']:.3f}",
+                  f"Brier OOS {m['brier_oos']:.4f} vs base {m['brier_base_oos']:.4f}",
+                  f"accuracy OOS {m['accuracy_oos']:.3f}, log loss {m['logloss_oos']:.4f}"]
+            skill = m["brier_base_oos"] - m["brier_oos"]
+            edge = m["p_up"] - 0.5
+            if skill < MIN_SKILL or abs(edge) < MIN_EDGE:
+                return message("AI02", ctx, Rec.WAIT, 0.2,
+                               "model shows no out-of-sample skill or no edge now", ev)
+            return message("AI02", ctx, Rec.BUY if edge > 0 else Rec.SELL, min(0.7, abs(edge)),
+                           "logistic model with out-of-sample skill (shadow, unvalidated live)",
+                           ev)
     f = forecast(ctx.closes)
     if f is None:
         return abstain("AI02", ctx, f"fewer than {MIN_PAIRS} resolved history pairs")

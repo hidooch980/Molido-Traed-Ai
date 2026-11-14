@@ -94,22 +94,18 @@ DERIVE_LOOKBACK: dict[Timeframe, timedelta] = {
 }
 
 #: The rest of MT5's periods (stage 7), built only when
-#: MOLIDO_DERIVE_EXTRA_TIMEFRAMES is on. Each needs every part: a two-minute bar
-#: with one minute missing is half a candle. Sources are periods the bridge
-#: publishes natively (see app/core/timeframes.py).
+#: MOLIDO_DERIVE_EXTRA_TIMEFRAMES is on. Each needs every part: a ten-minute bar
+#: with one five-minute part missing is half a candle. Sources are the observed
+#: broker series (M5, H1), never another derived one.
 EXTRA_DERIVED: dict[Timeframe, tuple[Timeframe, int]] = {
-    Timeframe.M2: (Timeframe.M1, 2),
-    Timeframe.M3: (Timeframe.M1, 3),
-    Timeframe.M4: (Timeframe.M1, 4),
-    Timeframe.M6: (Timeframe.M1, 6),
     Timeframe.M10: (Timeframe.M5, 2),
-    Timeframe.M12: (Timeframe.M1, 12),
     Timeframe.M20: (Timeframe.M5, 4),
     Timeframe.H2: (Timeframe.H1, 2),
     Timeframe.H6: (Timeframe.H1, 6),
-    Timeframe.H8: (Timeframe.H4, 2),
-    Timeframe.H12: (Timeframe.H4, 3),
+    Timeframe.H8: (Timeframe.H1, 8),
+    Timeframe.H12: (Timeframe.H1, 12),
 }
+#: M2, M3, M4, M6 and M12 need M1, which the expert does not publish.
 EXTRA_FLAG = "MOLIDO_DERIVE_EXTRA_TIMEFRAMES"
 for _tf in EXTRA_DERIVED:
     DERIVE_LOOKBACK[_tf] = timedelta(days=3) if _tf.delta < timedelta(hours=1) else timedelta(

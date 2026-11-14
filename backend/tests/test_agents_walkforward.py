@@ -33,20 +33,20 @@ def test_extra_derivations_are_off_by_default(monkeypatch):
     assert set(live_bars.derived_targets()) == set(live_bars.DERIVED)
     monkeypatch.setenv(live_bars.EXTRA_FLAG, "1")
     targets = live_bars.derived_targets()
-    assert {Timeframe.M2, Timeframe.H12} <= set(targets)
+    assert {Timeframe.M10, Timeframe.H12} <= set(targets)
     for tf, (src, parts) in live_bars.EXTRA_DERIVED.items():
         assert tf.delta == src.delta * parts  # every part required
         assert tf in live_bars.DERIVE_LOOKBACK
 
 
-def test_fold_builds_m2_from_m1_and_skips_a_partial_bucket():
-    m = timedelta(minutes=1)
+def test_fold_builds_m10_from_m5_and_skips_a_partial_bucket():
+    m = timedelta(minutes=5)
     rows = [{"event_time": T0 + i * m, "open": 1.0, "high": 1.1, "low": 0.9,
              "close": 1.0 + 0.01 * i}
             for i in range(5)]
-    built = live_bars.fold(rows, target=Timeframe.M2, source=Timeframe.M1, shift_hours=0,
+    built = live_bars.fold(rows, target=Timeframe.M10, source=Timeframe.M5, shift_hours=0,
                            now=T0 + 5 * m, min_parts=2)
-    assert len(built) == 2  # the bucket at 4 minutes holds one part and is open
+    assert len(built) == 2  # the bucket at 20 minutes holds one part and is open
 
 
 def test_walk_forward_is_point_in_time_and_folded():

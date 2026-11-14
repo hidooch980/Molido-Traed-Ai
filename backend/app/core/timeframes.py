@@ -1,10 +1,13 @@
 """Which timeframes are observed and which are computed, and how to compute one.
 
 MetaTrader 5 has 21 chart periods. The bridge expert (`infra/mql5/MolidoBridge.mq5`,
-`TimeframeName`) publishes seven of them: M1, M5, M15, M30, H1, H4 and D1. Those
-are **native**: a file the terminal wrote. Every other period is **derived**
-here from the largest native period that divides it, and is labelled so a
-reader never mistakes a computed candle for an observed one.
+`Publish` -> `WriteBars`) writes bar files for three of them: M5, M15 and H1. Those
+are **native**: a file the terminal wrote. (Stage 7 first listed the seven names in
+`TimeframeName`; that function only names periods, it does not decide what is
+published, so that list was wrong and is corrected here.) M1 is deliberately not
+published, so periods that need it (M2, M3, M4, M6, M12) have no source here.
+Every other period is **derived** here from the largest native period that
+divides it, and is labelled so a reader never mistakes a computed candle for an observed one.
 
 **No lookahead.** `resample` emits a bucket only when the bucket has ended at
 or before `as_of`, and it only reads source bars that themselves closed at or
@@ -31,13 +34,9 @@ from app.core.enums import Timeframe
 
 MT5_BRIDGE_NATIVE: frozenset[Timeframe] = frozenset(
     {
-        Timeframe.M1,
         Timeframe.M5,
         Timeframe.M15,
-        Timeframe.M30,
         Timeframe.H1,
-        Timeframe.H4,
-        Timeframe.D1,
     }
 )
 

@@ -11,6 +11,7 @@ own setting:
     MOLIDO_EA_REFRESH_SECONDS    5..300
     MOLIDO_EA_BAR_COUNT          50..5000
     MOLIDO_EA_INTRADAY_BAR_COUNT 50..2000
+    MOLIDO_EA_TICK_COUNT         0..1000 (0 = no tick files; SC02 falls back to bars)
     MOLIDO_EA_DOWNLOAD_URL       where the updater fetches the .mq5
 """
 
@@ -27,9 +28,10 @@ from sqlalchemy.orm import Session
 EA_FILE = pathlib.Path(__file__).resolve().parents[3] / "infra" / "mql5" / "MolidoBridge.mq5"
 _VERSION = re.compile(r'#define MOLIDO_EA_VERSION "([0-9.]+)"')
 _SYMBOL = re.compile(r"^[A-Za-z0-9._#-]{1,32}$")
-LIMITS = {"refresh_seconds": (5, 300), "bar_count": (50, 5000), "intraday_bar_count": (50, 2000)}
+LIMITS = {"refresh_seconds": (5, 300), "bar_count": (50, 5000), "intraday_bar_count": (50, 2000),
+          "tick_count": (0, 1000)}
 ENV = {"refresh_seconds": "MOLIDO_EA_REFRESH_SECONDS", "bar_count": "MOLIDO_EA_BAR_COUNT",
-       "intraday_bar_count": "MOLIDO_EA_INTRADAY_BAR_COUNT"}
+       "intraday_bar_count": "MOLIDO_EA_INTRADAY_BAR_COUNT", "tick_count": "MOLIDO_EA_TICK_COUNT"}
 
 
 def ea_release(path: pathlib.Path = EA_FILE) -> dict[str, Any]:
