@@ -8,7 +8,9 @@ paper trades on closed bars.
 
 from __future__ import annotations
 
+import hashlib
 import os
+from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any
 
@@ -19,7 +21,9 @@ from app.agents import memory
 from app.agents.paper import open_trade, resolve
 from app.agents.risk_gate import RiskContext
 from app.core.enums import Timeframe
+from app.models.agent_memory import AgentMemoryEntry
 from app.models.instruments import Instrument
+from app.providers.metatrader import bridge_dirs
 from app.services import agent_account, agent_events, agent_scan, agent_symbols, agent_walkforward
 
 FLAG = "MOLIDO_AGENT_PAPER"
@@ -29,14 +33,18 @@ def enabled() -> bool:
     return os.environ.get(FLAG, "").strip().lower() in ("1", "true", "yes", "on")
 
 
-def _events(session: Session, limit: int = 500) -> list[dict[str, Any]]:
-    rows = memory.recall(session, kind="trade", limit=limit)
+def _events(session: Session, limit: int = 5000) -> list[dict[str, Any]]:
+    rows = session.scalars(select(AgentMemoryEntry).where(AgentMemoryEntry.kind == "trade")
+                           .order_by(AgentMemoryEntry.created_at.desc()).limit(limit))
     return [r.content | {"_at": r.created_at.isoformat()} for r in rows
             if r.content.get("mode") == "paper"]
 
 
-def book(session: Session, *, limit: int = 100) -> dict[str, Any]:
-    events = _events(session)
+def book(session: Session, *, limit: int = 100,
+         account: str | None = None) -> dict[str, Any]:
+    """`account` None = every account; "" = the trades recorded without one."""
+    events = [e for e in _events(session)
+              if account is None or e.get("account", "") == account]
     closed = {e["trade_id"]: e for e in events if e.get("event") == "close"}
     trades = []
     for e in events:
@@ -55,15 +63,17 @@ def book(session: Session, *, limit: int = 100) -> dict[str, Any]:
         "open": sum(1 for t in trades if t["status"] == "open"),
         "total_r": round(sum(rs), 4) if rs else 0.0,
         "win_rate": round(sum(1 for r in rs if r > 0) / len(rs), 4) if rs else None,
+        "accounts": sorted({str(t.get("account", "")) for t in trades}),
         "note": "Paper only. Not a measured edge; small samples mean nothing.",
     }
 
 
 def run_cycle(session: Session, timeframe: Timeframe = Timeframe.H1, *,
               account_key: str | None = None, now: datetime | None = None,
-              risk_ctx: RiskContext | None = None) -> dict[str, Any]:
+              risk_ctx: RiskContext | None = None, record: bool = True) -> dict[str, Any]:
     now = now or datetime.now(UTC)
-    state = book(session, limit=500)
+    account = account_key or ""
+    state = book(session, limit=5000, account=account)
     open_trades = [t for t in state["trades"] if t["status"] == "open"]
     ctx = risk_ctx or agent_account.risk_context(account_key, session=session, now=now)
     if ctx.open_symbols is not None:
@@ -83,27 +93,46 @@ def run_cycle(session: Session, timeframe: Timeframe = Timeframe.H1, *,
             memory.remember(session, "RT09", "trade", f"paper close {trade['symbol']} "
                             f"{outcome['result']}", symbol=trade["symbol"],
                             source_ref=trade["trade_id"],
-                            content={"mode": "paper", "event": "close",
+                            content={"mode": "paper", "event": "close", "account": account,
                                      "trade_id": trade["trade_id"], **outcome})
             closed += 1
     scan = agent_scan.scan(session, timeframe, risk_ctx=ctx, as_of=now,
                            symbols=agent_symbols.universe(session)["symbols"],
                            events=agent_events.high_impact())
-    recorded = agent_walkforward.record_signals(session, scan)
-    resolved = agent_walkforward.resolve_recorded(session, now=now)
+    recorded = agent_walkforward.record_signals(session, scan) if record else 0
+    resolved = agent_walkforward.resolve_recorded(session, now=now) if record else 0
     known = {t["trade_id"] for t in state["trades"]}
     opened_n = 0
     for sig in scan["signals"]:
         trade = open_trade(sig, sig["risk_review"])
-        if trade is None or trade.trade_id in known:
+        if trade is None:
+            continue
+        if account:
+            trade = replace(trade, trade_id=hashlib.sha256(
+                f"{trade.trade_id}:{account}".encode()).hexdigest()[:24])
+        if trade.trade_id in known:
             continue
         memory.remember(session, "RT10", "trade", f"paper open {trade.symbol} {trade.direction} "
                         f"{trade.verdict}", symbol=trade.symbol, source_ref=trade.trade_id,
-                        content={**trade.as_dict(), "event": "open"})
+                        content={**trade.as_dict(), "event": "open", "account": account})
         opened_n += 1
     return {"opened": opened_n, "closed": closed, "signals": len(scan["signals"]),
             "recorded": recorded, "resolved": resolved,
-            "risk_context_source": ctx.source}
+            "risk_context_source": ctx.source, "account": account}
+
+
+def run_all_accounts(session: Session, timeframe: Timeframe = Timeframe.H1, *,
+                     now: datetime | None = None) -> dict[str, Any]:
+    """One paper book per MT5 account, each reviewed against that account's own
+    read-only risk context. Signals are recorded once per cycle."""
+    keys = sorted(bridge_dirs(session=session))
+    out = {}
+    for i, key in enumerate(keys):
+        try:
+            out[key] = run_cycle(session, timeframe, account_key=key, now=now, record=i == 0)
+        except Exception as exc:  # noqa: BLE001 - one account must not stop the rest
+            out[key] = {"error": f"{type(exc).__name__}: {exc}"[:200]}
+    return {"accounts": out, "mode": "paper"}
 
 
 def main() -> int:
@@ -113,7 +142,7 @@ def main() -> int:
     from app.db.session import session_scope
 
     with session_scope() as session:
-        result = run_cycle(session)
+        result = run_all_accounts(session)
     print(result)
     return 0
 

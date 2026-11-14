@@ -15,7 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.instruments import Instrument
-from app.providers.metatrader import tradeable_symbols
+from app.providers.metatrader import bridge_dirs, tradeable_symbols
 from app.services.agent_scan import market_of
 
 
@@ -28,7 +28,8 @@ def universe(session: Session, *, broker: frozenset[str] | None = None) -> dict[
         select(Instrument).where(Instrument.is_active.is_(True)).order_by(Instrument.symbol)
     ).all()
     covered = [i.symbol for i in rows if market_of(i) is not None]
-    names = broker if broker is not None else tradeable_symbols()
+    # Session-scoped directories: never opens a second DB session of its own.
+    names = broker if broker is not None else tradeable_symbols(bridge_dirs(session=session))
     if not names:
         return {"source": "database (no terminal publishes contract specs)",
                 "symbols": covered, "excluded": []}

@@ -97,7 +97,8 @@ def minutes_to_event(events: list[dict[str, Any]] | None, symbol: str,
 
 def run_symbol(session: Session, symbol: str, timeframe: Timeframe, *,
                as_of: datetime | None = None, bridge: Any = None,
-               events: list[dict[str, Any]] | None = None, record: bool = False) -> dict[str, Any]:
+               events: list[dict[str, Any]] | None = None, record: bool = False,
+               skip: set[str] | None = None) -> dict[str, Any]:
     as_of = (as_of or datetime.now(UTC)).astimezone(UTC)
     inst = session.scalars(select(Instrument).where(Instrument.symbol == symbol)).first()
     if inst is None:
@@ -128,7 +129,7 @@ def run_symbol(session: Session, symbol: str, timeframe: Timeframe, *,
                        spread=spread, minutes_to_high_impact=minutes_to_event(events, symbol,
                                                                               as_of),
                        extras=extras)
-    messages, health = run_timed(ctx)
+    messages, health = run_timed(ctx, skip or set())
     out = {"symbol": symbol, "timeframe": timeframe.value, "as_of": as_of.isoformat(),
            "status": "ran", "mode": "shadow_only", "inputs": inputs,
            "messages": [m.model_dump(mode="json") for m in messages], "health": health}
@@ -151,18 +152,23 @@ def run_enabled() -> bool:
 
 def run_cycle(session: Session, timeframe: Timeframe = Timeframe.H1, *,
               symbols: list[str] | None = None, bridge: Any = None,
-              max_symbols: int = 30) -> dict[str, Any]:
+              max_symbols: int = 30, learn: bool = True) -> dict[str, Any]:
     """One recorded pass over the symbol universe, feeding /agents/health and
     /agents/performance. Shadow only."""
     if symbols is None:
         from app.services import agent_symbols
 
         symbols = list(agent_symbols.universe(session).get("symbols") or [])
+    from app.services import agent_learning
+
     events = agent_events.high_impact()
-    done = [run_symbol(session, s, timeframe, bridge=bridge, events=events, record=True)
-            for s in symbols[:max_symbols]]
+    skip = agent_learning.quarantined(session)
+    done = [run_symbol(session, s, timeframe, bridge=bridge, events=events, record=True,
+                       skip=skip) for s in symbols[:max_symbols]]
+    learning = agent_learning.learning_cycle(session) if learn else None
     return {"timeframe": timeframe.value, "ran": sum(1 for d in done if d["status"] == "ran"),
-            "skipped": [d["symbol"] for d in done if d["status"] != "ran"]}
+            "skipped": [d["symbol"] for d in done if d["status"] != "ran"],
+            "quarantined": sorted(skip), "learning": learning}
 
 
 def main() -> int:

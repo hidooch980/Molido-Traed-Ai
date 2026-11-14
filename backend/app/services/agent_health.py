@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 from app.agents import memory, registry
 from app.agents.analyzers.runner import ANALYZERS
 from app.agents.risk_gate import RiskContext, RiskLimits
+from app.agents.selfheal import Sample
 from app.core.enums import Timeframe
 from app.models.instruments import Instrument
 from app.services import agent_scan
@@ -73,16 +74,13 @@ def health(session: Session, *, now: datetime | None = None, limit: int = 500) -
     return {"as_of": now.isoformat(), "agents": agents, "counts": dict(counts)}
 
 
-def performance(session: Session, *, horizon_bars: int = 4, limit: int = 500,
-                now: datetime | None = None) -> dict[str, Any]:
-    """Forward hit rate of each agent's BUY/SELL calls from stored run records.
-
-    The move is close-to-close over `horizon_bars` closed bars after the run,
-    read point-in-time; spread and costs are not included, so this is a
-    direction check, not a P&L."""
+def resolved_samples(session: Session, *, horizon_bars: int = 4, limit: int = 500,
+                     now: datetime | None = None) -> tuple[list[Sample], dict[str, int]]:
+    """Each recorded run with BUY/SELL calls whose horizon has passed, with the
+    close-to-close move after it (point-in-time). Also: pending calls per agent."""
     now = now or datetime.now(UTC)
-    per: dict[str, dict[str, Any]] = defaultdict(lambda: {"calls": 0, "hits": 0, "move": 0.0,
-                                                          "pending": 0})
+    samples: list[Sample] = []
+    pending: dict[str, int] = defaultdict(int)
     inst_cache: dict[str, Instrument | None] = {}
     for row in _runs(session, limit):
         c = row.content
@@ -92,13 +90,13 @@ def performance(session: Session, *, horizon_bars: int = 4, limit: int = 500,
         except (KeyError, TypeError, ValueError):
             continue
         calls = {a: h["recommendation"] for a, h in (c.get("agents") or {}).items()
-                 if h.get("recommendation") in ("BUY", "SELL")}
+                 if h.get("recommendation") in ("BUY", "SELL") and not h.get("skipped")}
         if not calls:
             continue
         end = as_of + tf.delta * horizon_bars
         if end > now:
             for a in calls:
-                per[a]["pending"] += 1
+                pending[a] += 1
             continue
         if row.symbol not in inst_cache:
             inst_cache[row.symbol] = session.scalars(
@@ -110,19 +108,35 @@ def performance(session: Session, *, horizon_bars: int = 4, limit: int = 500,
         _, after = agent_scan.candles(session, inst, tf, end, lookback=3)
         if not before or not after or after[-1].open_time <= before[-1].open_time:
             for a in calls:
-                per[a]["pending"] += 1
+                pending[a] += 1
             continue
         move = (after[-1].close - before[-1].close) / before[-1].close
-        for a, rec in calls.items():
-            signed = move if rec == "BUY" else -move
+        samples.append(Sample(as_of, calls, move))
+    return samples, dict(pending)
+
+
+def performance(session: Session, *, horizon_bars: int = 4, limit: int = 500,
+                now: datetime | None = None) -> dict[str, Any]:
+    """Forward hit rate of each agent's BUY/SELL calls from stored run records.
+
+    The move is close-to-close over `horizon_bars` closed bars after the run,
+    read point-in-time; spread and costs are not included, so this is a
+    direction check, not a P&L."""
+    samples, pending = resolved_samples(session, horizon_bars=horizon_bars, limit=limit,
+                                        now=now)
+    per: dict[str, dict[str, Any]] = defaultdict(lambda: {"calls": 0, "hits": 0, "move": 0.0})
+    for s in samples:
+        for a, rec in s.calls.items():
+            signed = s.move if rec == "BUY" else -s.move
             p = per[a]
             p["calls"] += 1
             p["hits"] += 1 if signed > 0 else 0
             p["move"] += signed
     rows = []
-    for a, p in sorted(per.items()):
+    for a in sorted(set(per) | set(pending)):
+        p = per[a]
         n = p["calls"]
-        rows.append({"id": a, "calls": n, "pending": p["pending"],
+        rows.append({"id": a, "calls": n, "pending": pending.get(a, 0),
                      "hit_rate": round(p["hits"] / n, 4) if n else None,
                      "avg_signed_move_pct": round(100 * p["move"] / n, 4) if n else None,
                      "enough_data": n >= 30})

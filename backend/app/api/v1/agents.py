@@ -26,6 +26,7 @@ from app.services import (
     agent_events,
     agent_ftmo,
     agent_health,
+    agent_learning,
     agent_paper,
     agent_run,
     agent_scan,
@@ -252,3 +253,9 @@ def agents_alerts(session: Session = Depends(get_db), _: Principal = READ) -> di
     """Current alerts from agent health, account risk and challenge rules. Not sent anywhere."""
     return agent_health.alerts(session, risk_ctx=agent_account.risk_context(session=session),
                                ftmo=agent_ftmo.monitor(session))
+
+
+@router.get("/learning-status")
+def learning_status(session: Session = Depends(get_db), _: Principal = READ) -> dict[str, Any]:
+    """Shadow ensemble weight versions (with rollback trail) and quarantined agents."""
+    return agent_learning.status(session)
