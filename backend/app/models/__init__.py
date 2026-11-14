@@ -6,6 +6,12 @@ Alembic autogenerate reads. New model modules must be imported here.
 
 from app.db.base import Base
 from app.models.account_policy import AccountPolicy
+from app.models.agent_memory import (
+    AgentMemoryEntry,
+    CouncilDecisionRecord,
+    FailureRecord,
+    LearningRecord,
+)
 from app.models.agent_usage import AgentLlmUsage
 from app.models.audit import AuditChainHead, AuditEvent
 from app.models.calendar import MarketHoliday
@@ -37,6 +43,10 @@ from app.models.terminals import Terminal
 from app.models.tradingview import TradingViewAlert, TradingViewConfig
 
 __all__ = [
+    "AgentMemoryEntry",
+    "CouncilDecisionRecord",
+    "FailureRecord",
+    "LearningRecord",
     "AgentLlmUsage",
     "AccountPolicy",
     "TerminalName",

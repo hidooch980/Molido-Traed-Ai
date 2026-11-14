@@ -157,6 +157,21 @@ Kill Switch و gate نوع حساب ارسال می‌کند.
 - **flag** `MOLIDO_AGENT_COUNCIL_LIVE` پیش‌فرض خاموش است و حتی روشن هم به جایی وصل نیست؛ وصل‌کردن
   به مسیر تصمیم تغییر جداگانه با تأیید مالک است. خروجی فقط لاگ سایه است و Risk Brain مرجع نهایی می‌ماند.
 
+## حافظه (مرحله ۵)
+
+چهار جدول جدید (migration `0031_agent_memory`):
+
+- `agent_memory`: حافظهٔ هر ایجنت با نوع (market، agent، strategy، trade، failure، pattern، news،
+  regime، risk، rocket، council، model_performance)، نماد، خلاصه، محتوا و `source_ref` برای ردیابی.
+- `agent_council_decisions`: هر رأی سایهٔ شورا با نظر همهٔ اعضا و نسخهٔ وزن‌ها؛ نتیجه (R) فقط یک بار
+  ثبت می‌شود و بازنویسی نمی‌شود. اعتبار اعضا از همین نتایج ساخته می‌شود (`credibility_from_decisions`).
+- `agent_failures`: حافظهٔ خطا با دسته‌بندی ثابت (سیگنال اشتباه، شکست جعلی، ورود دیر، خروج زود، تغییر رژیم،
+  خطای داده، خطای استدلال، اختلاف شورا، اجرا، سایر).
+- `agent_learning_records`: پیشنهاد یادگیری ← VALIDATED (فقط با شاهد خارج از نمونه) ← APPROVED/REJECTED
+  فقط با نام یک انسان. **تأیید هیچ چیزی را مستقر نمی‌کند** و هیچ کدی در برنامه تأیید خودکار انجام نمی‌دهد (تست دارد).
+
+API فقط‌خواندنی: `/api/v1/agents/memory`، `/agents/council/decisions`، `/agents/failures`، `/agents/learning`.
+
 ## برنامه مرحله‌ای
 
 هر مرحله روی شاخه جدا، با تست، و فقط با تأیید مالک merge می‌شود. هیچ مرحله‌ای LIVE را فعال نمی‌کند.
@@ -167,7 +182,7 @@ Kill Switch و gate نوع حساب ارسال می‌کند.
 | ۲ | مستندات و امنیت: حذف IP و شماره حساب از docs، gate پول واقعی داخل EA (`AllowRealAccount=false`؛ نیاز به کامپایل روی ترمینال) | انجام شد |
 | ۳ | Grok Gateway مشورتی (`backend/app/agents/gateway/`) | انجام شد — بخش «Grok Gateway» |
 | ۴ | شورای v2 در حالت سایه (`backend/app/agents/council/`) | انجام شد — بخش «شورای v2» |
-| ۵ | حافظه هر ایجنت و حافظه تصمیم شورا روی جدول‌های موجود | ۲–۳ روز |
+| ۵ | حافظه ایجنت‌ها (`backend/app/agents/memory.py`، migration `0031_agent_memory`) | انجام شد — بخش «حافظه» |
 | ۶ | Rocket Hunter (RT01–RT10) به‌صورت PROPOSED، ثبت R1–R5 بدون معامله، سپس walk-forward | ۵–۸ روز |
 | ۷ | تایم‌فریم‌های کامل MT5 با برچسب Native/Derived و لیست نماد پویا | ۲–۳ روز |
 | ۸ | بازبینی تنظیمات ریسک و تست‌های حجم و همبستگی | ۱–۲ روز |
