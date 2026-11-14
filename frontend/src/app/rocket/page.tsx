@@ -27,7 +27,7 @@ export default async function RocketRadar({
           <h1 className="display">{t("rocket.title")}</h1>
           <p className="text-xs ink-3 mt-0.5 max-w-2xl">{t("rocket.subtitle")}</p>
           <p className="text-xs ink-3 mt-1">
-            {scan.data.note} · {scan.data.as_of}
+            {scan.data.note} · {scan.data.as_of} · {scan.data.risk_context_source}
           </p>
         </div>
         <div className="flex gap-1.5">
@@ -47,7 +47,7 @@ export default async function RocketRadar({
             <thead>
               <tr className="text-left ink-3 text-xs">
                 <th>Rank</th><th>Symbol</th><th>Side</th><th>Entry</th><th>SL</th>
-                <th>TP</th><th>R:R</th><th>{t("rocket.evidence")}</th><th>Status</th>
+                <th>TP</th><th>R:R</th><th>{t("rocket.evidence")}</th><th>Status</th><th>Risk</th>
               </tr>
             </thead>
             <tbody>
@@ -68,6 +68,13 @@ export default async function RocketRadar({
                     )}
                   </td>
                   <td className="text-xs">{s.status} / {s.risk_approval_status}</td>
+                  <td className="text-xs" title={s.risk_review.reasons.join("; ")}>
+                    <Pill tone={s.risk_review.verdict === "BLOCK" ? "critical"
+                      : s.risk_review.verdict === "REDUCE" ? "warning" : "good"}>
+                      {s.risk_review.verdict}
+                    </Pill>
+                    <div className="ink-3">{s.risk_review.reasons[0]}</div>
+                  </td>
                 </tr>
               ))}
             </tbody>

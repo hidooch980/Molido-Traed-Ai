@@ -205,6 +205,15 @@ API فقط‌خواندنی: `/api/v1/agents/memory`، `/agents/council/decision
 - خروجی شورا ورود، SL و TP ندارد، پس هیچ‌وقت به‌تنهایی تأیید نمی‌شود.
 - این حکم به RT10 در `/agents/rocket/scan` و به رکورد سایهٔ شورا وصل است. چون در این مرحله وضعیت حساب هنوز وصل نیست، حکم فعلاً همیشه BLOCK است. `app/brain/risk.py` همچنان مرجع نهایی مسیر اجرای موجود است.
 
+## MT5 فقط‌خواندنی و Paper (مرحله ۱۰)
+
+- **`backend/app/services/agent_account.py`:** وضعیت حساب را از bridge فایلی موجود فقط می‌خواند: equity، P&L روزانه (معاملات بسته‌شدهٔ امروز به‌اضافهٔ سود و زیان شناور) و نمادهای باز. چیزی نمی‌نویسد و دستوری نمی‌فرستد. اگر زمان یک deal خوانا نباشد، P&L روزانه «نامعلوم» می‌شود و حکم ریسک BLOCK است.
+- **`GET /agents/account`:** همان دیدی را برمی‌گرداند که Risk Gate از حساب دارد. `/agents/rocket/scan` حالا با همین context ارزیابی می‌کند.
+- **`backend/app/agents/paper.py` و `backend/app/services/agent_paper.py`:** معامله Paper فقط با حکم APPROVE یا REDUCE باز می‌شود و در حافظه (kind=trade، mode=paper) ثبت می‌شود. اگر کندلی هم به استاپ و هم به تارگت برسد، استاپ حساب می‌شود. سیگنال تکراری دوباره باز نمی‌شود (`trade_id` قطعی).
+  - این مسیر به‌طور پیش‌فرض خاموش است. با `MOLIDO_AGENT_PAPER=1` و دستور `python -m app.services.agent_paper` اجرا می‌شود. زمان‌بندی خودکار ندارد.
+  - نتیجه‌ها از `GET /agents/paper` خوانده می‌شوند.
+- **EA (نسخه 1.10):** حالا `AllowTrading=false` پیش‌فرض است. روی حساب Real، EA اجرا نمی‌شود (`INIT_FAILED`) مگر اینکه `AllowRealAccount=true` شود. با `ExpectedLogin` می‌شود EA را به یک login مشخص قفل کرد.
+
 ## برنامه مرحله‌ای
 
 هر مرحله روی شاخه جدا، با تست، و فقط با تأیید مالک merge می‌شود. هیچ مرحله‌ای LIVE را فعال نمی‌کند.
@@ -219,7 +228,7 @@ API فقط‌خواندنی: `/api/v1/agents/memory`، `/agents/council/decision
 | ۶ | تحلیلگرهای قطعی SC/SM/RT/AI02/BRAIN-01 (`backend/app/agents/analyzers/`) | انجام شد — بخش «تحلیلگرها»؛ walk-forward مانده |
 | ۷ | تایم‌فریم‌های کامل MT5 با برچسب Native/Derived (`backend/app/core/timeframes.py`) | انجام شد — بخش «تایم‌فریم‌ها»؛ لیست نماد پویا مانده |
 | ۸ | بازبینی تنظیمات ریسک و تست‌های حجم و همبستگی | ۱–۲ روز |
-| ۹ | MT5 فقط‌خواندنی و Paper به‌عنوان پیش‌فرض حساب جدید | ۲ روز |
+| ۹ | MT5 فقط‌خواندنی و Paper | انجام شد (مرحله ۱۰) |
 | ۱۰ | داشبورد: Agent Command Center (`/agents`)، Rocket Radar (`/rocket`)، Grok Cost (`/grok-cost`) | انجام شد (مرحله ۸)؛ FTMO Monitor مانده |
 | ۱۱ | تست جامع و regression | پیوسته |
 

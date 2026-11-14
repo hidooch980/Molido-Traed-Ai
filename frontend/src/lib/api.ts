@@ -1307,6 +1307,7 @@ export interface RocketSignalView {
   risk_approval_status: string;
   status: string;
   score: number;
+  risk_review: { verdict: "APPROVE" | "REDUCE" | "BLOCK"; reasons: string[]; risk_pct: number };
 }
 
 export interface RocketScanView {
@@ -1323,6 +1324,7 @@ export interface RocketScanView {
     recommendation?: string;
   }>;
   note: string;
+  risk_context_source: string;
 }
 
 export interface GatewayView {

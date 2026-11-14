@@ -25,7 +25,7 @@
 //--- in a startup config file, which the terminal reads from the command
 //--- line - no window, no click, and it survives every restart.
 #property copyright "MolidoTrade AI"
-#property version   "1.00"
+#property version   "1.10"
 
 //--- Written to the common folder rather than the terminal's own, so the path
 //--- does not move when the terminal is reinstalled or run portable.
@@ -349,6 +349,8 @@ void WriteHeartbeat(int cycle)
 //+------------------------------------------------------------------+
 int OnInit()
   {
+   if(!AccountAllowed())
+      return INIT_FAILED;
    Print("MolidoBridge: publishing every ", RefreshSeconds, "s to the common Files folder");
    //--- One timer rather than OnTick: this publishes on a clock, not on price
    //--- movement. Tying it to ticks would stop publishing exactly when the
@@ -476,7 +478,7 @@ void OnDeinit(const int reason)
 //--- absent field as real money, so this switch alone cannot reach a funded
 //--- account - and MOLIDO_ALLOW_REAL_MONEY_ORDERS is a separate refusal on top
 //--- of that.
-input bool   AllowTrading    = true;
+input bool   AllowTrading    = false;  // read-only by default; orders need an explicit opt-in
 //--- Expert-side real-money guard (added 2026-11-14, agents stage 2).
 //--- The backend already refuses real accounts (autopilot.account_gate and
 //--- MOLIDO_ALLOW_REAL_MONEY_ORDERS); this is the same refusal one layer down,
@@ -485,6 +487,32 @@ input bool   AllowTrading    = true;
 //--- ACCOUNT_TRADE_MODE_REAL and this stays false. Changing it is an owner
 //--- (L5) decision. Needs a recompile on each terminal to take effect.
 input bool   AllowRealAccount = false;
+
+//--- Demo-only guard. On a real-money account the expert refuses to start
+//--- unless AllowRealAccount is set, so a demo setup copied onto a funded
+//--- terminal stops visibly instead of publishing or trading there.
+//--- ExpectedLogin pins the expert to one account; 0 accepts any demo login.
+input long ExpectedLogin = 0;
+
+bool AccountAllowed()
+  {
+   long mode = AccountInfoInteger(ACCOUNT_TRADE_MODE);
+   long login = AccountInfoInteger(ACCOUNT_LOGIN);
+   if(mode == ACCOUNT_TRADE_MODE_REAL && !AllowRealAccount)
+     {
+      Print("MolidoBridge: REAL account detected - refusing to run (AllowRealAccount=false)");
+      return false;
+     }
+   if(ExpectedLogin != 0 && login != 0 && login != ExpectedLogin)
+     {
+      Print("MolidoBridge: login ", login, " is not ExpectedLogin ", ExpectedLogin, " - refusing");
+      return false;
+     }
+   Print("MolidoBridge: AllowTrading=", (AllowTrading ? "true" : "false"),
+         " (false = read-only, command files are refused)");
+   return true;
+  }
+
 //--- Hard ceiling, whatever is asked. Raised from 0.10 after the first live
 //--- sizing run: 0.25% of a 10,000 account behind a real stop came out at 0.26
 //--- lots on USDCAD, which is correct risk and would have been refused by an
