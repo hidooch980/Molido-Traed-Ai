@@ -56,7 +56,7 @@ def snapshot() -> dict[str, Any]:
     """The whole registry as JSON-ready data, for the read-only endpoint."""
     return {
         "version": REGISTRY_VERSION,
-        "stage": 1,
+        "stage": 6,
         "mode": "paper_only",
         "total": len(ROLES),
         "status_counts": status_counts(),
@@ -66,9 +66,10 @@ def snapshot() -> dict[str, Any]:
         "human_only_l5": list(HUMAN_ONLY_L5),
         "common_restrictions": list(COMMON_RESTRICTIONS),
         "note": (
-            "Stage 1 describes roles and maps them to existing code. No role runs as "
-            "a separate process, none calls a language model, and none can place, "
-            "size or authorise an order."
+            "Roles map to existing code or to deterministic shadow analyzers (stage 6). "
+            "No role runs as a separate process, only the optional Grok gateway calls a "
+            "language model (off without a key), and none can place, size or authorise "
+            "an order."
         ),
         "agents": [role.as_dict() for role in ROLES],
     }

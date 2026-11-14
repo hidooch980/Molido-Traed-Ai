@@ -75,7 +75,12 @@ def usage_summary(session: Session, *, since: datetime | None = None) -> dict[st
         "since": start.isoformat(),
         "until": now.isoformat(),
         "requests": sum(a["requests"] for a in agents),
+        "ok": sum(a["ok"] for a in agents),
+        "input_tokens": sum(a["input_tokens"] for a in agents),
+        "cached_tokens": sum(a["cached_tokens"] for a in agents),
+        "output_tokens": sum(a["output_tokens"] for a in agents),
         "total_tokens": sum(a["total_tokens"] for a in agents),
+        "unpriced_requests": sum(a["unpriced_requests"] for a in agents),
         "cost_usd": round(sum(priced), 6) if priced else None,
         "agents": agents,
     }

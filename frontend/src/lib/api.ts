@@ -1257,7 +1257,122 @@ export interface RealisedView {
   note?: string;
 }
 
+export interface AgentRole {
+  id: string;
+  name_fa: string;
+  name_en: string;
+  group: string;
+  responsibilities: string[];
+  permission_level: number;
+  permission_name: string;
+  restrictions: string[];
+  triggers: string[];
+  modules: string[];
+  status: "IMPLEMENTED" | "PARTIAL" | "NOT_IMPLEMENTED";
+  notes: string;
+  may_override_risk: boolean;
+  can_submit_orders: boolean;
+}
+
+export interface AgentRegistryView {
+  version: string;
+  stage: number;
+  mode: string;
+  total: number;
+  status_counts: Record<string, number>;
+  human_only_l5: string[];
+  common_restrictions: string[];
+  note: string;
+  agents: AgentRole[];
+}
+
+export interface RocketSignalView {
+  symbol: string;
+  direction: string;
+  timeframe: string;
+  signal_timestamp: string;
+  market_regime: string;
+  rocket_rank: string;
+  entry_zone: number[];
+  stop_loss: number;
+  take_profit: number;
+  expected_rr: number;
+  spread: number | null;
+  slippage_estimate: number;
+  volatility_atr: number;
+  supporting_evidence: string[];
+  conflicting_evidence: string[];
+  confidence_calibration: string;
+  invalidation: string;
+  risk_approval_status: string;
+  status: string;
+  score: number;
+}
+
+export interface RocketScanView {
+  as_of: string;
+  timeframe: string;
+  mode: string;
+  signals: RocketSignalView[];
+  scanned: Array<{
+    symbol: string;
+    status: string;
+    reason: string;
+    provider_id?: string;
+    bars?: number;
+    recommendation?: string;
+  }>;
+  note: string;
+}
+
+export interface GatewayView {
+  enabled: boolean;
+  key_env: string;
+  budget: {
+    mode: string;
+    tokens_today: number;
+    usd_today: number;
+    daily_token_limit: number;
+    daily_usd_limit: number;
+    used_fraction: number;
+  };
+  config: {
+    base_url: string;
+    models: Record<string, string>;
+    priced_models: string[];
+    max_concurrency: number;
+    daily_token_limit: number;
+    daily_usd_limit: number;
+  };
+  source: string;
+}
+
+export interface GatewayUsageView {
+  since: string;
+  until: string;
+  requests: number;
+  ok: number;
+  input_tokens: number;
+  cached_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  cost_usd: number | null;
+  unpriced_requests: number;
+  agents: Array<{
+    agent_id: string;
+    requests: number;
+    total_tokens: number;
+    cost_usd: number | null;
+  }>;
+}
+
 export const api = {
+  agentRegistry: () => request<AgentRegistryView>("/api/v1/agents/registry"),
+  rocketScan: (timeframe = "H1") =>
+    request<RocketScanView>(`/api/v1/agents/rocket/scan?timeframe=${timeframe}`),
+  gateway: () => request<GatewayView>("/api/v1/agents/gateway"),
+  gatewayUsage: (days = 0) =>
+    request<GatewayUsageView>(`/api/v1/agents/gateway/usage?days=${days}`),
   realised: (days = 30) =>
     request<RealisedView>(`/api/v1/execution/realised?days=${days}`),
   equity: (limit = 500) =>

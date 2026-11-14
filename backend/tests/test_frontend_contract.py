@@ -71,6 +71,10 @@ class TestTheFrontendTypesMatchTheApi:
             ("Posture", "/api/v1/decisions/posture"),
             ("Readiness", "/api/v1/decisions/readiness"),
             ("Health", "/health/ready"),
+            ("AgentRegistryView", "/api/v1/agents/registry"),
+            ("GatewayView", "/api/v1/agents/gateway"),
+            ("GatewayUsageView", "/api/v1/agents/gateway/usage"),
+            ("RocketScanView", "/api/v1/agents/rocket/scan"),
         ],
     )
     def test_every_declared_field_is_actually_returned(self, client, interface, path):

@@ -5,6 +5,8 @@ Nothing here changes anything or reaches anything that trades.
 
 from __future__ import annotations
 
+from collections import defaultdict
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, Query
@@ -12,14 +14,19 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.agents import memory, registry
+from app.agents.analyzers.bars import Candle, make_context
+from app.agents.analyzers.rocket import rt10_evaluate
 from app.agents.gateway import config as gateway_config
 from app.agents.gateway.budget import Budget
 from app.agents.gateway.ledger import since_days, today_totals, usage_summary
+from app.agents.messages import Market
 from app.api.deps import Principal, require
-from app.core.enums import Permission
+from app.core.enums import AssetClass, Permission, Timeframe
 from app.core.timeframes import catalogue
 from app.db.session import get_db
 from app.models.agent_memory import CouncilDecisionRecord, FailureRecord, LearningRecord
+from app.models.instruments import Instrument
+from app.services.point_in_time import get_bars
 
 router = APIRouter(prefix="/agents", tags=["agents"])
 
@@ -110,3 +117,64 @@ def read_learning(
     if status:
         query = query.where(LearningRecord.status == status)
     return {"records": [memory.as_dict(r) for r in session.scalars(query)]}
+
+
+def _market(inst: Instrument) -> Market | None:
+    if inst.asset_class == AssetClass.FOREX:
+        return Market.FOREX
+    if inst.asset_class == AssetClass.CRYPTO:
+        return Market.CRYPTO
+    if inst.asset_class == AssetClass.METAL and inst.symbol.upper().startswith("XAU"):
+        return Market.GOLD
+    return None
+
+
+@router.get("/rocket/scan")
+def rocket_scan(
+    timeframe: Timeframe = Timeframe.H1,
+    max_symbols: int = Query(default=30, ge=1, le=100),
+    session: Session = Depends(get_db),
+    _: Principal = READ,
+) -> dict[str, Any]:
+    """RT10 over stored bars, read at now. Every signal is PROPOSED; nothing is sent anywhere.
+
+    Several providers can cover one instrument; the one with the most visible
+    bars is used and named in the row, so the choice is visible rather than hidden.
+    """
+    as_of = datetime.now(UTC)
+    instruments = session.scalars(
+        select(Instrument).where(Instrument.is_active.is_(True)).order_by(Instrument.symbol)
+    ).all()
+    signals: list[dict[str, Any]] = []
+    scanned: list[dict[str, Any]] = []
+    for inst in instruments[:max_symbols]:
+        market = _market(inst)
+        if market is None:
+            scanned.append({"symbol": inst.symbol, "status": "skipped",
+                            "reason": "market not covered (forex, gold, crypto only)"})
+            continue
+        bars = get_bars(session, inst.id, timeframe, as_of, lookback=600)
+        by_provider: dict[Any, list[Any]] = defaultdict(list)
+        for bar in bars:
+            by_provider[bar.provider_id].append(bar)
+        if not by_provider:
+            scanned.append({"symbol": inst.symbol, "status": "no_data", "reason": "no bars"})
+            continue
+        provider, rows = max(by_provider.items(), key=lambda kv: len(kv[1]))
+        candles = [Candle(b.event_time, b.open, b.high, b.low, b.close, b.volume) for b in rows]
+        ctx = make_context(inst.symbol, market, timeframe.value, timeframe.delta, candles, as_of)
+        msg, sig = rt10_evaluate(ctx)
+        scanned.append({"symbol": inst.symbol, "status": "scanned", "provider_id": str(provider),
+                        "bars": len(ctx.bars), "recommendation": msg.recommendation.value,
+                        "reason": msg.analysis})
+        if sig is not None:
+            signals.append(sig.as_dict())
+    signals.sort(key=lambda s: s.get("score", 0), reverse=True)
+    return {
+        "as_of": as_of.isoformat(),
+        "timeframe": timeframe.value,
+        "mode": "shadow_only",
+        "signals": signals,
+        "scanned": scanned,
+        "note": "Deterministic, unvalidated. PROPOSED only; never submitted to risk or execution.",
+    }
