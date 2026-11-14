@@ -25,6 +25,7 @@ from app.services import (
     agent_council,
     agent_events,
     agent_ftmo,
+    agent_health,
     agent_paper,
     agent_run,
     agent_scan,
@@ -214,3 +215,40 @@ def run_agents(
 def council_versions(session: Session = Depends(get_db), _: Principal = READ) -> dict[str, Any]:
     """AI03 proposal replayed against the current weights on resolved decisions (BRAIN-01)."""
     return agent_council.versions(session)
+
+
+@router.get("/health")
+def agents_health(session: Session = Depends(get_db), _: Principal = READ) -> dict[str, Any]:
+    """Per-agent last run, latency and error rate from recorded runs."""
+    return agent_health.health(session)
+
+
+@router.get("/performance")
+def agents_performance(
+    horizon_bars: int = Query(default=4, ge=1, le=48),
+    session: Session = Depends(get_db),
+    _: Principal = READ,
+) -> dict[str, Any]:
+    """Forward direction hit rate per agent (before costs)."""
+    return agent_health.performance(session, horizon_bars=horizon_bars)
+
+
+@router.get("/explain")
+def agents_explain(
+    symbol: str,
+    timeframe: Timeframe = Timeframe.H1,
+    session: Session = Depends(get_db),
+    _: Principal = READ,
+) -> dict[str, Any]:
+    """Decision trace for one symbol: votes, evidence, dissent, missing inputs."""
+    bridge = agent_account._provider(None, session)
+    run = agent_run.run_symbol(session, symbol, timeframe, bridge=bridge,
+                               events=agent_events.high_impact())
+    return agent_health.explain(run)
+
+
+@router.get("/alerts")
+def agents_alerts(session: Session = Depends(get_db), _: Principal = READ) -> dict[str, Any]:
+    """Current alerts from agent health, account risk and challenge rules. Not sent anywhere."""
+    return agent_health.alerts(session, risk_ctx=agent_account.risk_context(session=session),
+                               ftmo=agent_ftmo.monitor(session))

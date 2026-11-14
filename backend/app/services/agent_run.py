@@ -140,3 +140,42 @@ def run_symbol(session: Session, symbol: str, timeframe: Timeframe, *,
                                  "as_of": as_of.isoformat(), "inputs": inputs,
                                  "agents": health}, symbol=symbol)
     return out
+
+
+RUN_FLAG = "MOLIDO_AGENT_RUN"
+
+
+def run_enabled() -> bool:
+    return os.getenv(RUN_FLAG, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def run_cycle(session: Session, timeframe: Timeframe = Timeframe.H1, *,
+              symbols: list[str] | None = None, bridge: Any = None,
+              max_symbols: int = 30) -> dict[str, Any]:
+    """One recorded pass over the symbol universe, feeding /agents/health and
+    /agents/performance. Shadow only."""
+    if symbols is None:
+        from app.services import agent_symbols
+
+        symbols = list(agent_symbols.universe(session).get("symbols") or [])
+    events = agent_events.high_impact()
+    done = [run_symbol(session, s, timeframe, bridge=bridge, events=events, record=True)
+            for s in symbols[:max_symbols]]
+    return {"timeframe": timeframe.value, "ran": sum(1 for d in done if d["status"] == "ran"),
+            "skipped": [d["symbol"] for d in done if d["status"] != "ran"]}
+
+
+def main() -> int:
+    if not run_enabled():
+        print(f"{RUN_FLAG} is off; nothing done.")
+        return 0
+    from app.db.session import session_scope
+    from app.services import agent_account
+
+    with session_scope() as session:
+        print(run_cycle(session, bridge=agent_account._provider(None, session)))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

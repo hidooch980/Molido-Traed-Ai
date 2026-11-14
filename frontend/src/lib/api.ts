@@ -1368,6 +1368,52 @@ export interface GatewayUsageView {
   }>;
 }
 
+export interface AgentHealthRow {
+  id: string;
+  status: "ok" | "degraded" | "stale" | "never_run" | "not_an_analyzer";
+  runs?: number;
+  error_rate?: number;
+  avg_ms?: number;
+  last_run_at?: string;
+  last_recommendation?: string | null;
+  last_error?: string | null;
+  note?: string;
+}
+
+export interface AgentHealthView {
+  as_of: string;
+  agents: AgentHealthRow[];
+  counts: Record<string, number>;
+}
+
+export interface AgentAlert {
+  level: "critical" | "warning" | "info";
+  source: string;
+  message: string;
+}
+
+export interface AgentAlertsView {
+  as_of: string;
+  alerts: AgentAlert[];
+  counts: Record<string, number>;
+  delivery: string;
+}
+
+export interface AgentPerformanceRow {
+  id: string;
+  calls: number;
+  pending: number;
+  hit_rate: number | null;
+  avg_signed_move_pct: number | null;
+  enough_data: boolean;
+}
+
+export interface AgentPerformanceView {
+  horizon_bars: number;
+  agents: AgentPerformanceRow[];
+  note: string;
+}
+
 export interface FtmoMonitorRow {
   account: { id: string; label: string; rulebook_key: string | null; program: string | null;
     phase: string | null; starting_balance: number; currency: string };
@@ -1390,6 +1436,9 @@ export interface FtmoMonitorView {
 
 export const api = {
   ftmoMonitor: () => request<FtmoMonitorView>("/api/v1/agents/ftmo-monitor"),
+  agentHealth: () => request<AgentHealthView>("/api/v1/agents/health"),
+  agentAlerts: () => request<AgentAlertsView>("/api/v1/agents/alerts"),
+  agentPerformance: () => request<AgentPerformanceView>("/api/v1/agents/performance"),
   agentRegistry: () => request<AgentRegistryView>("/api/v1/agents/registry"),
   rocketScan: (timeframe = "H1") =>
     request<RocketScanView>(`/api/v1/agents/rocket/scan?timeframe=${timeframe}`),

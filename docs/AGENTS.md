@@ -275,3 +275,12 @@ API فقط‌خواندنی: `/api/v1/agents/memory`، `/agents/council/decision
 - BRAIN-01/AI03: `agents/council/versions.py` و `services/agent_council.py`: بازپخش تصمیم‌های ثبت‌شده با دو نسخهٔ وزن در حافظه؛ پیشنهاد وزن فقط به صورت PROPOSED.
 - `GET /agents/run?symbol=` همهٔ تحلیلگرها با سلامت هر ایجنت؛ `GET /agents/council/versions`.
 - اصلاح باگ: EA فقط M5، M15 و H1 را منتشر می‌کند (نه هفت تایم‌فریم)؛ برچسب Native و تایم‌فریم‌های مشتق‌شدهٔ اضافه اصلاح شد (M2/M3/M4/M6/M12 منبع ندارند).
+
+## مرحله ۱۶ — سلامت، عملکرد، توضیح تصمیم، هشدار (فقط خواندنی)
+
+- `python -m app.services.agent_run` با `MOLIDO_AGENT_RUN=1` (پیش‌فرض خاموش): یک دور ثبت‌شده روی نمادها؛ هر اجرا در حافظه (kind `agent`، event `run`) با تأخیر و خطای هر ایجنت.
+- `GET /agents/health`: هر ۵۱ نقش؛ برای تحلیلگرها: ok / degraded (خطا بیشتر از ۲۰٪) / stale (بیش از ۲۴ ساعت) / never_run.
+- `GET /agents/performance`: درصد درست بودن جهت BUY/SELL هر ایجنت پس از N کندل، قبل از اسپرد و هزینه؛ زیر ۳۰ مورد مدرک نیست.
+- `GET /agents/explain?symbol=`: رأی‌ها، شواهد، مخالفان، ورودی‌های ناموجود و دلیل «بدون سفارش».
+- `GET /agents/alerts`: هشدار از سلامت ایجنت‌ها، Kill Switch، زیان روزانه، دادهٔ کهنه و قوانین FTMO. فقط نمایش داده می‌شود؛ هیچ پیامی ارسال نمی‌شود.
+- صفحهٔ `/agent-health`.
