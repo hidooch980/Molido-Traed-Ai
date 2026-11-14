@@ -235,3 +235,22 @@ def publish(
             "orders; the outbound queue is a separate path"
         ),
     }
+
+
+@router.get("/config")
+def ea_remote_config(
+    account_key: str = DEFAULT_ACCOUNT_KEY,
+    ea_version: str | None = None,
+    _: Principal = BROKER,
+    session: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Tunables the bridge EA polls (symbols, refresh, bar counts, latest version).
+
+    Read-only. The EA's trading and real-account guards are not in this payload
+    and cannot be changed through it.
+    """
+    from app.services.ea_config import config
+
+    out = config(session, running_version=ea_version)
+    out["account_key"] = account_key
+    return out

@@ -25,7 +25,7 @@
 //--- in a startup config file, which the terminal reads from the command
 //--- line - no window, no click, and it survives every restart.
 #property copyright "MolidoTrade AI"
-#property version   "1.10"
+#property version   "1.20"
 
 //--- Written to the common folder rather than the terminal's own, so the path
 //--- does not move when the terminal is reinstalled or run portable.
@@ -95,6 +95,16 @@ input string ExtraSymbols = "XAUUSD,EURUSD,GBPUSD,USDJPY,GBPJPY,AUDUSD,USDCAD,US
 //--- ever given. The terminal refuses to hide a symbol with an open position
 //--- or a chart, and that refusal is logged and left alone.
 input bool HideUnlistedSymbols = true;
+
+//--- Runtime copies of the tunable inputs. They start as the inputs and may be
+//--- replaced by the platform's remote config (symbols, refresh, bar counts).
+//--- The safety inputs - AllowTrading, AllowRealAccount, ExpectedLogin - have
+//--- no runtime copy, so no remote message can change them.
+#define MOLIDO_EA_VERSION "1.20"
+int    g_RefreshSeconds   = 20;
+int    g_BarCount         = 500;
+int    g_IntradayBarCount = 240;
+string g_Symbols          = "";
 
 string TimeframeName(ENUM_TIMEFRAMES period)
   {
@@ -249,7 +259,7 @@ void WriteBars(string symbol, ENUM_TIMEFRAMES period)
 
    MqlRates rates[];
    ArraySetAsSeries(rates, true);
-   int wanted = (period <= PERIOD_M5) ? IntradayBarCount : BarCount;
+   int wanted = (period <= PERIOD_M5) ? g_IntradayBarCount : g_BarCount;
    int copied = CopyRates(symbol, period, 1, wanted, rates);
    if(copied <= 0)
       return;
@@ -339,7 +349,8 @@ void WriteHeartbeat(int cycle)
    json += "\"connected\":" + (TerminalInfoInteger(TERMINAL_CONNECTED) ? "true" : "false") + ",";
    json += "\"trade_allowed\":" + (TerminalInfoInteger(TERMINAL_TRADE_ALLOWED) ? "true" : "false") + ",";
    json += "\"build\":" + IntegerToString(TerminalInfoInteger(TERMINAL_BUILD)) + ",";
-   json += "\"refresh_seconds\":" + IntegerToString(RefreshSeconds) + ",";
+   json += "\"refresh_seconds\":" + IntegerToString(g_RefreshSeconds) + ",";
+   json += "\"ea_version\":\"" + MOLIDO_EA_VERSION + "\",";
    json += "\"places_orders\":false";
    json += "}";
    FileWriteString(handle, json);
@@ -351,13 +362,18 @@ int OnInit()
   {
    if(!AccountAllowed())
       return INIT_FAILED;
-   Print("MolidoBridge: publishing every ", RefreshSeconds, "s to the common Files folder");
+   g_RefreshSeconds = RefreshSeconds;
+   g_BarCount = BarCount;
+   g_IntradayBarCount = IntradayBarCount;
+   g_Symbols = ExtraSymbols;
+   Print("MolidoBridge ", MOLIDO_EA_VERSION, ": publishing every ", g_RefreshSeconds, "s to the common Files folder");
    //--- One timer rather than OnTick: this publishes on a clock, not on price
    //--- movement. Tying it to ticks would stop publishing exactly when the
    //--- market goes quiet, which is when a stale-feed check needs it most.
    PublishAvailableSymbols();
+   FetchRemoteConfig(true);
    SelectExtraSymbols();
-   EventSetTimer(RefreshSeconds);
+   EventSetTimer(g_RefreshSeconds);
    Publish();
    return INIT_SUCCEEDED;
   }
@@ -372,11 +388,11 @@ int OnInit()
 //+------------------------------------------------------------------+
 void SelectExtraSymbols()
   {
-   if(StringLen(ExtraSymbols) == 0)
+   if(StringLen(g_Symbols) == 0)
       return;
 
    string names[];
-   int count = StringSplit(ExtraSymbols, ',', names);
+   int count = StringSplit(g_Symbols, ',', names);
    for(int i = 0; i < count; i++)
      {
       string name = names[i];
@@ -1167,6 +1183,7 @@ void WriteDeals()
 
 void OnTimer()
   {
+   FetchRemoteConfig(false);
    Publish();
    ExecutePending();
   }
@@ -1234,6 +1251,7 @@ void PostToPlatform()
    //--- bare account, and duplicating two booleans is cheaper than a contract
    //--- that only works when the account block is complete.
    body += "\"connected\":" + (TerminalInfoInteger(TERMINAL_CONNECTED) ? "true" : "false") + ",";
+   body += "\"ea_version\":\"" + MOLIDO_EA_VERSION + "\",";
    body += "\"login\":" + IntegerToString(AccountInfoInteger(ACCOUNT_LOGIN));
    body += "}";
 
@@ -1410,3 +1428,154 @@ void Publish()
    PostToPlatform();
   }
 //+------------------------------------------------------------------+
+
+//+------------------------------------------------------------------+
+//| Remote config and version check.                                   |
+//|                                                                    |
+//| The EA stays a thin bridge: the symbol list, refresh period and    |
+//| bar counts come from the platform (GET .../bridge/config) so they  |
+//| change without touching this file. Only those four values are read.|
+//| AllowTrading, AllowRealAccount and ExpectedLogin are inputs with no |
+//| runtime copy, so the config cannot reach them. Values are clamped,  |
+//| symbol names are character-checked, and a failed fetch keeps the    |
+//| current settings.                                                   |
+//+------------------------------------------------------------------+
+input string ConfigUrl            = "";   // empty = PublishUrl with /publish -> /config
+input int    ConfigRefreshMinutes = 10;
+
+datetime g_lastConfigFetch = 0;
+string   g_announcedVersion = "";
+
+string ResolvedConfigUrl()
+  {
+   if(StringLen(ConfigUrl) > 0)
+      return ConfigUrl;
+   if(StringLen(PublishUrl) == 0)
+      return "";
+   string url = PublishUrl;
+   if(StringReplace(url, "/bridge/publish", "/bridge/config") <= 0)
+      return "";
+   return url;
+  }
+
+//--- Value of "key": in a flat JSON object; strings unquoted. Empty if absent.
+string JsonValue(const string body, const string key)
+  {
+   string pattern = "\"" + key + "\":";
+   int at = StringFind(body, pattern);
+   if(at < 0)
+      return "";
+   int i = at + StringLen(pattern);
+   while(i < StringLen(body) && StringGetCharacter(body, i) == ' ')
+      i++;
+   if(i >= StringLen(body))
+      return "";
+   if(StringGetCharacter(body, i) == '"')
+     {
+      int end = StringFind(body, "\"", i + 1);
+      return end < 0 ? "" : StringSubstr(body, i + 1, end - i - 1);
+     }
+   int stop = i;
+   while(stop < StringLen(body))
+     {
+      ushort c = StringGetCharacter(body, stop);
+      if(c == ',' || c == '}' || c == ' ')
+         break;
+      stop++;
+     }
+   string raw = StringSubstr(body, i, stop - i);
+   return raw == "null" ? "" : raw;
+  }
+
+bool SafeSymbolList(const string csv)
+  {
+   if(StringLen(csv) == 0 || StringLen(csv) > 2000)
+      return false;
+   for(int i = 0; i < StringLen(csv); i++)
+     {
+      ushort c = StringGetCharacter(csv, i);
+      bool ok = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')
+                || c == ',' || c == '.' || c == '_' || c == '#' || c == '-';
+      if(!ok)
+         return false;
+     }
+   return true;
+  }
+
+int Clamp(int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); }
+
+//--- true when version a is newer than b ("1.20" vs "1.10").
+bool VersionNewer(const string a, const string b)
+  {
+   string pa[], pb[];
+   int na = StringSplit(a, '.', pa), nb = StringSplit(b, '.', pb);
+   for(int i = 0; i < MathMax(na, nb); i++)
+     {
+      long x = i < na ? StringToInteger(pa[i]) : 0;
+      long y = i < nb ? StringToInteger(pb[i]) : 0;
+      if(x != y)
+         return x > y;
+     }
+   return false;
+  }
+
+void FetchRemoteConfig(bool force)
+  {
+   string url = ResolvedConfigUrl();
+   if(StringLen(url) == 0)
+      return;
+   if(!force && TimeCurrent() - g_lastConfigFetch < ConfigRefreshMinutes * 60)
+      return;
+   g_lastConfigFetch = TimeCurrent();
+   string full = url + (StringFind(url, "?") < 0 ? "?" : "&") + "account_key=" + PublishAccountKey
+                 + "&ea_version=" + MOLIDO_EA_VERSION;
+   string headers = "";
+   if(StringLen(PublishApiKey) > 0)
+      headers = "X-API-Key: " + PublishApiKey + "\r\n";
+   char data[];
+   char result[];
+   string response_headers;
+   ResetLastError();
+   int status = WebRequest("GET", full, headers, PublishTimeoutMs, data, result, response_headers);
+   if(status != 200)
+     {
+      Print("MolidoBridge: remote config not loaded (status ", status, ", error ", GetLastError(),
+            ") - keeping current settings");
+      return;
+     }
+   string body = CharArrayToString(result, 0, WHOLE_ARRAY, CP_UTF8);
+
+   string symbols = JsonValue(body, "symbols_csv");
+   if(SafeSymbolList(symbols) && symbols != g_Symbols)
+     {
+      g_Symbols = symbols;
+      Print("MolidoBridge: symbol list updated from the platform");
+      SelectExtraSymbols();
+     }
+   string refresh = JsonValue(body, "refresh_seconds");
+   if(StringLen(refresh) > 0)
+     {
+      int seconds = Clamp((int)StringToInteger(refresh), 5, 300);
+      if(seconds != g_RefreshSeconds)
+        {
+         g_RefreshSeconds = seconds;
+         EventKillTimer();
+         EventSetTimer(g_RefreshSeconds);
+         Print("MolidoBridge: refresh set to ", g_RefreshSeconds, "s by the platform");
+        }
+     }
+   string bars = JsonValue(body, "bar_count");
+   if(StringLen(bars) > 0)
+      g_BarCount = Clamp((int)StringToInteger(bars), 50, 5000);
+   string intraday = JsonValue(body, "intraday_bar_count");
+   if(StringLen(intraday) > 0)
+      g_IntradayBarCount = Clamp((int)StringToInteger(intraday), 50, 2000);
+
+   string latest = JsonValue(body, "ea_latest_version");
+   if(StringLen(latest) > 0 && latest != g_announcedVersion && VersionNewer(latest, MOLIDO_EA_VERSION))
+     {
+      g_announcedVersion = latest;
+      Print("MolidoBridge: a newer EA is available (", latest, ", running ", MOLIDO_EA_VERSION,
+            "). The updater script installs it; nothing changes until then.");
+     }
+  }
