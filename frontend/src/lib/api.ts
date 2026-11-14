@@ -1493,7 +1493,50 @@ export interface HeadlinesView {
   headlines?: Array<Record<string, unknown>>;
 }
 
+export interface BrainShadowVerdict {
+  status: string;
+  rows: number;
+  pending: number;
+  horizon_bars: number;
+  production: { n: number; hit_rate: number | null };
+  with_agents: { n: number; hit_rate: number | null };
+  decision: { promote: boolean; reason: string; margin?: number | null; overlap?: number | null };
+  live_effect: string;
+}
+export interface BrainShadowView {
+  enabled: boolean;
+  latest_verdict: BrainShadowVerdict | null;
+  recent: Array<{ symbol: string; as_of: string; production: string; agents: string; with_agents: string; conviction: number }>;
+}
+export interface GateResult {
+  kind: string;
+  version: string;
+  verdict: string;
+  trades?: number;
+  avg_r?: number | null;
+  as_of?: string;
+  symbols?: Array<{ symbol: string; n: number; avg_r: number | null; error?: string | null }>;
+}
+export interface NightlyReport {
+  date: string;
+  delivered?: boolean;
+  paper: { total_r: number; win_rate: number | null; closed: number; open: number;
+    accounts: Record<string, { opened_today: number; closed: number; total_r: number; open: number }> };
+  agents: { top: Array<{ id: string; calls: number; hit_rate: number | null }>; with_enough_data: number };
+  learning: { weights: number | null; changes_today: Array<{ version: number; reason: string }>; quarantined: string[];
+    brain_shadow: { status: string; reason: string } | null };
+  backtest_gate: string | null;
+}
+export interface OpsView {
+  backtest_gate: { enabled: boolean; strategy_version: string; current: GateResult | null; history: GateResult[] };
+  notify: { configured: boolean; channel: string; recent: Array<{ at: string; text: string; delivered: boolean | null }> };
+  reports: NightlyReport[];
+}
+
+
 export const api = {
+  brainShadow: () => request<BrainShadowView>("/api/v1/agents/brain-shadow"),
+  agentOps: () => request<OpsView>("/api/v1/agents/ops"),
   symbolView: (symbol: string, timeframe = "H1") =>
     request<SymbolView>(
       `/api/v1/agents/symbol/${encodeURIComponent(symbol)}?timeframe=${timeframe}`,

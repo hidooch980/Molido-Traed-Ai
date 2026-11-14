@@ -67,7 +67,9 @@ def config(session: Session | None = None, *, running_version: str | None = None
         if value.isdigit():
             lo, hi = LIMITS[key]
             out[key] = max(lo, min(hi, int(value)))
-    out.update(ea_release())
+    from app.services import agent_backtest_gate
+
+    out.update(agent_backtest_gate.ea_advertise(session, ea_release()))
     out["ea_download_url"] = os.environ.get("MOLIDO_EA_DOWNLOAD_URL") or None
     out["config_version"] = hashlib.sha256(
         repr(sorted((k, v) for k, v in out.items())).encode()).hexdigest()[:16]

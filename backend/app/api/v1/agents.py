@@ -273,3 +273,21 @@ def symbol_view(
     health, calendar and learning state. Nothing is stored or sent."""
     bridge = agent_account._provider(None, session)
     return agent_symbol_view.view(session, symbol, timeframe, bridge=bridge)
+
+
+@router.get("/brain-shadow")
+def brain_shadow(session: Session = Depends(get_db), _: Principal = READ) -> dict[str, Any]:
+    """Production brain vs production brain + agents, shadow only; registry.compare verdict."""
+    from app.services import agent_brain_shadow
+
+    return agent_brain_shadow.status(session)
+
+
+@router.get("/ops")
+def ops_status(session: Session = Depends(get_db), _: Principal = READ) -> dict[str, Any]:
+    """Backtest gate, Telegram alerts (off until configured) and nightly reports."""
+    from app.services import agent_backtest_gate, agent_notify, agent_report
+
+    return {"backtest_gate": agent_backtest_gate.status(session),
+            "notify": agent_notify.status(session),
+            "reports": agent_report.latest(session)}

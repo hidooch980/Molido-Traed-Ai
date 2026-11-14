@@ -103,7 +103,10 @@ def run_cycle(session: Session, timeframe: Timeframe = Timeframe.H1, *,
     resolved = agent_walkforward.resolve_recorded(session, now=now) if record else 0
     known = {t["trade_id"] for t in state["trades"]}
     opened_n = 0
-    for sig in scan["signals"]:
+    from app.services import agent_backtest_gate
+
+    allowed, gate_why = agent_backtest_gate.paper_allowed(session)
+    for sig in scan["signals"] if allowed else []:
         trade = open_trade(sig, sig["risk_review"])
         if trade is None:
             continue
@@ -118,7 +121,7 @@ def run_cycle(session: Session, timeframe: Timeframe = Timeframe.H1, *,
         opened_n += 1
     return {"opened": opened_n, "closed": closed, "signals": len(scan["signals"]),
             "recorded": recorded, "resolved": resolved,
-            "risk_context_source": ctx.source, "account": account}
+            "risk_context_source": ctx.source, "account": account, "backtest_gate": gate_why}
 
 
 def run_all_accounts(session: Session, timeframe: Timeframe = Timeframe.H1, *,

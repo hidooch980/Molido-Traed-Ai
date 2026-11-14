@@ -166,9 +166,17 @@ def run_cycle(session: Session, timeframe: Timeframe = Timeframe.H1, *,
     done = [run_symbol(session, s, timeframe, bridge=bridge, events=events, record=True,
                        skip=skip) for s in symbols[:max_symbols]]
     learning = agent_learning.learning_cycle(session) if learn else None
+    from app.services import agent_brain_shadow
+
+    shadow = None
+    if agent_brain_shadow.enabled():
+        weights = agent_learning.current(session)["weights"]
+        shadow = agent_brain_shadow.cycle(session, [d for d in done if d["status"] == "ran"],
+                                          weights)
+        shadow["evaluation"] = agent_brain_shadow.evaluate(session)["status"]
     return {"timeframe": timeframe.value, "ran": sum(1 for d in done if d["status"] == "ran"),
             "skipped": [d["symbol"] for d in done if d["status"] != "ran"],
-            "quarantined": sorted(skip), "learning": learning}
+            "quarantined": sorted(skip), "learning": learning, "brain_shadow": shadow}
 
 
 def main() -> int:

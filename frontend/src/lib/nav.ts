@@ -26,6 +26,7 @@ export const NAV: NavItem[] = [
   { key: "ai-brain", labelKey: "nav.aiBrain", href: "/brain", group: "overview" },
   { key: "agents", labelKey: "nav.agents", href: "/agents", group: "overview" },
   { key: "symbols", labelKey: "nav.symbols", href: "/symbols", group: "market" },
+  { key: "agent-ops", labelKey: "nav.agentOps", href: "/agent-ops", group: "overview" },
   { key: "rocket", labelKey: "nav.rocket", href: "/rocket", group: "market" },
   { key: "grok-cost", labelKey: "nav.grokCost", href: "/grok-cost", group: "setup" },
   { key: "markets", labelKey: "nav.markets", href: "/markets", group: "market" },
