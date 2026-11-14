@@ -1,7 +1,7 @@
 {
   "ea": "Molido_Expert",
-  "ea_version": "2.00",
-  "sha256": "e100741c621093b1dce4ac784613f0b3f5e1a1cb14341c4ab701608d82fe7702",
+  "ea_version": "2.01",
+  "sha256": "05c2e7c180bd978381efebf4e534fc2dc5d340e6cbc44bfb138ed612f3c1a039",
   "backtest": "PENDING",
-  "note": "Upgrade of Molido_Master. Real accounts blocked. Gate stays PENDING without a walk-forward PASS."
+  "note": "Upgrade of Molido_Master. Real accounts blocked. Gate stays PENDING without a walk-forward PASS. UI 2.01 grid and button layout polish."
 }
