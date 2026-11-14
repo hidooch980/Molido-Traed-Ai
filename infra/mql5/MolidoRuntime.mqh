@@ -161,6 +161,11 @@ ENUM_ACCOUNT_PROFILE ActiveProfile();
 ENUM_ACCOUNT_PROFILE DetectedProfile();
 void RefreshActiveProfile();
 bool MolidoRealBlocked();
+#ifdef MOLIDO_EXPERT_UI
+bool ExpertAutoOn();
+bool ExpertStopNew();
+void ExpertBridgeOnTimer();
+#endif
 void MolidoI18nInit();
 string Tr(const string key);
 bool MolidoRequestUpdate();
@@ -1590,6 +1595,9 @@ void OnTimer()
    Publish();
    ExecutePending();
    DemoScalperOnTimer();
+#ifdef MOLIDO_EXPERT_UI
+   ExpertBridgeOnTimer();
+#endif
    MolidoDashOnTimer();
   }
 
@@ -2194,4 +2202,12 @@ bool MolidoRequestUpdate()
 #include "MolidoSmart.mqh"
 #include "MolidoProtect.mqh"
 #include "MolidoUniverse.mqh"
+#ifdef MOLIDO_EXPERT_UI
+#include "MolidoExpertBridge.mqh"
+#include "MolidoExpertRisk.mqh"
+#include "MolidoExpertReport.mqh"
+#include "MolidoExpertExec.mqh"
+#include "MolidoExpertUI.mqh"
+#else
 #include "MolidoDashboard.mqh"
+#endif

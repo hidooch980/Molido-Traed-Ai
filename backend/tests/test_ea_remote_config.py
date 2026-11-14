@@ -158,6 +158,7 @@ def test_split_eas_have_unique_magics():
         "Molido_Trend.mq5": 685406,
         "Molido_AutoPortfolio.mq5": 685407,
         "Molido_Master.mq5": 685408,
+        "Molido_Expert.mq5": 685409,
     }
     seen = set()
     for name, magic in eas.items():
@@ -189,3 +190,30 @@ def test_split_eas_have_unique_magics():
     assert "molido_update_request.json" in SRC and "molido_daily_summary.json" in SRC
     assert "Update now?" in (root / "MolidoI18n.mqh").read_text(encoding="utf-8-sig")
     assert 'Tr("update_now")' in (root / "MolidoDashboard.mqh").read_text(encoding="utf-8")
+
+
+def test_molido_expert_keeps_safety_and_modules():
+    root = pathlib.Path(__file__).resolve().parents[2] / "infra" / "mql5"
+    ea = (root / "Molido_Expert.mq5").read_text(encoding="utf-8")
+    assert "MOLIDO_EXPERT_UI" in ea
+    assert 'MOLIDO_EA_VERSION       "2.00"' in ea
+    assert "MOLIDO_REAL_SUPPORTED   false" in ea
+    assert "MOLIDO_MAGIC            685409" in ea
+    assert "PROFILE_AUTO" in ea
+    rt = (root / "MolidoRuntime.mqh").read_text(encoding="utf-8")
+    assert "MolidoExpertUI.mqh" in rt
+    assert "MolidoExpertBridge.mqh" in rt
+    assert 'JsonValue(body, "AiBridgeToken")' not in rt
+    br = (root / "MolidoExpertBridge.mqh").read_text(encoding="utf-8")
+    assert "AiBridgeToken" in br
+    assert "molido_ai_token.txt" in br
+    # no hardcoded bearer secrets
+    assert "Bearer " in br  # header prefix only
+    assert re.search(r'AiBridgeToken\s*=\s*"\s*[^"]+', br) is None or 'AiBridgeToken = ""' in br
+    assert "never hardcoded" in br.lower() or "never hardcoded" in br or "Token is never hardcoded" in br
+    ui = (root / "MolidoExpertUI.mqh").read_text(encoding="utf-8-sig")
+    assert "CreateBitmapLabel" in ui
+    assert "ChartSetSymbolPeriod" in ui
+    assert "ExpertManualTrade" in ui
+    assert "#import" not in ui.lower() or "Canvas" in ui
+    assert "WebBrowser" not in ui and "<html" not in ui.lower()

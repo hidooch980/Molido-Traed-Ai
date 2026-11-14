@@ -14,6 +14,7 @@
 #define MOLIDO_MAGIC_TREND    685406
 #define MOLIDO_MAGIC_AUTO     685407
 #define MOLIDO_MAGIC_MASTER   685408
+#define MOLIDO_MAGIC_EXPERT   685409
 
 #ifndef MOLIDO_MAGIC
 #define MOLIDO_MAGIC MOLIDO_MAGIC_BRIDGE
@@ -86,6 +87,7 @@ bool IsMolidoMagic(const long magic)
    if(magic == MOLIDO_MAGIC_TREND) return(true);
    if(magic == MOLIDO_MAGIC_AUTO) return(true);
    if(magic == MOLIDO_MAGIC_MASTER) return(true);
+   if(magic == MOLIDO_MAGIC_EXPERT) return(true);
    return(false);
   }
 

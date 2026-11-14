@@ -1774,6 +1774,10 @@ void DemoScalperOnTick()
       DemoProtectOnTick();
    if(!AllowTrading)
       return;
+#ifdef MOLIDO_EXPERT_UI
+   if(ExpertStopNew() || !ExpertAutoOn())
+      return;
+#endif
    if(!DemoAccountOk())
       return;
    if(DemoNewsGateNewEntries())

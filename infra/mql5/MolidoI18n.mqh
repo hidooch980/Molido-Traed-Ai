@@ -8,11 +8,14 @@
 
 string g_i18n_face = "Segoe UI";
 bool   g_i18n_fallback = false;
+int    g_ui_lang = -1;  // -1 = Language input; header FA/EN may override
 
 int MolidoLangId()
   {
    if(g_i18n_fallback)
       return(LANG_EN);
+   if(g_ui_lang >= 0)
+      return(g_ui_lang);
    return((int)Language);
   }
 
