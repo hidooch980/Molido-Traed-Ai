@@ -207,7 +207,11 @@ double SmartAdx(const string symbol, const ENUM_TIMEFRAMES tf, const int period)
 
 bool SmartInSession(string &label)
   {
+#ifdef MOLIDO_EXPERT_UI
+   datetime gmt = ExpertGmtNow(); // 2.31: tester clock fix (live = TimeGMT)
+#else
    datetime gmt = TimeGMT();
+#endif
    MqlDateTime dt;
    TimeToStruct(gmt, dt);
    if(dt.day_of_week == 0 || dt.day_of_week == 6)

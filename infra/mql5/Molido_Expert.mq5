@@ -1,9 +1,9 @@
 //+------------------------------------------------------------------+
-//| Molido_Expert.mq5 - Molido Expert – AI Trading Power v2.3        |
+//| Molido_Expert.mq5 - Molido Expert – AI Trading Power v2.31       |
 //| Upgrade of Molido_Master: same safety, auto-detect, real block.  |
 //+------------------------------------------------------------------+
 #property copyright   "MolidoTrade AI"
-#property version     "2.30"
+#property version     "2.31"
 #property description "Molido Expert – AI Trading Power. Demo only; real accounts blocked."
 #define MOLIDO_EXPERT_UI
 #define MOLIDO_EA_NAME          "Molido_Expert"
@@ -20,7 +20,7 @@
 #define MOLIDO_DEFAULT_REHEARSAL true
 #define MOLIDO_USE_FIBO         false
 #define MOLIDO_REAL_SUPPORTED   false
-#define MOLIDO_EA_VERSION       "2.30"
+#define MOLIDO_EA_VERSION       "2.31"
 //--- Expert 2.30 safety (demo). These only tighten shared Risk Brain caps.
 input group "Expert 2.30 safety"
 input double ExpertMetalRiskPct         = 0.15;  // XAU/XAG risk % (never above the 0.5% hard cap)
@@ -62,6 +62,11 @@ input int    ExpertSafeModeCooldownHours= 24;    // also clear this many hours a
 input group "Expert 2.30 V2 confirmation (optional, default off)"
 input bool   InpUseSP2LFilter           = false; // confirm with SP2L structure (closed bars)
 input bool   InpUseFVGFilter            = false; // confirm with unmitigated FVG reaction
+input group "Expert 2.31 backtest fixes (additive)"
+input bool   ExpertTesterClockFix       = true;  // Strategy Tester only: derive GMT from server time (live unchanged)
+input int    ExpertTesterGmtOffset      = 2;     // tester: broker server offset from GMT in winter
+input int    ExpertTesterDstMode        = 1;     // tester: 0 none, 1 US DST (+1h), 2 EU DST (+1h)
+input int    InpSP2LGapMode             = 0;     // 0 strict open gap (2.30), 1 three-bar micro gap
 //--- Dashboard size only. These do not change trading logic.
 enum ENUM_DASH_UI_SIZE
   {

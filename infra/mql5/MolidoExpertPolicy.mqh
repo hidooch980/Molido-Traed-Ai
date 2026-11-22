@@ -1,5 +1,5 @@
 ﻿//+------------------------------------------------------------------+
-//| MolidoExpertPolicy.mqh - Expert 2.30 safety (demo only).         |
+//| MolidoExpertPolicy.mqh - Expert 2.30/2.31 safety (demo only).    |
 //| Tightens Expert behaviour; never loosens shared Risk Brain caps. |
 //| Included only when MOLIDO_EXPERT_UI is defined.                  |
 //+------------------------------------------------------------------+
@@ -75,10 +75,64 @@ bool ExpertInstanceMayTrade()
    return(!g_ex_standby);
   }
 
+//--- 2.31: in the Strategy Tester TimeGMT() returns simulated server time,
+//--- so the London window was applied in server hours there but in GMT live.
+//--- With ExpertTesterClockFix the tester derives GMT from server time using
+//--- the broker offset and DST rule, so tester and live use the same window.
+int ExpertNthSundayMday(const int year, const int mon, const int nth)
+  {
+   MqlDateTime d;
+   d.year = year; d.mon = mon; d.day = 1; d.hour = 0; d.min = 0; d.sec = 0;
+   datetime t = StructToTime(d);
+   TimeToStruct(t, d);
+   int first = 1 + ((7 - d.day_of_week) % 7);
+   return(first + 7 * (nth - 1));
+  }
+
+int ExpertLastSundayMday(const int year, const int mon)
+  {
+   int day = ExpertNthSundayMday(year, mon, 1);
+   int dim = 31;
+   if(mon == 4 || mon == 6 || mon == 9 || mon == 11) dim = 30;
+   while(day + 7 <= dim) day += 7;
+   return(day);
+  }
+
+bool ExpertTesterDstOn(const datetime server_t)
+  {
+   MqlDateTime d;
+   TimeToStruct(server_t, d);
+   int key = d.mon * 100 + d.day;
+   if(ExpertTesterDstMode == 1)
+     {
+      int a = 300 + ExpertNthSundayMday(d.year, 3, 2);
+      int b = 1100 + ExpertNthSundayMday(d.year, 11, 1);
+      return(key >= a && key < b);
+     }
+   if(ExpertTesterDstMode == 2)
+     {
+      int a = 300 + ExpertLastSundayMday(d.year, 3);
+      int b = 1000 + ExpertLastSundayMday(d.year, 10);
+      return(key >= a && key < b);
+     }
+   return(false);
+  }
+
+datetime ExpertGmtNow()
+  {
+   if(ExpertTesterClockFix && (bool)MQLInfoInteger(MQL_TESTER))
+     {
+      datetime srv = TimeCurrent();
+      int off = ExpertTesterGmtOffset + (ExpertTesterDstOn(srv) ? 1 : 0);
+      return(srv - off * 3600);
+     }
+   return(TimeGMT());
+  }
+
 int ExpertGmtHour()
   {
    MqlDateTime g;
-   TimeToStruct(TimeGMT(), g);
+   TimeToStruct(ExpertGmtNow(), g);
    return(g.hour);
   }
 

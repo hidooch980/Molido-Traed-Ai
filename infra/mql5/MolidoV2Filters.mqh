@@ -1,5 +1,5 @@
 ﻿//+------------------------------------------------------------------+
-//| MolidoV2Filters.mqh - SP2L + FVG confirmation (Expert 2.30).     |
+//| MolidoV2Filters.mqh - SP2L + FVG confirmation (Expert 2.30/2.31).|
 //| Port of TESTED detection from agents/stage-23-v2-engines.        |
 //| Entry/SL/TP rules stay RESEARCH and are not used as entries.     |
 //| Closed bars only (no bar 0) so the filters do not repaint.       |
@@ -137,6 +137,20 @@ bool V2DetectSp2l(const V2Bar &bars[], const int n, const string side, string &w
            {
             gap_i = i;
             break;
+           }
+        }
+      //--- 2.31 InpSP2LGapMode=1: an open gap beyond the prior bar almost never
+      //--- happens on continuous 24h symbols (all 339 SP2L checks in the 2.30
+      //--- tester runs failed here). Mode 1 also accepts a three-bar micro gap:
+      //--- the bar after a spike bar does not overlap the bar before it.
+      if(gap_i < 0 && InpSP2LGapMode == 1)
+        {
+         for(int i = start; i <= end; i++)
+           {
+            if(i < 1 || i + 1 >= n)
+               continue;
+            if(bull && bars[i + 1].l > bars[i - 1].h) { gap_i = i; break; }
+            if(!bull && bars[i + 1].h < bars[i - 1].l) { gap_i = i; break; }
            }
         }
       if(gap_i < 0)
