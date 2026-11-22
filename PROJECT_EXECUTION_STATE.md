@@ -8,7 +8,7 @@ Create-once, append thereafter. Additive work only. No force-push, reset --hard,
 - Date: 2026-11-22 (Asia/Tehran)
 - Checkpoint tag: `checkpoint/v2-audit-20261122` → `0870a5302f828e2f4e3d4f0cb42cbb51b78b6a88` (`agents/stage-21-weighted-vote`)
 - Audit: `docs/v2-audit-20261122.md`
-- Active work branch (additive, unmerged): `agents/stage-22-pro-btb`
+- Active work branch (additive, unmerged): `agents/stage-23-v2-engines` (stacked on `agents/stage-22-pro-btb`)
 - Default mode: Research / Paper / shadow. Live trading remains BLOCKED.
 - Central Risk Brain is not bypassed. No engine may override it.
 
@@ -18,9 +18,9 @@ Create-once, append thereafter. Additive work only. No force-push, reset --hard,
 |---|---|---|
 | 1 | Repo audit | DONE (see `docs/v2-audit-20261122.md`) |
 | 2 | Backup / git checkpoint | DONE (tag pushed, non-destructive) |
-| 3 | Extract exact definitions (5 key levels; SP2L; Pro BTB; Spike & Imbalance) | NOT STARTED — no guessing; unspecified items stay RESEARCH |
+| 3 | Extract exact definitions (5 key levels; SP2L; Pro BTB; Spike & Imbalance) | DONE for this pass — sources in docs/v2-engines-fa.md; Weekly MAP and Valid Break-Even stay RESEARCH stubs |
 | 4 | Additive architecture | NOT STARTED |
-| 5 | Four engines (SP2L, Pro BTB, Spike & Imbalance/FVG, Key Levels) | IN PROGRESS — Pro BTB is the first engine |
+| 5 | Four engines (SP2L, Pro BTB, Spike & Imbalance/FVG, Key Levels) | IN PROGRESS — all four engines exist as shadow modules; Weekly MAP / Valid BE remain stubs; scoring adapter off by default |
 | 6 | Eight layers | NOT STARTED as a V2 package (fragments already exist; see audit) |
 | 7 | Rocket Trade Hunter integration | NOT STARTED as a V2 package (RT01–RT10 already exist in shadow) |
 | 8 | Hybrid AI Brain integration | NOT STARTED as a V2 package (BRAIN-01 + `app/brain` already exist) |
@@ -71,6 +71,18 @@ Missing (build additively): the five named Key Levels; SP2L; Pro BTB; a dedicate
 - Test: `pytest` in `backend/` — 4754 passed, including 42 new Pro BTB tests; 0 failed.
 - Result: branch `agents/stage-22-pro-btb` (push only, not merged).
 - Rollback: stay on / check out `checkpoint/v2-audit-20261122` or `agents/stage-21-weighted-vote`. Delete or ignore the stage-22 branch; no force-push or branch delete is required for rollback.
+
+
+### 2026-11-22 — Phase 3+5: Key Levels, SP2L, Spike & Imbalance, V2 scorer
+
+- Files (all new): `backend/app/agents/v2/**`, `backend/tests/test_v2_*.py`, `backend/tests/v2_bars.py`, `docs/v2-engines-fa.md`. This state file appended.
+- Before: only the Pro BTB engine existed (stage 22). No Key Levels / SP2L / Spike-Imbalance engines and no combined scorer.
+- Change: additive shadow engines plus a read-only scorer (`MOLIDO_V2_ENGINES_ENABLED`, default off). Existing SMC FVG is reused via import, not copied. Weekly MAP and Valid Break-Even are RESEARCH stubs; not replaced with pivot/midpoint. No existing file deleted. `smc.py` and the 51-agent runner were not modified.
+- Reason: Master V2 Phase 3 (definitions) and Phase 5 (remaining engines).
+- Impact: new modules only. Risk Brain, Rocket analyzers, and execution paths are unchanged.
+- Test: full backend `pytest` — 4780 passed (26 new V2 tests on top of 4754), 0 failed.
+- Result: branch `agents/stage-23-v2-engines` (push only, not merged).
+- Rollback: `agents/stage-22-pro-btb` or `checkpoint/v2-audit-20261122`.
 
 ## Next
 
