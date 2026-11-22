@@ -352,6 +352,9 @@ bool DemoNewsTradeOnce()
    double lot_step   = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
    double min_lot    = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
    double max_lot    = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
+#ifdef MOLIDO_EXPERT_UI
+   ExpertSetLotsSymbol(_Symbol);
+#endif
    double lots = DemoSizeLots(AccountInfoDouble(ACCOUNT_BALANCE), risk_pct, MathAbs(entry - sl),
                               tick_size, tick_value, lot_step, min_lot, max_lot);
    if(lots <= 0.0)

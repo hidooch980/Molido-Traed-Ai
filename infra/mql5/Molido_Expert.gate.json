@@ -1,7 +1,7 @@
 {
   "ea": "Molido_Expert",
-  "ea_version": "2.20",
-  "sha256": "a3b4853b4cd7e5e2209fd485a8c494fd322fb68b5f1ff2b7733545599baa047c",
+  "ea_version": "2.30",
+  "sha256": "4d1c750295f7f327da3ea33ebdf5588c57dbb18fcbca49e37d098e58009c14e8",
   "backtest": "PENDING",
-  "note": "Upgrade of Molido_Master. Real accounts blocked. Gate stays PENDING without a walk-forward PASS. UI 2.2 opaque frame, center-only candles, resource avatar, tidy 3D button grid."
+  "note": "Upgrade of Molido_Master. Real accounts blocked. Gate stays PENDING without a walk-forward PASS. Expert 2.30: metal risk/London filter, loss cap, lower lots, single-instance, daily safe-mode reset, H1/H4 trend + spread/ATR filters, optional calendar news, BE at 1R and modest ATR trail that keeps TP. Optional SP2L/FVG confirmation filters (default off, closed bars only)."
 }

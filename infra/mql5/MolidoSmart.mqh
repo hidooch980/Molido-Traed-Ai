@@ -606,7 +606,15 @@ void DemoManagePositions()
   {
    if(!EnableDemoScalper)
       return;
-   if(!UseBreakEven && !UseTrailing)
+#ifdef MOLIDO_EXPERT_UI
+   ExpertManageExits();
+   bool allow_be = UseBreakEven && ExpertAllowBreakEven();
+   bool allow_tr = UseTrailing && ExpertAllowTrailing();
+#else
+   bool allow_be = UseBreakEven;
+   bool allow_tr = UseTrailing;
+#endif
+   if(!allow_be && !allow_tr)
       return;
    if(!DemoAccountOk())
       return;
@@ -651,7 +659,7 @@ void DemoManagePositions()
       double price = is_buy ? bid : ask;
       double profit = is_buy ? (bid - open) : (open - ask);
       double new_sl = sl;
-      if(UseBreakEven && profit >= SmartBeAtr() * atr)
+      if(allow_be && profit >= SmartBeAtr() * atr)
         {
          double be = open;
          if(is_buy)
@@ -665,7 +673,7 @@ void DemoManagePositions()
                new_sl = be;
            }
         }
-      if(UseTrailing && profit >= SmartTrailStart() * atr)
+      if(allow_tr && profit >= SmartTrailStart() * atr)
         {
          double trail = is_buy ? (bid - SmartTrailAtr() * atr)
                                : (ask + SmartTrailAtr() * atr);

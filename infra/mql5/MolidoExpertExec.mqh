@@ -74,6 +74,7 @@ bool ExpertLevels(const string symbol, const string side,
      { sl = entry + sl_dist; tp = entry - tp_dist; }
    else
      { sl = entry - sl_dist; tp = entry + tp_dist; }
+   ExpertEnsureMinTp(side, entry, sl, tp);
    if(sl <= 0.0 || tp <= 0.0)
      { why = "invalid SL/TP"; return(false); }
    return(true);
@@ -87,6 +88,8 @@ bool ExpertManualTrade(const string side)
      { g_ex_last_msg = "real account not supported"; return(false); }
    if(ExpertStopNew())
      { g_ex_last_msg = "stop new trades is on"; return(false); }
+   if(!ExpertInstanceMayTrade())
+     { g_ex_last_msg = "standby: another instance owns this account"; return(false); }
    if(!DemoAccountOk() || !DemoTradingAllowed() || !DemoTerminalTradable())
      { g_ex_last_msg = "trading not allowed"; return(false); }
 
@@ -121,12 +124,13 @@ bool ExpertManualTrade(const string side)
    double min_lot    = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN);
    double max_lot    = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MAX);
    double sl_dist    = MathAbs(entry - sl);
+   ExpertSetLotsSymbol(symbol);
    double lots = DemoSizeLots(AccountInfoDouble(ACCOUNT_BALANCE), risk_pct, sl_dist,
                               tick_size, tick_value, lot_step, min_lot, max_lot);
    //--- a smaller requested lot is safer; a larger one is clamped
    if(g_ex_lot > 0.0 && g_ex_lot < lots)
       lots = g_ex_lot;
-   lots = MathMin(lots, DemoActiveMaxLotsCap());
+   lots = MathMin(lots, DemoEffectiveMaxLots());
    if(lots <= 0.0)
      { g_ex_last_msg = "lot size is zero after caps"; return(false); }
 

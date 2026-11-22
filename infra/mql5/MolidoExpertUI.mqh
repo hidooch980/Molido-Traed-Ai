@@ -94,6 +94,11 @@ string ExTr(const string key)
    if(key == "safe")     return("Safe");
    if(key == "caution")  return(fa ? "احتیاط" : "Caution");
    if(key == "danger")   return(fa ? "خطر" : "Danger");
+   if(key == "safemode") return(fa ? "حالت امن" : L==LANG_TR ? "Güvenli mod" : "Safe mode");
+   if(key == "sm_off")   return(fa ? "حالت امن خاموش است" : "Safe mode off");
+   if(key == "sm_stop")  return(fa ? "ایست امن تا" : "STOP until");
+   if(key == "sm_reduce")return(fa ? "کاهش حجم به‌خاطر ضررهای پی‌درپی امروز" : "REDUCE after today's losses");
+   if(key == "sm_today") return(fa ? "ضرر امروز" : "losses today");
    if(key == "r_trade")  return(fa ? "ریسک هر معامله" : "Risk per trade");
    if(key == "r_daily")  return(fa ? "حداکثر ضرر روزانه" : "Max daily loss");
    if(key == "r_dd")     return(fa ? "حداکثر Drawdown" : "Max drawdown");
@@ -127,6 +132,8 @@ string ExTr(const string key)
    if(key == "tf")       return("Trend Following");
    if(key == "rk")       return("Rocket Hunter");
    if(key == "sm")       return("Smart Money");
+   if(key == "sp2l")     return(fa ? "تأیید SP2L" : "SP2L confirm");
+   if(key == "fvg")      return(fa ? "تأیید FVG" : "FVG confirm");
    if(key == "impl_no")  return(fa ? "پیاده‌سازی نشده" : "not implemented");
    if(key == "real")     return(Tr("real_unsupported"));
    if(key == "updated")  return(fa ? "به‌روزرسانی" : "Updated");
@@ -989,9 +996,9 @@ string ExTpPreview()
 
 int ExRiskLevel(const double daily_used, const double dd_used, const bool killed, const bool blocked)
   {
-   if(killed || blocked || daily_used >= 100.0 || dd_used >= 100.0)
+   if(killed || blocked || daily_used >= 100.0 || dd_used >= 100.0 || ExpertSafeModeStopped())
       return(2);
-   if(daily_used >= 70.0 || dd_used >= 70.0 || ExpertStopNew())
+   if(daily_used >= 70.0 || dd_used >= 70.0 || ExpertStopNew() || ExpertSafeModeState() >= 1)
       return(1);
    return(0);
   }
@@ -1089,7 +1096,7 @@ void ExDrawLeft(const int strength, const bool linked)
    g_cv_l.Erase(ExArgb(EX_NAVY, 255));
    ExGlowCard(ExPx(6), ExPx(4), W - ExPx(6), H - ExPx(4), ExPx(12), EX_BLUE, (uchar)MathRound(40 + 50 * ExPulse()));
    int row = ExLy(20);
-   int strat_h = 4 * row + ExLy(6);
+   int strat_h = 6 * row + ExLy(6);
    int news_h = ExLy(16);
    int top_h = H - strat_h - news_h - ExLy(8);
    if(top_h < ExLy(120)) top_h = MathMax(ExLy(96), H - strat_h - ExLy(4));
@@ -1119,11 +1126,15 @@ void ExDrawLeft(const int strength, const bool linked)
    if(y0 < gy + ExLy(16)) y0 = gy + ExLy(16);
    bool sc = StratUseScalper();
    bool tr = StratUseTrend();
-   string ids[4] = {"sc","tr","rk","sm"};
-   string keys[4] = {"sc","tf","rk","sm"};
-   bool ons[4]; ons[0]=sc; ons[1]=tr; ons[2]=false; ons[3]=false;
-   bool impl[4]; impl[0]=true; impl[1]=true; impl[2]=false; impl[3]=false;
-   for(int i = 0; i < 4; i++)
+   string ids[6] = {"sc","tr","rk","sm","sp2l","fvg"};
+   string keys[6] = {"sc","tf","rk","sm","sp2l","fvg"};
+   bool ons[6];
+   ons[0]=sc; ons[1]=tr; ons[2]=false; ons[3]=false;
+   ons[4]=InpUseSP2LFilter; ons[5]=InpUseFVGFilter;
+   bool impl[6];
+   impl[0]=true; impl[1]=true; impl[2]=false; impl[3]=false;
+   impl[4]=true; impl[5]=true;
+   for(int i = 0; i < 6; i++)
      {
       int ry = y0 + i * row;
       if(ry + row > H - ExLy(4)) break;
@@ -1133,7 +1144,7 @@ void ExDrawLeft(const int strength, const bool linked)
       ExText(ExPx(38), ry, ExTr(keys[i]), fc);
       ExHitAdd(ids[i], ExPx(12), ry, W - ExPx(24), row);
      }
-   int ny = y0 + 4 * row;
+   int ny = y0 + 6 * row;
    if(ny + ExPx(12) < H - ExPx(4))
      {
       ExFont("Segoe UI", 7);
@@ -1335,11 +1346,38 @@ void ExDrawBotTrade(const ExpertPerf &perf, const ExpertReport &rep,
    string r1 = ExTr("r_trade") + "   " + DoubleToString(DemoActiveRiskPct(), 2) + "%";
    string r2 = ExTr("r_daily") + "   " + DoubleToString(DemoActiveDailyPct(), 2) + "%";
    string r3 = ExTr("r_dd") + "   " + (DemoActiveMaxDdPct() > 0 ? DoubleToString(DemoActiveMaxDdPct(), 2) + "%" : ExTr("dash"));
+   int sm = ExpertSafeModeState();
+   int losses = ExpertTodayLossStreak();
+   string rsm;
+   color csm = EX_GREEN;
+   if(sm == 2)
+     {
+      rsm = ExTr("safemode") + "  " + ExTr("sm_stop") + "  " +
+            TimeToString(ExpertSafeModeClearsAt(), TIME_DATE | TIME_MINUTES);
+      csm = EX_CORAL;
+     }
+   else if(sm == 1)
+     {
+      rsm = ExTr("safemode") + "  " + ExTr("sm_reduce") + "  " + IntegerToString(losses);
+      csm = EX_AMBER;
+     }
+   else if(losses > 0)
+     {
+      rsm = ExTr("safemode") + "  " + IntegerToString(losses) + "  " + ExTr("sm_today");
+      csm = EX_AMBER;
+     }
+   else
+      rsm = ExTr("safemode") + "  " + ExTr("sm_off");
    string r4 = ExTr("r_open") + "   " + IntegerToString(rep.open_count) + " / " + IntegerToString(DemoActiveMaxPositions());
+   int row5 = (ch - ExPx(40)) / 5;
+   if(row5 < ExPx(12)) row5 = ExPx(12);
+   row = row5;
+   ExFont("Segoe UI", 8);
    ExText(x + ExPx(12), ly, r1, EX_TEXT); ly += row;
    ExText(x + ExPx(12), ly, r2, EX_TEXT); ly += row;
    ExText(x + ExPx(12), ly, r3, EX_TEXT); ly += row;
-   ExText(x + ExPx(12), ly, r4, EX_TEXT);
+   ExText(x + ExPx(12), ly, r4, EX_TEXT); ly += row;
+   ExText(x + ExPx(12), ly, rsm, csm);
    // PERF
    x += cw + gap;
    ExGlowCard(x, y, x + cw, y + ch, ExPx(10), EX_BLUE, 55);
@@ -1482,6 +1520,10 @@ void ExDrawBotSettings()
    y += ExPx(18);
    ExText(ExPx(18), y, "Smart TP/SL  " + (g_ex_smart_sl ? ExTr("on") : ExTr("off"))
           + "    " + ExTr("about1"), EX_MUTED);
+   y += ExPx(18);
+   ExText(ExPx(18), y, ExTr("sp2l") + "  " + (InpUseSP2LFilter ? ExTr("on") : ExTr("off"))
+          + "    " + ExTr("fvg") + "  " + (InpUseFVGFilter ? ExTr("on") : ExTr("off")),
+          EX_TEXT);
   }
 
 void ExDrawBotAbout()
@@ -1654,6 +1696,7 @@ void MolidoDashRedraw()
                 IntegerToString(W) + IntegerToString(H) +
                 IntegerToString((int)ExpertAutoOn()) + IntegerToString((int)ExpertStopNew()) +
                 IntegerToString((int)StratUseScalper()) + IntegerToString((int)StratUseTrend()) +
+                IntegerToString((int)InpUseSP2LFilter) + IntegerToString((int)InpUseFVGFilter) +
                 DoubleToString(rep.equity, 2) + IntegerToString(rep.open_count) +
                 IntegerToString(perf.trades) + g_ex_last_msg +
                 IntegerToString((int)blocked) + IntegerToString(strength) +

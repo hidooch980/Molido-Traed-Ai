@@ -1,0 +1,7 @@
+{
+  "ea": "Molido_Expert",
+  "ea_version": "2.20",
+  "sha256": "a3b4853b4cd7e5e2209fd485a8c494fd322fb68b5f1ff2b7733545599baa047c",
+  "backtest": "PENDING",
+  "note": "Upgrade of Molido_Master. Real accounts blocked. Gate stays PENDING without a walk-forward PASS. UI 2.2 opaque frame, center-only candles, resource avatar, tidy 3D button grid."
+}

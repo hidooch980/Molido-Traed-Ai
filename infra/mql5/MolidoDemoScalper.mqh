@@ -989,7 +989,11 @@ bool DemoTradingAllowed()
 //+------------------------------------------------------------------+
 double DemoEffectiveMaxLots()
   {
-   return(DemoActiveMaxLotsCap());
+   double cap = DemoActiveMaxLotsCap();
+#ifdef MOLIDO_EXPERT_UI
+   cap = ExpertTightenMaxLots(cap);
+#endif
+   return(cap);
   }
 
 //+------------------------------------------------------------------+
@@ -1149,7 +1153,13 @@ double DemoSizeLots(const double balance, const double risk_pct, const double sl
      {
       double actual = lots * ticks * tick_value;
       if(actual <= risk_money + 1e-8)
+        {
+#ifdef MOLIDO_EXPERT_UI
+         lots = ExpertClampLots(g_ex_lots_symbol, lots, sl_distance,
+                                tick_size, tick_value, lot_step, min_lot);
+#endif
          return(NormalizeDouble(lots, 8));
+        }
       lots = NormalizeDouble(lots - lot_step, 8);
      }
    return(0.0);
@@ -1412,6 +1422,15 @@ ENUM_DEMO_VERDICT DemoReview(const string symbol, const string side,
       reasons = "account-wide position cap reached (coordinator)";
       return(DEMO_BLOCK);
      }
+#ifdef MOLIDO_EXPERT_UI
+   string ewhy0 = "";
+   if(!ExpertPolicyAllow(symbol, side, entry, sl, tp, ewhy0))
+     {
+      reasons = ewhy0;
+      return(DEMO_BLOCK);
+     }
+   risk_pct = ExpertTightenRiskPct(symbol, risk_pct);
+#endif
    if(size_factor < 1.0)
       return(DEMO_REDUCE);
    reasons = (reasons == "" ? "all checks passed" : reasons);
@@ -1613,6 +1632,9 @@ bool DemoTrendSignal(const string symbol, string &side, double &entry, double &s
    entry = up ? tick.ask : tick.bid;
    sl    = up ? entry - 1.5 * atr : entry + 1.5 * atr;
    tp    = up ? entry + 2.5 * atr : entry - 2.5 * atr;
+#ifdef MOLIDO_EXPERT_UI
+   ExpertEnsureMinTp(side, entry, sl, tp);
+#endif
    if(sl <= 0.0 || tp <= 0.0)
      {
       why = "computed stop or target invalid";
@@ -1727,6 +1749,9 @@ void DemoEvaluateSymbol(const string raw_name)
    double min_lot    = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN);
    double max_lot    = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MAX);
    double sl_dist    = MathAbs(entry - sl);
+#ifdef MOLIDO_EXPERT_UI
+   ExpertSetLotsSymbol(symbol);
+#endif
    double lots = DemoSizeLots(AccountInfoDouble(ACCOUNT_BALANCE), risk_pct, sl_dist,
                               tick_size, tick_value, lot_step, min_lot, max_lot);
    if(lots <= 0.0)
@@ -1775,7 +1800,7 @@ void DemoScalperOnTick()
    if(!AllowTrading)
       return;
 #ifdef MOLIDO_EXPERT_UI
-   if(ExpertStopNew() || !ExpertAutoOn())
+   if(ExpertStopNew() || !ExpertAutoOn() || !ExpertInstanceMayTrade()) return;
       return;
 #endif
    if(!DemoAccountOk())
@@ -1911,6 +1936,9 @@ bool DemoRefuseUnsafeOpen(const string id, const string symbol, const string sid
    double lot_step   = SymbolInfoDouble(symbol, SYMBOL_VOLUME_STEP);
    double min_lot    = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN);
    double max_lot    = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MAX);
+#ifdef MOLIDO_EXPERT_UI
+   ExpertSetLotsSymbol(symbol);
+#endif
    double allowed = DemoSizeLots(AccountInfoDouble(ACCOUNT_BALANCE), risk_pct,
                                  MathAbs(entry - stop), tick_size, tick_value,
                                  lot_step, min_lot, max_lot);

@@ -165,6 +165,10 @@ bool MolidoRealBlocked();
 bool ExpertAutoOn();
 bool ExpertStopNew();
 void ExpertBridgeOnTimer();
+bool ExpertInstanceOnInit();
+void ExpertInstanceOnDeinit();
+void ExpertInstanceHeartbeat();
+bool ExpertInstanceMayTrade();
 #endif
 void MolidoI18nInit();
 string Tr(const string key);
@@ -520,6 +524,9 @@ int OnInit()
    SelectExtraSymbols();
    if(!DemoScalperOnInit())
       return INIT_FAILED;
+#ifdef MOLIDO_EXPERT_UI
+   ExpertInstanceOnInit();
+#endif
    EventSetTimer(g_RefreshSeconds);
    Publish();
    MolidoDashOnInit();
@@ -612,6 +619,9 @@ void PublishAvailableSymbols()
 void OnDeinit(const int reason)
   {
    EventKillTimer();
+#ifdef MOLIDO_EXPERT_UI
+   ExpertInstanceOnDeinit();
+#endif
    MolidoDashOnDeinit();
    Print("MolidoBridge: stopped, reason ", reason);
   }
@@ -1596,6 +1606,7 @@ void OnTimer()
    ExecutePending();
    DemoScalperOnTimer();
 #ifdef MOLIDO_EXPERT_UI
+   ExpertInstanceHeartbeat();
    ExpertBridgeOnTimer();
 #endif
    MolidoDashOnTimer();
@@ -2196,6 +2207,10 @@ bool MolidoRequestUpdate()
   }
 
 #include "MolidoI18n.mqh"
+#ifdef MOLIDO_EXPERT_UI
+#include "MolidoExpertPolicy.mqh"
+#include "MolidoV2Filters.mqh"
+#endif
 #include "MolidoDemoScalper.mqh"
 #include "MolidoFibo.mqh"
 #include "MolidoNews.mqh"

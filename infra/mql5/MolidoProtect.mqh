@@ -55,6 +55,9 @@ int CorrelationGroup(const string core)
 
 int ProtectConsecutiveLosses()
   {
+#ifdef MOLIDO_EXPERT_UI
+   return(ExpertTodayLossStreak());
+#endif
    static int cached = 0;
    static datetime cached_at = 0;
    datetime now = TimeCurrent();
@@ -87,6 +90,9 @@ int ProtectConsecutiveLosses()
 
 bool DemoSafeModeStopped()
   {
+#ifdef MOLIDO_EXPERT_UI
+   return(ExpertSafeModeStopped());
+#endif
    int stop_after = SafeModeStopAfter;
    if(stop_after <= 0)
      {
@@ -121,6 +127,9 @@ double DemoSafeModeFactor()
 
 string DemoSafeModeLine()
   {
+#ifdef MOLIDO_EXPERT_UI
+   return(ExpertSafeModeText());
+#endif
    int n = ProtectConsecutiveLosses();
    if(DemoSafeModeStopped())
       return("STOP " + IntegerToString(n) + "L until tomorrow");
@@ -363,6 +372,10 @@ void PartialMark(const ulong ticket)
 
 void DemoPartialTakeProfit()
   {
+#ifdef MOLIDO_EXPERT_UI
+   if(!ExpertAllowPartialTP())
+      return;
+#endif
    if(!UsePartialTP)
       return;
    if(!DemoAccountOk() || !DemoTerminalTradable())
