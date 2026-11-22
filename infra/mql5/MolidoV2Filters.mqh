@@ -240,7 +240,7 @@ bool V2FvgReacting(const V2Bar &bars[], const int n, const string side, string &
 
 bool V2Sp2lConfirms(const string symbol, const string side, string &why)
   {
-   if(!InpUseSP2LFilter)
+   if(!MxUseSp2l()) // 3.0: runtime toggle, initialised from InpUseSP2LFilter
       return(true);
    V2Bar bars[];
    int n = V2CopyClosed(symbol, PERIOD_M15, bars, V2_LOOKBACK);
@@ -254,7 +254,7 @@ bool V2Sp2lConfirms(const string symbol, const string side, string &why)
 
 bool V2FvgConfirms(const string symbol, const string side, string &why)
   {
-   if(!InpUseFVGFilter)
+   if(!MxUseFvg()) // 3.0: runtime toggle, initialised from InpUseFVGFilter
       return(true);
    V2Bar bars[];
    int n = V2CopyClosed(symbol, PERIOD_M15, bars, V2_LOOKBACK);

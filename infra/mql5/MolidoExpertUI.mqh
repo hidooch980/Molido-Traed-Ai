@@ -1394,7 +1394,7 @@ void ExDrawLeft(const int strength, const bool linked)
    string keys[6] = {"sc","tf","rk","sm","sp2l","fvg"};
    bool ons[6];
    ons[0]=sc; ons[1]=tr; ons[2] = StratUseRocket(); ons[3] = StratUseSmc();
-   ons[4]=InpUseSP2LFilter; ons[5]=InpUseFVGFilter;
+   ons[4]=MxUseSp2l(); ons[5]=MxUseFvg();
    bool impl[6];
    impl[0]=true; impl[1]=true; impl[2] = true; impl[3] = true;
    impl[4]=true; impl[5]=true;
@@ -1824,8 +1824,8 @@ void ExDrawBotSettings()
    ExText(ExPx(18), y, "Smart TP/SL  " + (g_ex_smart_sl ? ExTr("on") : ExTr("off"))
           + "    " + ExTr("about1"), EX_MUTED);
    y += ExPx(18);
-   ExText(ExPx(18), y, ExTr("sp2l") + "  " + (InpUseSP2LFilter ? ExTr("on") : ExTr("off"))
-          + "    " + ExTr("fvg") + "  " + (InpUseFVGFilter ? ExTr("on") : ExTr("off")),
+   ExText(ExPx(18), y, ExTr("sp2l") + "  " + (MxUseSp2l() ? ExTr("on") : ExTr("off"))
+          + "    " + ExTr("fvg") + "  " + (MxUseFvg() ? ExTr("on") : ExTr("off")),
           EX_TEXT);
   }
 
@@ -2310,7 +2310,7 @@ void CxTabSignals(const int y, const int strength, const bool linked)
    string keys[6] = {"sc", "tf", "rk", "sm", "sp2l", "fvg"};
    bool ons[6];
    ons[0] = StratUseScalper(); ons[1] = StratUseTrend(); ons[2] = StratUseRocket(); ons[3] = StratUseSmc();
-   ons[4] = InpUseSP2LFilter;  ons[5] = InpUseFVGFilter;
+   ons[4] = MxUseSp2l();  ons[5] = MxUseFvg();
    bool impl[6];
    impl[0] = true; impl[1] = true; impl[2] = true; impl[3] = true; impl[4] = true; impl[5] = true;
    for(int i = 0; i < 6; i++)
@@ -2330,7 +2330,7 @@ void CxTabSignals(const int y, const int strength, const bool linked)
         {
          int sl = gmap[i];
          bool ok = (linked && sl < 11 && StringLen(g_ai_group_st[sl]) > 0 && StringFind(g_ai_group_st[sl], "Disconnected") < 0);
-         CxBtn("ag" + IntegerToString(i), cx, cy, CxSpan(2), rC, ExTr(gk[i]), ok ? EX_BLUE : EX_CARD, EX_NAVY, EX_TEXT, false, 12);
+         CxBtn("ag" + IntegerToString(i), cx, cy, CxSpan(2), rC, ExTr(gk[i]), MdAgOn(i) ? EX_GREEN : (ok ? EX_BLUE : EX_CARD), EX_NAVY, EX_TEXT, false, 12);
         }
       else
         {
@@ -2367,8 +2367,8 @@ void CxTabSettings(const int y)
          ExTr("c_maxpos"), IntegerToString(g_ex_max_pos), EX_TEXT); ry += rh;
    CxKV2(kx, ry, kw, rh, ExTr("lot"), DoubleToString(g_ex_lot, 2), EX_TEXT,
          ExTr("c_smart"), g_ex_smart_sl ? ExTr("on") : ExTr("off"), g_ex_smart_sl ? EX_GREEN : CX_LBL); ry += rh;
-   CxKV2(kx, ry, kw, rh, ExTr("sp2l"), InpUseSP2LFilter ? ExTr("on") : ExTr("off"), InpUseSP2LFilter ? EX_GREEN : CX_LBL,
-         ExTr("fvg"), InpUseFVGFilter ? ExTr("on") : ExTr("off"), InpUseFVGFilter ? EX_GREEN : CX_LBL, false);
+   CxKV2(kx, ry, kw, rh, ExTr("sp2l"), MxUseSp2l() ? ExTr("on") : ExTr("off"), MxUseSp2l() ? EX_GREEN : CX_LBL,
+         ExTr("fvg"), MxUseFvg() ? ExTr("on") : ExTr("off"), MxUseFvg() ? EX_GREEN : CX_LBL, false);
    CxTxt(g_cx_pad, cy + hC + gap, CxSpan(6), note, CxNoDot(ExTr("about1")), CX_LBL, 12, false, CxRtl() ? 1 : -1);
   }
 
@@ -2641,7 +2641,7 @@ void MolidoDashRedraw()
                 IntegerToString(W) + IntegerToString(H) +
                 IntegerToString((int)ExpertAutoOn()) + IntegerToString((int)ExpertStopNew()) +
                 IntegerToString((int)StratUseScalper()) + IntegerToString((int)StratUseTrend()) +
-                IntegerToString((int)InpUseSP2LFilter) + IntegerToString((int)InpUseFVGFilter) +
+                IntegerToString((int)MxUseSp2l()) + IntegerToString((int)MxUseFvg()) +
                 IntegerToString((int)g_ex_collapsed) + IntegerToString((int)DashboardUiSize) +
                 DoubleToString(rep.equity, 2) + IntegerToString(rep.open_count) +
                 IntegerToString(perf.trades) + g_ex_last_msg +
@@ -2789,6 +2789,9 @@ void ExDoAction(const string idb)
    if(idb == "tr") { StratSet("trend", !StratUseTrend()); g_ex_sig = ""; MolidoDashRedraw(); return; }
    if(idb == "rk") { StratSetRocket(!StratUseRocket()); g_ex_sig = ""; MolidoDashRedraw(); return; }
    if(idb == "sm") { StratSetSmc(!StratUseSmc()); g_ex_sig = ""; MolidoDashRedraw(); return; }
+   if(idb == "sp2l" || idb == "fvg") { MdToggle(idb); g_ex_sig = ""; MolidoDashRedraw(); return; }
+   if(StringFind(idb, "ag") == 0 && StringLen(MdAgModule((int)StringToInteger(StringSubstr(idb, 2)))) > 0)
+     { MdToggle(MdAgModule((int)StringToInteger(StringSubstr(idb, 2)))); g_ex_sig = ""; MolidoDashRedraw(); return; }
    if(StringFind(idb, "tab") == 0)
      {
       g_ex_tab = (int)StringToInteger(StringSubstr(idb, 3));

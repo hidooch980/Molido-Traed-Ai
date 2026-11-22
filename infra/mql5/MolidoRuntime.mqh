@@ -2209,6 +2209,7 @@ bool MolidoRequestUpdate()
 #include "MolidoI18n.mqh"
 #ifdef MOLIDO_EXPERT_UI
 #include "MolidoExpertPolicy.mqh"
+#include "MolidoDecision.mqh" // 3.0 analysis modules + decision layer (default off)
 #include "MolidoV2Filters.mqh"
 #include "MolidoSMC.mqh"     // 2.31 Smart Money (default off)
 #include "MolidoRocket.mqh"  // 2.31 Rocket Hunter (default off)

@@ -202,6 +202,7 @@ void MolidoStratInit()
       g_rt_fibo = (GlobalVariableGet("Molido.Strat.Fibo") > 0.5);
 #ifdef MOLIDO_EXPERT_UI
    SmcStratInit();      // 2.31 Smart Money toggle (input + persisted GV)
+   MdInit();            // 3.0 analysis module toggles
    RocketStratInit();   // 2.31 Rocket Hunter toggle
    if(InpSmcRocketOnly) // variant isolation (tester): only SMC/Rocket
      {
@@ -1723,20 +1724,38 @@ void DemoEvaluateSymbol(const string raw_name)
    //--- 2.31 additive: Smart Money and Rocket Hunter candidates (default off);
    //--- they pass the same Smart/Protect/Risk Brain/Expert policy gates below.
    bool mx_sig = false;
-   if(StratUseSmc())
-      got = SmcSignal(symbol, side, entry, sl, tp, spread, atr, why);
-   if(!got && StratUseRocket())
-      got = RocketSignal(symbol, side, entry, sl, tp, spread, atr, why);
+   //--- 3.0 AutoPilot picks the strategy set from the H1 regime; otherwise the toggles
+   bool u_smc = StratUseSmc(), u_rk = StratUseRocket(), u_tr = StratUseTrend(), u_sc = StratUseScalper();
+   if(InpAutoPilot)
+      MdAutoPick(symbol, u_smc, u_rk, u_tr, u_sc);
+   g_mx_last_strat = "";
+   if(u_smc)
+     { got = SmcSignal(symbol, side, entry, sl, tp, spread, atr, why); if(got) g_mx_last_strat = "smc"; }
+   if(!got && u_rk)
+     { got = RocketSignal(symbol, side, entry, sl, tp, spread, atr, why); if(got) g_mx_last_strat = "rocket"; }
    mx_sig = got;
-   if(!got && StratUseTrend())
+   if(!got && u_tr)
+     { got = DemoTrendSignal(symbol, side, entry, sl, tp, spread, atr, why); if(got) g_mx_last_strat = "trend"; }
+   if(!got && StratUseFibo() && !InpAutoPilot)
+     { got = DemoFiboSignal(symbol, side, entry, sl, tp, spread, atr, why); if(got) g_mx_last_strat = "fibo"; }
+   if(!got && u_sc)
+     { got = DemoSignal(symbol, side, entry, sl, tp, spread, atr, why); if(got) g_mx_last_strat = "scalper"; }
+   //--- 3.0 decision layer / analysis modules (each defaults off); Risk Brain runs after
+   if(got && !MdDecide(symbol, side, g_demo_syms, g_demo_n, why))
+     {
+      DemoLog(symbol, side, DEMO_BLOCK, why, 0, entry, sl, tp, spread, atr, 0, 0, 0);
+      return;
+     }
+   if(got && StringLen(g_md_last) > 0 && (MdUseDecision() || MdUseMarket()))
+      Print("MolidoDecision: ", symbol, " ", side, " ", g_md_last);
 #else
    if(StratUseTrend())
-#endif
       got = DemoTrendSignal(symbol, side, entry, sl, tp, spread, atr, why);
    if(!got && StratUseFibo())
       got = DemoFiboSignal(symbol, side, entry, sl, tp, spread, atr, why);
    if(!got && StratUseScalper())
       got = DemoSignal(symbol, side, entry, sl, tp, spread, atr, why);
+#endif
 #ifdef MOLIDO_EXPERT_UI
    if(!got && !StratUseTrend() && !StratUseFibo() && !StratUseScalper() && !StratUseSmc() && !StratUseRocket())
 #else

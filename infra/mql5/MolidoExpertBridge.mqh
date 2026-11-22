@@ -109,6 +109,9 @@ void ExpertBridgeDisconnect(const string why)
    g_ai_connected = false;
    g_ai_agents_on = 0;
    g_ai_reason = why;
+   g_md_ai_linked = false;
+   g_md_ai_analysis = "";
+   g_md_ai_sentiment = "";
    ExpertBridgeDefaults();
   }
 
@@ -140,6 +143,9 @@ bool ExpertBridgeParse(const string body)
    g_ai_analysis = AiJsonString(body, "analysis");
    g_ai_learning = AiJsonString(body, "learning");
    g_ai_risk     = AiJsonString(body, "risk");
+   g_md_ai_linked    = true;                      // 3.0 decision layer inputs
+   g_md_ai_analysis  = g_ai_analysis;
+   g_md_ai_sentiment = AiJsonString(body, "sentiment");
    ExpertBridgeDefaults();
    //--- optional "groups":{"Scalping":"ok",...} — unknown groups stay Disconnected
    for(int i = 0; i < 11; i++)
