@@ -39,6 +39,8 @@
 #define EX_TEXT   C'230,238,248'
 #define EX_MUTED  C'130,150,180'
 #define EX_LINE   C'30,70,120'
+#define CX_LBL    C'178,198,224'
+#define CX_BD     C'60,120,180'
 
 CCanvas g_cv_h, g_cv_l, g_cv_r, g_cv_m, g_cv_b, g_cv_t, g_cv_tag, g_cv_hud;
 CCanvas *g_dc = NULL;
@@ -63,6 +65,16 @@ int     g_ex_px = 0, g_ex_py = 0;
 bool    g_ex_collapsed = false;
 bool    g_ex_collapse_loaded = false;
 #define EX_COLLAPSE_GV "Molido.Expert.DashCollapsed"
+//--- compact grid state (single opaque canvas, strict 6-column grid)
+double  g_cs = 0.80;
+int     g_cx_pad = 8, g_cx_colw = 58, g_cx_tfw = 36;
+int     g_cx_hTitle = 34, g_cx_hStat = 21, g_cx_hTf = 19, g_cx_hBs = 26, g_cx_hStep = 35;
+int     g_cx_hAct = 24, g_cx_hTab = 22, g_cx_hCont = 167, g_cx_rKV = 16, g_cx_rChip = 19;
+int CP(const int base)
+  {
+   int v = (int)MathRound(base * g_cs);
+   return(v < 1 ? 1 : v);
+  }
 
 #define EX_HIT_MAX 96
 string g_hit_id[EX_HIT_MAX];
@@ -149,6 +161,23 @@ string ExTr(const string key)
    if(key == "about1")   return(fa ? "فقط حساب دمو. حساب واقعی مسدود است." : "Demo only. Real accounts are blocked.");
    if(key == "collapse") return(fa ? "جمع" : L==LANG_AR ? "طي" : L==LANG_TR ? "Kucult" : "Min");
    if(key == "expand")   return(fa ? "باز" : L==LANG_AR ? "فتح" : L==LANG_TR ? "Ac" : "Max");
+   if(key == "c_news")   return(fa ? "اخبار" : "News");
+   if(key == "c_bal")    return(fa ? "موجودی" : "Balance");
+   if(key == "c_eq")     return(fa ? "دارایی" : "Equity");
+   if(key == "c_fm")     return(fa ? "مارجین آزاد" : "Free margin");
+   if(key == "c_wk")     return(fa ? "هفته" : "Week");
+   if(key == "c_mo")     return(fa ? "ماه" : "Month");
+   if(key == "c_op")     return(fa ? "باز" : "Open");
+   if(key == "c_pl")     return(fa ? "سود/زیان" : "P/L");
+   if(key == "c_last")   return(fa ? "آخرین سیگنال" : "Last signal");
+   if(key == "c_sl")     return(fa ? "حد ضرر" : "SL");
+   if(key == "c_tp")     return(fa ? "حد سود" : "TP");
+   if(key == "c_riskp")  return(fa ? "درصد ریسک" : "Risk %");
+   if(key == "c_maxpos") return(fa ? "حداکثر معاملات" : "Max positions");
+   if(key == "c_smart")  return(fa ? "حد سود/ضرر هوشمند" : "Smart TP/SL");
+   if(key == "c_magic")  return(fa ? "شناسه (Magic)" : "Magic");
+   if(key == "c_reduced")return(fa ? "کاهش حجم" : "Reduced");
+   if(key == "c_daily")  return(fa ? "نمودار روزانه" : "Daily P/L");
    if(key == "disc")     return(fa ? "قطع ارتباط" : "Disconnected");
    if(key == "conn")     return(fa ? "متصل" : "Connected");
    if(key == "closed")   return(fa ? "بازار بسته / داده کهنه" : "Market closed / stale tick");
@@ -183,13 +212,8 @@ void ExToggleCollapsed()
 
 double ExUiScale()
   {
-   if(DashboardUiSize != DASH_UI_FULL)
-     {
-      double s = DashboardScale;
-      if(s < 0.40) s = 0.40;
-      if(s > 1.60) s = 1.60;
-      return(s);
-     }
+   if(!ExIsFullUi())
+      return(g_cs);
    double s = DashFontScale;
    if(s < 1.0) s = 1.0;
    if(s > 1.6) s = 1.6;
@@ -236,7 +260,8 @@ void ExPanelOrigin(const int pw, const int ph, int &px, int &py)
 int ExFontSz(const int base)
   {
    int v = ExPx(base);
-   return(v < 8 ? 8 : v);
+   int mn = (ExIsFullUi() ? 8 : 11);
+   return(v < mn ? mn : v);
   }
 
 void ExUse(CCanvas &c) { g_dc = GetPointer(c); }
@@ -433,56 +458,46 @@ void ExLayoutFull(const int W, const int H)
 
 void ExLayoutPanel(const int W, const int H)
   {
-   g_ly_head = MathMax(ExPx(48), ExLy(88));
-   if(g_ex_collapsed)
-      g_ly_head = MathMax(ExPx(36), ExLy(44));
-   g_ly_tab  = MathMax(ExPx(28), ExLy(40));
-   g_ly_mid  = MathMax(ExPx(72), ExLy(120));
-   g_ly_bot  = MathMax(ExPx(180), ExLy(280));
-   double frac = (DashboardUiSize == DASH_UI_NORMAL ? 0.40 : 0.28);
-   int pw = (int)MathRound(W * frac);
-   int mn = (DashboardUiSize == DASH_UI_NORMAL ? 300 : 240);
-   int mx = (DashboardUiSize == DASH_UI_NORMAL ? 520 : 420);
-   if(pw < mn) pw = mn;
-   if(pw > mx) pw = mx;
-   if(pw > (int)MathRound(W * 0.42))
-      pw = (int)MathRound(W * 0.42);
-   if(pw < 200) pw = MathMin(200, W - 8);
-   if(g_ex_collapsed)
-      pw = MathMin(pw, MathMax(ExPx(260), (int)MathRound(W * 0.22)));
-   int body = MathMax(ExPx(180), ExLy(300));
+   bool normal = (DashboardUiSize == DASH_UI_NORMAL);
+   double s0 = DashboardScale;
+   if(s0 < 0.40) s0 = 0.40;
+   if(s0 > 1.60) s0 = 1.60;
+   if(normal) s0 *= 1.0;
+   double frac = (normal ? 0.60 : 0.55);
+   double sw = frac * W / 500.0;
+   double sh = 0.97 * H / 556.0;
+   double s = MathMin(s0, MathMin(sw, sh));
+   if(s < 0.50) s = 0.50;
+   g_cs = s;
+   // strict grid: equal margins/gaps; 6 columns and a 9-button row share one inner width
+   int pad = 2 * (int)MathRound(5.0 * s);
+   if(pad < 6) pad = 6;
+   int gap = pad;
+   int inner = (int)MathRound(500.0 * s) - 2 * pad;
+   int tfw = (inner - 8 * gap) / 9;
+   tfw -= tfw % 2;
+   if(tfw < 20) tfw = 20;
+   int colw = (3 * tfw + gap) / 2;
+   g_cx_pad = pad; g_cx_colw = colw; g_cx_tfw = tfw;
+   inner = 6 * colw + 5 * gap;
+   int pw = inner + 2 * pad;
+   g_cx_hTitle = CP(44); g_cx_hStat = CP(28); g_cx_hTf = CP(26); g_cx_hBs = CP(34);
+   g_cx_hStep = CP(48);  g_cx_hAct = CP(32);  g_cx_hTab = CP(30);
+   g_cx_rKV = CP(22);    g_cx_rChip = CP(26);
+   g_cx_hCont = 2 * g_cx_rKV + 5 * g_cx_rChip + 5 * gap;
    int ph;
    if(g_ex_collapsed)
-      ph = g_ly_head;
+      ph = g_cx_hTitle;
    else
-     {
-      ph = g_ly_head + body + g_ly_mid + g_ly_bot + g_ly_tab;
-      int cap = (int)MathRound(H * 0.78);
-      if(cap < ExPx(420)) cap = MathMin(H - 8, ExPx(420));
-      if(ph > cap)
-        {
-         int deficit = ph - cap;
-         if(body > ExPx(150) && deficit > 0)
-           { int c = MathMin(deficit, body - ExPx(150)); body -= c; deficit -= c; }
-         if(g_ly_bot > ExPx(150) && deficit > 0)
-           { int c = MathMin(deficit, g_ly_bot - ExPx(150)); g_ly_bot -= c; deficit -= c; }
-         if(g_ly_mid > ExPx(64) && deficit > 0)
-           { int c = MathMin(deficit, g_ly_mid - ExPx(64)); g_ly_mid -= c; deficit -= c; }
-         ph = g_ly_head + body + g_ly_mid + g_ly_bot + g_ly_tab;
-        }
-     }
+      ph = g_cx_hTitle + gap + g_cx_hStat + gap + g_cx_hTf + gap + g_cx_hBs + gap +
+           g_cx_hStep + gap + g_cx_hAct + gap + g_cx_hTab + gap + g_cx_hCont + pad;
    ExPanelOrigin(pw, ph, g_ex_px, g_ex_py);
    g_ex_cw = pw;
    g_ex_ch = ph;
-   g_ly_left = (int)MathRound(pw * 0.42);
-   if(g_ly_left < ExPx(110)) g_ly_left = ExPx(110);
-   if(g_ly_left > pw - ExPx(140)) g_ly_left = pw - ExPx(140);
-   if(g_ly_left < ExPx(90)) g_ly_left = MathMax(ExPx(90), pw / 2);
-   g_ly_right = pw - g_ly_left;
-   g_ly_hx = 0;
-   g_ly_hy = g_ly_head;
-   g_ly_hw = pw;
-   g_ly_hh = (g_ex_collapsed ? 0 : body);
+   g_ly_head = g_cx_hTitle;
+   g_ly_tab = g_cx_hTab; g_ly_mid = 0; g_ly_bot = 0;
+   g_ly_left = pw / 2; g_ly_right = pw - g_ly_left;
+   g_ly_hx = 0; g_ly_hy = g_ly_head; g_ly_hw = pw; g_ly_hh = 0;
   }
 
 void ExLayout()
@@ -722,6 +737,17 @@ bool ExEnsure()
    int mid_y = oy + g_ly_hy + g_ly_hh;
    int bot_y = mid_y + g_ly_mid;
    int tab_y = oy + H - g_ly_tab;
+   if(!ExIsFullUi())
+     {
+      if(!ExMake(g_cv_h, EX_H, ox, oy, W, H)) return(false);
+      if(ObjectFind(0, EX_LIVE) >= 0) ObjectDelete(0, EX_LIVE);
+      if(ObjectFind(0, EX_TAG) >= 0) ObjectDelete(0, EX_TAG);
+      if(ObjectFind(0, EX_HUD) >= 0) ObjectDelete(0, EX_HUD);
+      ExRestoreHostChart();
+      g_ex_ready = true;
+      g_ex_sig = "";
+      return(true);
+     }
    if(!ExMake(g_cv_h, EX_H, ox, oy, W, g_ly_head)) return(false);
    if(!g_ex_collapsed)
      {
@@ -1367,10 +1393,10 @@ void ExDrawLeft(const int strength, const bool linked)
    string ids[6] = {"sc","tr","rk","sm","sp2l","fvg"};
    string keys[6] = {"sc","tf","rk","sm","sp2l","fvg"};
    bool ons[6];
-   ons[0]=sc; ons[1]=tr; ons[2]=false; ons[3]=false;
+   ons[0]=sc; ons[1]=tr; ons[2] = StratUseRocket(); ons[3] = StratUseSmc();
    ons[4]=InpUseSP2LFilter; ons[5]=InpUseFVGFilter;
    bool impl[6];
-   impl[0]=true; impl[1]=true; impl[2]=false; impl[3]=false;
+   impl[0]=true; impl[1]=true; impl[2] = true; impl[3] = true;
    impl[4]=true; impl[5]=true;
    for(int i = 0; i < 6; i++)
      {
@@ -1840,6 +1866,644 @@ void ExDrawTabs()
      }
   }
 
+//+------------------------------------------------------------------+
+//| Compact panel: strict-grid renderer on ONE opaque canvas          |
+//| 6 equal columns, equal pad/gap, RTL-aware label/value columns     |
+//+------------------------------------------------------------------+
+bool CxRtl() { int L = MolidoLangId(); return(L == LANG_FA || L == LANG_AR); }
+int  CxTh()  { return(g_dc == NULL ? 12 : g_dc.TextHeight("Ag")); }
+int  CxSpan(const int n) { return(n * g_cx_colw + (n - 1) * g_cx_pad); }
+
+int CxX(const int col, const int sp, const bool mirror)
+  {
+   int off = col * (g_cx_colw + g_cx_pad);
+   int w = CxSpan(sp);
+   if(mirror && CxRtl())
+      return(g_ex_cw - g_cx_pad - off - w);
+   return(g_cx_pad + off);
+  }
+
+void CxFit(string &s, const int maxw)
+  {
+   if(maxw <= 0) { s = ""; return; }
+   if(ExTw(s) <= maxw) return;
+   string t = s;
+   while(StringLen(t) > 1)
+     {
+      t = StringSubstr(t, 0, StringLen(t) - 1);
+      if(ExTw(t + "...") <= maxw) { s = t + "..."; return; }
+     }
+   s = t;
+  }
+
+// align: -1 left, 0 center, 1 right. Text is vertically centred in the box and never exceeds w.
+void CxTxt(const int x, const int y, const int w, const int h, const string text,
+           const color c, const int base, const bool bold, const int align)
+  {
+   if(w <= 0) return;
+   string face = (bold ? "Segoe UI Bold" : "Segoe UI");
+   int fs = base + 1;
+   ExFont(face, fs);
+   while(ExFontSz(fs) > 11 && ExTw(text) > w) { fs--; ExFont(face, fs); }
+   string s = text;
+   CxFit(s, w);
+   int tw = ExTw(s);
+   int tx = (align < 0 ? x : (align > 0 ? x + w - tw : x + (w - tw) / 2));
+   int ty = y + (h - CxTh()) / 2;
+   ExText(tx, ty, s, c);
+  }
+
+// label + value in two columns; RTL: label on the right, value on the left
+void CxKV(const int x, const int y, const int w, const int h, const string label,
+          const string value, const color vc, const bool line = true)
+  {
+   bool rtl = CxRtl();
+   int gp = g_cx_pad / 2 + 2;
+   ExFont("Segoe UI Bold", 15);
+   int vw = ExTw(value);
+   ExFont("Segoe UI", 14);
+   int lw = ExTw(label);
+   int vmax = MathMax(w / 2, w - lw - gp);
+   if(vw > vmax) vw = vmax;
+   int lmax = w - vw - gp;
+   if(rtl)
+     {
+      CxTxt(x + w - lmax, y, lmax, h, label, CX_LBL, 13, false, 1);
+      CxTxt(x, y, vw, h, value, vc, 14, true, -1);
+     }
+   else
+     {
+      CxTxt(x, y, lmax, h, label, CX_LBL, 13, false, -1);
+      CxTxt(x + w - vw, y, vw, h, value, vc, 14, true, 1);
+     }
+   if(line)
+      g_dc.FillRectangle(x, y + h - 1, x + w - 1, y + h - 1, ExArgb(EX_LINE, 150));
+  }
+
+void CxKV2(const int x, const int y, const int w, const int h,
+           const string l1, const string v1, const color c1,
+           const string l2, const string v2, const color c2, const bool line = true)
+  {
+   int cw = (w - g_cx_pad) / 2;
+   int xa = (CxRtl() ? x + w - cw : x);
+   int xb = (CxRtl() ? x : x + w - cw);
+   CxKV(xa, y, cw, h, l1, v1, c1, line);
+   CxKV(xb, y, cw, h, l2, v2, c2, line);
+  }
+
+//--- anti-aliased rounded rect on an opaque canvas (blends against what is already drawn)
+void CxPx(const int x, const int y, const color c, const double cov)
+  {
+   if(x < 0 || y < 0 || x >= g_ex_cw || y >= g_ex_ch || cov <= 0.02) return;
+   uint cc = ((uint)c & 0xFF) << 16 | (((uint)c >> 8) & 0xFF) << 8 | (((uint)c >> 16) & 0xFF);
+   if(cov >= 0.98) { g_dc.PixelSet(x, y, 0xFF000000 | cc); return; }
+   uint d = g_dc.PixelGet(x, y);
+   double dr = (double)((d >> 16) & 0xFF), dg = (double)((d >> 8) & 0xFF), db = (double)(d & 0xFF);
+   double cr = (double)((cc >> 16) & 0xFF), cg = (double)((cc >> 8) & 0xFF), cb = (double)(cc & 0xFF);
+   uint ro = (uint)MathRound(dr + (cr - dr) * cov);
+   uint go = (uint)MathRound(dg + (cg - dg) * cov);
+   uint bo = (uint)MathRound(db + (cb - db) * cov);
+   g_dc.PixelSet(x, y, 0xFF000000 | (ro << 16) | (go << 8) | bo);
+  }
+
+void CxRRg(const int x1, const int y1, const int x2, const int y2, const int r0, const color c1, const color c2)
+  {
+   int h = y2 - y1 + 1, w = x2 - x1 + 1;
+   if(h <= 0 || w <= 0) return;
+   int r = r0;
+   if(r * 2 > h) r = h / 2;
+   if(r * 2 > w) r = w / 2;
+   for(int row = 0; row < h; row++)
+     {
+      double t = (h > 1 ? (double)row / (double)(h - 1) : 0.0);
+      color c = ExLerp(c1, c2, t);
+      double inset = 0.0;
+      if(r > 0 && (row < r || row >= h - r))
+        {
+         double yc = (row < r ? row + 0.5 : (h - row) - 0.5);
+         double dv = r - yc;
+         inset = r - MathSqrt(MathMax(0.0, (double)r * r - dv * dv));
+        }
+      double xl = x1 + inset;
+      double xr = x2 + 1 - inset;
+      int pl = (int)MathFloor(xl);
+      int pr = (int)MathFloor(xr);
+      int y = y1 + row;
+      CxPx(pl, y, c, 1.0 - (xl - pl));
+      if(pr - 1 >= pl + 1)
+         g_dc.FillRectangle(pl + 1, y, pr - 1, y, ExArgb(c, 255));
+      CxPx(pr, y, c, xr - pr);
+     }
+  }
+
+string CxNoDot(const string s)
+  {
+   int n = StringLen(s);
+   if(n > 0 && StringGetCharacter(s, n - 1) == '.') return(StringSubstr(s, 0, n - 1));
+   return(s);
+  }
+
+void CxHair(const int y)
+  {
+   g_dc.FillRectangle(g_cx_pad, y, g_ex_cw - 1 - g_cx_pad, y, ExArgb(EX_LINE, 170));
+  }
+
+int CxCardHdr() { return(g_cx_pad / 2 + CP(22) + 3); }
+
+void CxCard(const int x, const int y, const int w, const int h, const string title, const color accent)
+  {
+   int r = CP(8);
+   color bd = ExLerp(EX_NAVY, accent, 0.8);
+   CxRRg(x, y, x + w - 1, y + h - 1, r, bd, bd);
+   CxRRg(x + 1, y + 1, x + w - 2, y + h - 2, r - 1, EX_NAVY2, EX_BLACK);
+   if(StringLen(title) > 0)
+     {
+      int ip = g_cx_pad;
+      int th = CP(22);
+      CxTxt(x + ip, y + ip / 2, w - 2 * ip, th, title, EX_GOLD2, 15, true, CxRtl() ? 1 : -1);
+      g_dc.FillRectangle(x + ip, y + ip / 2 + th + 1, x + w - 1 - ip, y + ip / 2 + th + 1, ExArgb(EX_LINE, 255));
+     }
+  }
+
+void CxBtn(const string id, const int x, const int y, const int w, const int h, const string cap,
+           const color c1, const color c2, const color fg, const bool danger, const int fs = 13)
+  {
+   bool hover = (g_hover == id);
+   bool press = (g_pressed == id);
+   int r = CP(6);
+   bool plain = (c1 == EX_CARD || c1 == EX_NAVY2);
+   color bd = (hover || press ? (danger ? EX_CORAL : EX_BLUE) : (plain ? CX_BD : ExLerp(c2, EX_BLACK, 0.35)));
+   CxRRg(x, y, x + w - 1, y + h - 1, r, bd, bd);
+   if(press)
+      CxRRg(x + 1, y + 1, x + w - 2, y + h - 2, r - 1, c2, c1);
+   else
+      CxRRg(x + 1, y + 1, x + w - 2, y + h - 2, r - 1, c1, c2);
+   if(!press)
+      g_dc.FillRectangle(x + r, y + 1, x + w - 1 - r, y + 1, ExArgb(ExLerp(c1, EX_TEXT, 0.22), 255));
+   CxTxt(x + 2, y + (press ? 1 : 0), w - 4, h, cap, fg, fs, true, 0);
+   ExHitAdd(id, x, y, w, h);
+  }
+
+void CxPill(const int x, const int y, const int w, const int h, const color c, const string text, const bool live)
+  {
+   int r = h / 2;
+   CxRRg(x, y, x + w - 1, y + h - 1, r, ExLerp(EX_NAVY, c, 0.6), ExLerp(EX_NAVY, c, 0.6));
+   CxRRg(x + 1, y + 1, x + w - 2, y + h - 2, r - 1, EX_NAVY2, EX_NAVY2);
+   bool rtl = CxRtl();
+   int ip = g_cx_pad;
+   int rad = CP(3) + (live && ExPulse() > 0.6 ? 1 : 0);
+   int dcx = (rtl ? x + w - ip - rad : x + ip + rad);
+   g_dc.FillCircle(dcx, y + h / 2, rad, ExArgb(c, 255));
+   int tpad = ip + rad * 2 + g_cx_pad / 2;
+   int tx = (rtl ? x + g_cx_pad / 2 : x + tpad);
+   CxTxt(tx, y, w - tpad - g_cx_pad / 2, h, text, c, 13, true, rtl ? 1 : -1);
+  }
+
+void CxChip(const string id, const int x, const int y, const int w, const int h,
+            const string label, const bool on, const bool impl)
+  {
+   bool hover = (g_hover == id);
+   color bc = (impl && on ? EX_GREEN : EX_LINE);
+   int r = CP(6);
+   color cb = (hover ? EX_BLUE : ExLerp(EX_NAVY, bc, 0.7));
+   CxRRg(x, y, x + w - 1, y + h - 1, r, cb, cb);
+   color cf = (impl && on ? ExLerp(EX_NAVY, EX_GREEN, 0.14) : EX_NAVY2);
+   CxRRg(x + 1, y + 1, x + w - 2, y + h - 2, r - 1, cf, cf);
+   bool rtl = CxRtl();
+   int ip = g_cx_pad - 2;
+   int s = CP(14);
+   int ix = (rtl ? x + w - ip - s : x + ip);
+   int iy = y + (h - s) / 2;
+   color ic = (!impl ? CX_LBL : (on ? EX_GREEN : EX_LINE));
+   CxRRg(ix, iy, ix + s - 1, iy + s - 1, 3, ic, ic);
+   if(impl && on)
+     {
+      g_dc.Line(ix + 3, iy + s / 2, ix + s / 2 - 1, iy + s - 4, ExArgb(EX_NAVY, 255));
+      g_dc.Line(ix + 3, iy + s / 2 + 1, ix + s / 2 - 1, iy + s - 3, ExArgb(EX_NAVY, 255));
+      g_dc.Line(ix + s / 2 - 1, iy + s - 4, ix + s - 4, iy + 3, ExArgb(EX_NAVY, 255));
+      g_dc.Line(ix + s / 2 - 1, iy + s - 3, ix + s - 4, iy + 4, ExArgb(EX_NAVY, 255));
+     }
+   else
+      CxRRg(ix + 2, iy + 2, ix + s - 3, iy + s - 3, 2, EX_NAVY, EX_NAVY);
+   int tpad = ip + s + g_cx_pad / 2;
+   int tx = (rtl ? x + ip : x + tpad);
+   CxTxt(tx, y, w - tpad - ip, h, label, impl ? EX_TEXT : CX_LBL, 13, false, rtl ? 1 : -1);
+   ExHitAdd(id, x, y, w, h);
+  }
+
+void CxStepper(const string id, const int x, const int y, const int w, const int h,
+               const string label, const string value)
+  {
+   CxCard(x, y, w, h, "", EX_BLUE);
+   int ip = g_cx_pad / 2;
+   int bs = h - 2 * ip;
+   CxBtn(id + "_dn", x + ip, y + ip, bs, bs, "-", EX_CARD, EX_NAVY, EX_TEXT, false, 15);
+   CxBtn(id + "_up", x + w - ip - bs, y + ip, bs, bs, "+", EX_CARD, EX_NAVY, EX_TEXT, false, 15);
+   int tx = x + ip + bs + ip;
+   int tw = w - 2 * (ip + bs + ip);
+   CxTxt(tx, y + 1, tw, h / 2, label, CX_LBL, 12, false, 0);
+   CxTxt(tx, y + h / 2 - 2, tw, h / 2, value, EX_TEXT, 14, true, 0);
+  }
+
+void CxLogo(const int x, const int y, const int s)
+  {
+   int r = s / 5;
+   CxRRg(x, y, x + s - 1, y + s - 1, r, EX_GOLD, EX_GOLD);
+   CxRRg(x + 2, y + 2, x + s - 3, y + s - 3, r - 1, EX_NAVY, EX_NAVY);
+   CxRRg(x + 3, y + 3, x + s - 4, y + s - 4, r - 1, EX_GOLD2, EX_GOLD);
+   CxTxt(x, y, s, s, "M", EX_NAVY, 17, true, 0);
+  }
+
+void CxFlatRect(const int x0, const int y0, const int w0, const int h0)
+  {
+   CCanvas *c = g_dc;
+   int x1 = MathMax(0, x0), y1 = MathMax(0, y0);
+   int w = MathMin(g_ex_cw, x0 + w0), h = MathMin(g_ex_ch, y0 + h0);
+   color n = EX_NAVY;
+   int nr = (n & 0xFF), ng = ((n >> 8) & 0xFF), nb = ((n >> 16) & 0xFF);
+   for(int yy = y1; yy < h; yy++)
+      for(int xx = x1; xx < w; xx++)
+        {
+         uint p = c.PixelGet(xx, yy);
+         uint a = (p >> 24);
+         if(a == 255) continue;
+         uint r = (p >> 16) & 0xFF, g = (p >> 8) & 0xFF, b = p & 0xFF;
+         uint ro = (r * a + nr * (255 - a)) / 255;
+         uint go = (g * a + ng * (255 - a)) / 255;
+         uint bo = (b * a + nb * (255 - a)) / 255;
+         c.PixelSet(xx, yy, 0xFF000000 | (ro << 16) | (go << 8) | bo);
+        }
+  }
+
+//--- tab content ------------------------------------------------------
+void CxTabTrade(const int y, const ExpertPerf &perf, const ExpertReport &rep,
+                const double daily_used, const double dd_used, const bool killed, const bool blocked)
+  {
+   int gap = g_cx_pad;
+   int rMk = CP(46);
+   int cardH = g_cx_hCont - gap - rMk;
+   int hdr = CxCardHdr();
+   int rowH = (cardH - hdr - g_cx_pad / 2) / 5;
+   int ip = g_cx_pad;
+   int level = ExRiskLevel(daily_used, dd_used, killed, blocked);
+   color lc = (level == 0 ? EX_GREEN : (level == 1 ? EX_AMBER : EX_CORAL));
+   // RISK card
+   int xr = CxX(0, 3, true), wr = CxSpan(3);
+   CxCard(xr, y, wr, cardH, ExTr("risk"), lc);
+   int ry = y + hdr;
+   int kx = xr + ip, kw = wr - 2 * ip;
+   CxKV(kx, ry, kw, rowH, ExTr("r_trade"), DoubleToString(DemoActiveRiskPct(), 2) + "%", EX_TEXT); ry += rowH;
+   CxKV(kx, ry, kw, rowH, ExTr("r_daily"), DoubleToString(DemoActiveDailyPct(), 2) + "%", EX_TEXT); ry += rowH;
+   CxKV(kx, ry, kw, rowH, ExTr("r_dd"),
+        DemoActiveMaxDdPct() > 0 ? DoubleToString(DemoActiveMaxDdPct(), 2) + "%" : ExTr("dash"), EX_TEXT); ry += rowH;
+   CxKV(kx, ry, kw, rowH, ExTr("r_open"),
+        IntegerToString(rep.open_count) + " / " + IntegerToString(DemoActiveMaxPositions()), EX_TEXT); ry += rowH;
+   int sm = ExpertSafeModeState();
+   int losses = ExpertTodayLossStreak();
+   string sv = ExTr("sm_off");
+   color sc = EX_GREEN;
+   if(sm == 2) { sv = ExTr("sm_stop") + " " + TimeToString(ExpertSafeModeClearsAt(), TIME_MINUTES); sc = EX_CORAL; }
+   else if(sm == 1) { sv = ExTr("c_reduced") + " (" + IntegerToString(losses) + ")"; sc = EX_AMBER; }
+   else if(losses > 0) { sv = IntegerToString(losses) + " " + ExTr("sm_today"); sc = EX_AMBER; }
+   else sv = ExTr("off");
+   CxKV(kx, ry, kw, rowH, ExTr("safemode"), sv, sc, false);
+   // PERF card
+   int xp = CxX(3, 3, true), wp = CxSpan(3);
+   CxCard(xp, y, wp, cardH, ExTr("perf"), EX_BLUE);
+   int px = xp + ip, pw2 = wp - 2 * ip;
+   int py = y + hdr;
+   string tv = (!perf.has_data && rep.today_trades == 0 && rep.history_trades == 0) ? ExTr("nodata") : IntegerToString(rep.today_trades);
+   string wv = perf.has_data ? DoubleToString(perf.winpct, 1) + "%" : ExTr("nodata");
+   string nv = perf.has_data ? ExpertMoney(perf.pnl) : ExTr("nodata");
+   CxKV(px, py, pw2, rowH, ExTr("today"), tv, EX_TEXT); py += rowH;
+   CxKV(px, py, pw2, rowH, ExTr("win"), wv, EX_TEXT); py += rowH;
+   CxKV(px, py, pw2, rowH, ExTr("net"), nv, (perf.has_data && perf.pnl < 0) ? EX_CORAL : EX_GREEN, false); py += rowH;
+   int bh = y + cardH - g_cx_pad / 2 - py - 2;
+   if(bh >= CP(10))
+     {
+      ExPerfBars(px, py + 2, pw2 - 1, bh);
+      CxFlatRect(px - 1, py + 1, pw2 + 2, bh + 3);
+     }
+   // MARKETS strip: 3 equal cells
+   int my = y + cardH + gap;
+   string kinds[3] = {"forex", "gold", "crypto"};
+   string labs[3];
+   labs[0] = ExTr("forex");
+   string gs = ExMarketSym("gold");
+   labs[1] = (StringLen(gs) > 0 ? ExTr("gold") + " (" + gs + ")" : ExTr("gold"));
+   labs[2] = "Crypto";
+   bool rtl = CxRtl();
+   for(int i = 0; i < 3; i++)
+     {
+      int mx = CxX(i * 2, 2, true), mw = CxSpan(2);
+      CxCard(mx, my, mw, rMk, "", EX_BLUE);
+      string sym = ExMarketSym(kinds[i]);
+      bool ok = (StringLen(sym) > 0);
+      bool live = ok && ExTickOk(sym);
+      string st = (!ok ? ExTr("nodata") : (live ? ExTr("active") : ExTr("closed")));
+      color stc = (!ok ? EX_AMBER : (live ? EX_GREEN : CX_LBL));
+      int sw = CP(40), ipp = g_cx_pad - 2;
+      int sh = rMk - 2 * ipp;
+      int spx = (rtl ? mx + ipp : mx + mw - ipp - sw);
+      int tx = (rtl ? mx + ipp + sw + ipp : mx + ipp);
+      int tw = mw - 3 * ipp - sw;
+      CxTxt(tx, my + ipp / 2, tw, (rMk - ipp) / 2, labs[i], EX_TEXT, 13, true, rtl ? 1 : -1);
+      CxTxt(tx, my + rMk / 2 - 1, tw, (rMk - ipp) / 2, st, stc, 12, false, rtl ? 1 : -1);
+      if(ok)
+        {
+         ExSpark(spx, my + ipp, sw - 1, sh - 1, sym);
+         CxFlatRect(spx - 1, my + ipp - 1, sw + 2, sh + 2);
+        }
+     }
+  }
+
+void CxTabHistory(const int y, const ExpertPerf &perf, const ExpertReport &rep)
+  {
+   int gap = g_cx_pad, ip = g_cx_pad;
+   int rowH = CP(22);
+   int hdr = CxCardHdr();
+   int hA = hdr + 3 * rowH + g_cx_pad / 2;
+   int xa = g_cx_pad, wa = CxSpan(6);
+   CxCard(xa, y, wa, hA, ExTr("tab1"), EX_BLUE);
+   int kx = xa + ip, kw = wa - 2 * ip, ry = y + hdr;
+   string nd = ExTr("nodata");
+   string t1 = (rep.today_trades == 0 && !perf.has_data) ? nd : IntegerToString(rep.today_trades) + "  " + ExpertMoney(rep.today_pnl);
+   CxKV2(kx, ry, kw, rowH, ExTr("today"), t1, EX_TEXT,
+         ExTr("win"), perf.has_data ? DoubleToString(perf.winpct, 1) + "%" : nd, EX_TEXT); ry += rowH;
+   CxKV2(kx, ry, kw, rowH, ExTr("net"), perf.has_data ? ExpertMoney(perf.pnl) : nd,
+         (perf.has_data && perf.pnl < 0) ? EX_CORAL : EX_GREEN,
+         ExTr("c_wk"), (perf.has_data || rep.week_pnl != 0) ? ExpertMoney(rep.week_pnl) : nd, EX_TEXT); ry += rowH;
+   CxKV2(kx, ry, kw, rowH, ExTr("c_mo"), (perf.has_data || rep.month_pnl != 0) ? ExpertMoney(rep.month_pnl) : nd, EX_TEXT,
+         ExTr("c_op"), IntegerToString(rep.open_count), EX_TEXT, false);
+   int yb = y + hA + gap;
+   int hB = g_cx_hCont - hA - gap;
+   CxCard(xa, yb, wa, hB, ExTr("c_daily"), EX_BLUE);
+   int by = yb + hdr + 2;
+   int bh = yb + hB - g_cx_pad / 2 - by;
+   if(bh >= CP(10))
+     {
+      ExPerfBars(kx, by, kw - 1, bh);
+      CxFlatRect(kx - 1, by - 1, kw + 2, bh + 3);
+     }
+  }
+
+void CxTabReports(const int y, const ExpertPerf &perf, const ExpertReport &rep,
+                  const double daily_used, const double dd_used, const bool killed, const bool blocked)
+  {
+   int gap = g_cx_pad, ip = g_cx_pad;
+   int rowH = CP(22);
+   int hdr = CxCardHdr();
+   int hA = hdr + 3 * rowH + g_cx_pad / 2;
+   int xa = g_cx_pad, wa = CxSpan(6);
+   CxCard(xa, y, wa, hA, ExTr("tab3"), EX_BLUE);
+   int kx = xa + ip, kw = wa - 2 * ip, ry = y + hdr;
+   string nd = ExTr("nodata");
+   CxKV2(kx, ry, kw, rowH, ExTr("c_bal"), DoubleToString(rep.balance, 2), EX_TEXT,
+         ExTr("c_eq"), DoubleToString(rep.equity, 2), EX_TEXT); ry += rowH;
+   CxKV2(kx, ry, kw, rowH, ExTr("c_fm"), DoubleToString(rep.free_margin, 2), EX_TEXT,
+         ExTr("c_op"), IntegerToString(rep.open_count), EX_TEXT); ry += rowH;
+   CxKV2(kx, ry, kw, rowH, ExTr("c_pl"), perf.has_data ? ExpertMoney(perf.pnl) : nd,
+         (perf.has_data && perf.pnl < 0) ? EX_CORAL : EX_GREEN,
+         ExTr("win"), perf.has_data ? DoubleToString(perf.winpct, 1) + "%" : nd, EX_TEXT, false);
+   int yb = y + hA + gap;
+   int hB = g_cx_hCont - hA - gap;
+   int level = ExRiskLevel(daily_used, dd_used, killed, blocked);
+   color lc = (level == 0 ? EX_GREEN : (level == 1 ? EX_AMBER : EX_CORAL));
+   CxCard(xa, yb, wa, hB, ExTr("risk"), lc);
+   int rh = (hB - hdr - g_cx_pad / 2) / 3;
+   ry = yb + hdr;
+   CxKV2(kx, ry, kw, rh, ExTr("r_trade"), DoubleToString(DemoActiveRiskPct(), 2) + "%", EX_TEXT,
+         ExTr("r_daily"), DoubleToString(DemoActiveDailyPct(), 2) + "%", EX_TEXT); ry += rh;
+   CxKV2(kx, ry, kw, rh, ExTr("r_dd"), DemoActiveMaxDdPct() > 0 ? DoubleToString(DemoActiveMaxDdPct(), 2) + "%" : ExTr("dash"), EX_TEXT,
+         ExTr("r_open"), IntegerToString(rep.open_count) + " / " + IntegerToString(DemoActiveMaxPositions()), EX_TEXT); ry += rh;
+   string news = DemoNextNewsLine();
+   CxKV(kx, ry, kw, rh, ExTr("c_news"), StringLen(news) > 0 ? news : ExTr("dash"), CX_LBL, false);
+  }
+
+void CxTabSignals(const int y, const int strength, const bool linked)
+  {
+   int gap = g_cx_pad, rKV = g_cx_rKV, rC = g_cx_rChip;
+   int wl = CxSpan(3);
+   int xl = CxX(0, 3, true), xr2 = CxX(3, 3, true);
+   string lastv = "";
+   color lastc = EX_TEXT;
+   bool has = (g_ex_last_entry > 0.0 && StringLen(g_ex_last_side) > 0);
+   if(has) lastv = g_ex_last_side + " " + ExPriceStr(g_ex_last_entry);
+   else { lastv = ExTr("nodata"); lastc = EX_AMBER; }
+   CxKV(xl, y, wl, rKV, ExTr("sigpwr"), IntegerToString(strength), EX_TEXT);
+   CxKV(xr2, y, wl, rKV, ExTr("c_last"), lastv, lastc);
+   if(has)
+     {
+      CxKV(xl, y + rKV, wl, rKV, ExTr("c_sl"), ExPriceStr(g_ex_last_sl), EX_CORAL);
+      CxKV(xr2, y + rKV, wl, rKV, ExTr("c_tp"), ExPriceStr(g_ex_last_tp), EX_GREEN);
+     }
+   else
+     {
+      string news = DemoNextNewsLine();
+      if(StringLen(g_ex_last_msg) > 0)
+         CxKV(g_cx_pad, y + rKV, CxSpan(6), rKV, ExTr("c_last"), g_ex_last_msg, EX_AMBER, false);
+      else
+         CxKV(g_cx_pad, y + rKV, CxSpan(6), rKV, ExTr("c_news"), StringLen(news) > 0 ? news : ExTr("dash"), CX_LBL, false);
+     }
+   int sy = y + 2 * rKV + gap;
+   string ids[6] = {"sc", "tr", "rk", "sm", "sp2l", "fvg"};
+   string keys[6] = {"sc", "tf", "rk", "sm", "sp2l", "fvg"};
+   bool ons[6];
+   ons[0] = StratUseScalper(); ons[1] = StratUseTrend(); ons[2] = StratUseRocket(); ons[3] = StratUseSmc();
+   ons[4] = InpUseSP2LFilter;  ons[5] = InpUseFVGFilter;
+   bool impl[6];
+   impl[0] = true; impl[1] = true; impl[2] = true; impl[3] = true; impl[4] = true; impl[5] = true;
+   for(int i = 0; i < 6; i++)
+     {
+      int cx = CxX((i % 3) * 2, 2, true);
+      int cy = sy + (i / 3) * (rC + gap);
+      CxChip(ids[i], cx, cy, CxSpan(2), rC, ExTr(keys[i]), ons[i], impl[i]);
+     }
+   int gy = sy + 2 * rC + gap + gap;
+   string gk[8] = {"g0", "g1", "g2", "g3", "g4", "g5", "g6", "g7"};
+   int gmap[8] = {0, 5, 7, 6, 1, 8, 9, 10};
+   for(int i = 0; i < 9; i++)
+     {
+      int cx = CxX((i % 3) * 2, 2, true);
+      int cy = gy + (i / 3) * (rC + gap);
+      if(i < 8)
+        {
+         int sl = gmap[i];
+         bool ok = (linked && sl < 11 && StringLen(g_ai_group_st[sl]) > 0 && StringFind(g_ai_group_st[sl], "Disconnected") < 0);
+         CxBtn("ag" + IntegerToString(i), cx, cy, CxSpan(2), rC, ExTr(gk[i]), ok ? EX_BLUE : EX_CARD, EX_NAVY, EX_TEXT, false, 12);
+        }
+      else
+        {
+         int on = (linked ? g_ai_agents_on : 0);
+         int tot = (g_ai_agents_total > 0 ? g_ai_agents_total : 51);
+         if(tot > 51) tot = 51;
+         string txt = (linked ? IntegerToString(on) + " / " + IntegerToString(tot) + "  " + ExTr("agents") : ExTr("disc"));
+         CxCard(cx, cy, CxSpan(2), rC, "", linked ? EX_GREEN : EX_CORAL);
+         CxTxt(cx + 2, cy, CxSpan(2) - 4, rC, txt, linked ? EX_GREEN : EX_CORAL, 12, true, 0);
+        }
+     }
+  }
+
+void CxTabSettings(const int y)
+  {
+   int gap = g_cx_pad, ip = g_cx_pad;
+   int bh = CP(30);
+   bool auto_on = ExpertAutoOn();
+   bool stop = ExpertStopNew();
+   CxBtn("auto", CxX(0, 3, true), y, CxSpan(3), bh, ExTr("auto") + " " + (auto_on ? ExTr("on") : ExTr("off")),
+         auto_on ? EX_BLUE : EX_CARD, EX_NAVY, auto_on ? EX_TEXT : CX_LBL, false, 13);
+   CxBtn("stop", CxX(3, 3, true), y, CxSpan(3), bh, ExTr("stopnew"),
+         stop ? EX_CORAL : EX_CARD, EX_NAVY, stop ? EX_TEXT : CX_LBL, stop, 13);
+   int cy = y + bh + gap;
+   int rowH = CP(22);
+   int hdr = CxCardHdr();
+   int note = g_cx_rKV;
+   int hC = g_cx_hCont - bh - gap - gap - note;
+   int xa = g_cx_pad, wa = CxSpan(6);
+   CxCard(xa, cy, wa, hC, ExTr("tab4"), EX_BLUE);
+   int kx = xa + ip, kw = wa - 2 * ip, ry = cy + hdr;
+   int rh = (hC - hdr - g_cx_pad / 2) / 3;
+   CxKV2(kx, ry, kw, rh, ExTr("c_riskp"), DoubleToString(g_ex_risk_ui, 2), EX_TEXT,
+         ExTr("c_maxpos"), IntegerToString(g_ex_max_pos), EX_TEXT); ry += rh;
+   CxKV2(kx, ry, kw, rh, ExTr("lot"), DoubleToString(g_ex_lot, 2), EX_TEXT,
+         ExTr("c_smart"), g_ex_smart_sl ? ExTr("on") : ExTr("off"), g_ex_smart_sl ? EX_GREEN : CX_LBL); ry += rh;
+   CxKV2(kx, ry, kw, rh, ExTr("sp2l"), InpUseSP2LFilter ? ExTr("on") : ExTr("off"), InpUseSP2LFilter ? EX_GREEN : CX_LBL,
+         ExTr("fvg"), InpUseFVGFilter ? ExTr("on") : ExTr("off"), InpUseFVGFilter ? EX_GREEN : CX_LBL, false);
+   CxTxt(g_cx_pad, cy + hC + gap, CxSpan(6), note, CxNoDot(ExTr("about1")), CX_LBL, 12, false, CxRtl() ? 1 : -1);
+  }
+
+void CxTabAbout(const int y)
+  {
+   int ip = g_cx_pad;
+   int hdr = CxCardHdr();
+   int xa = g_cx_pad, wa = CxSpan(6), hC = g_cx_hCont;
+   CxCard(xa, y, wa, hC, "Molido Expert  " + MOLIDO_EA_VERSION, EX_GOLD);
+   int kx = xa + ip, kw = wa - 2 * ip, ry = y + hdr;
+   int rh = (hC - hdr - g_cx_pad / 2) / 4;
+   CxKV(kx, ry, kw, rh, ExTr("subtitle"), "v" + MOLIDO_EA_VERSION, EX_TEXT); ry += rh;
+   CxKV(kx, ry, kw, rh, ExTr("c_magic"), IntegerToString((int)MOLIDO_MAGIC), EX_TEXT); ry += rh;
+   CxTxt(kx, ry, kw, rh, CxNoDot(ExTr("about1")), EX_AMBER, 12, false, CxRtl() ? 1 : -1);
+   g_dc.FillRectangle(kx, ry + rh - 1, kx + kw - 1, ry + rh - 1, ExArgb(EX_LINE, 150)); ry += rh;
+   CxKV(kx, ry, kw, rh, ExTr("updated"), TimeToString(g_ex_updated, TIME_DATE | TIME_SECONDS), CX_LBL, false);
+  }
+
+void ExDrawCompact(const bool ready, const bool linked, const bool blocked, const bool killed,
+                   const ExpertPerf &perf, const ExpertReport &rep,
+                   const double daily_used, const double dd_used, const int strength)
+  {
+   ExUse(g_cv_h);
+   int W = g_ex_cw, H = g_ex_ch;
+   int pad = g_cx_pad, gap = g_cx_pad;
+   bool rtl = CxRtl();
+   g_cv_h.Erase(ExArgb(EX_NAVY, 255));
+   // title band
+   int hT = g_cx_hTitle;
+   ExGradV(1, 1, W - 2, hT - 1, EX_NAVY2, EX_BLACK, 255, 255, 0);
+   g_dc.FillRectangle(0, 0, W - 1, 1, ExArgb(EX_GOLD, 255));
+   g_dc.FillRectangle(1, hT - 1, W - 2, hT - 1, ExArgb(EX_BLUE, 255));
+   string st = ExTr("ready");
+   color sc = EX_GREEN;
+   bool live = ready;
+   if(blocked) { st = ExTr("real"); sc = EX_CORAL; live = false; }
+   else if(killed) { st = ExTr("killed"); sc = EX_CORAL; live = false; }
+   else if(!ready) { st = ExTr("notready"); sc = EX_AMBER; live = false; }
+   int bs = CP(26);
+   int by = (hT - bs) / 2;
+   int xc = W - pad - bs;
+   int xl = xc - pad / 2 - bs;
+   string lang = "EN";
+   int L = MolidoLangId();
+   if(L == LANG_FA) lang = "FA";
+   else if(L == LANG_AR) lang = "AR";
+   else if(L == LANG_TR) lang = "TR";
+   if(g_ex_collapsed)
+      ExHitAdd("expand", 0, 0, W, hT);
+   int ls = CP(28);
+   CxLogo(pad, (hT - ls) / 2, ls);
+   int tx = pad + ls + pad;
+   string brand = "Molido Expert";
+   ExFont("Segoe UI Bold", 16);
+   int brw = ExTw(brand);
+   CxTxt(tx, 2, brw + 4, hT / 2, brand, EX_GOLD2, 16, true, -1);
+   CxTxt(tx, hT / 2 - 1, W / 2 - tx, hT / 2 - 2, ExTr("subtitle") + "  v" + MOLIDO_EA_VERSION, EX_BLUE, 11, false, -1);
+   int qx = tx + MathMax(brw, ExTw(ExTr("subtitle") + "  v" + MOLIDO_EA_VERSION)) + pad;
+   int qw = xl - pad - qx;
+   if(g_ex_collapsed)
+     {
+      if(qw > CP(60))
+         CxPill(xl - pad - MathMin(qw, CP(150)), (hT - CP(22)) / 2, MathMin(qw, CP(150)), CP(22), sc, st, live);
+     }
+   else if(qw > CP(40))
+     {
+      double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+      CxTxt(qx, 2, qw, hT / 2, _Symbol, EX_GOLD2, 14, true, 1);
+      CxTxt(qx, hT / 2 - 1, qw, hT / 2 - 2, ask > 0.0 ? ExPriceStr(ask) : ExTr("dash"), EX_TEXT, 12, false, 1);
+     }
+   CxBtn("lang", xl, by, bs, bs, lang, EX_CARD, EX_NAVY, EX_GOLD2, false, 12);
+   CxBtn("collapse", xc, by, bs, bs, (g_ex_collapsed ? "+" : "-"), EX_CARD, EX_NAVY, EX_GOLD2, false, 15);
+   g_dc.Rectangle(0, 0, W - 1, H - 1, ExArgb(EX_LINE, 255));
+   if(g_ex_collapsed)
+      return;
+
+   int y = hT + gap;
+   // status row: two equal cells
+   int hS = g_cx_hStat;
+   CxPill(CxX(0, 3, true), y, CxSpan(3), hS, sc, st, live);
+   string lk = ExTr("core") + "  " + (linked ? ExTr("online") : ExTr("offline"));
+   CxPill(CxX(3, 3, true), y, CxSpan(3), hS, linked ? EX_GREEN : EX_CORAL, lk, linked);
+   y += hS + gap;
+   // timeframe row: 9 equal buttons
+   string labs[9] = {"M1", "M5", "M15", "M30", "H1", "H4", "D1", "W1", "MN"};
+   ENUM_TIMEFRAMES tfs[9] = {PERIOD_M1, PERIOD_M5, PERIOD_M15, PERIOD_M30, PERIOD_H1, PERIOD_H4, PERIOD_D1, PERIOD_W1, PERIOD_MN1};
+   ENUM_TIMEFRAMES cur = (ENUM_TIMEFRAMES)Period();
+   int hTf = g_cx_hTf;
+   for(int i = 0; i < 9; i++)
+     {
+      bool on = (cur == tfs[i]);
+      CxBtn("tf" + labs[i], pad + i * (g_cx_tfw + gap), y, g_cx_tfw, hTf, labs[i],
+            on ? EX_BLUE : EX_CARD, EX_NAVY, on ? EX_GOLD2 : EX_TEXT, false, 12);
+     }
+   CxHair(y + hTf + gap / 2);
+   y += hTf + gap;
+   // trade row: BUY | SELL (equal)
+   int hB = g_cx_hBs;
+   bool fa = rtl;
+   CxBtn("buy", pad, y, CxSpan(3), hB, fa ? ExTr("buy") + "  BUY" : "BUY", EX_GREEN, EX_GREEN2, EX_TEXT, false, 15);
+   CxBtn("sell", pad + CxSpan(3) + gap, y, CxSpan(3), hB, fa ? ExTr("sell") + "  SELL" : "SELL", EX_CORAL, EX_RED, EX_TEXT, true, 15);
+   y += hB + gap;
+   // steppers: lot | SL | TP
+   int hP = g_cx_hStep;
+   CxStepper("lot", CxX(0, 2, true), y, CxSpan(2), hP, ExTr("lot"), DoubleToString(g_ex_lot, 2));
+   CxStepper("sl",  CxX(2, 2, true), y, CxSpan(2), hP, ExTr("c_sl"), ExSlPreview());
+   CxStepper("tp",  CxX(4, 2, true), y, CxSpan(2), hP, ExTr("c_tp"), ExTpPreview());
+   y += hP + gap;
+   // actions: close | close all | kill
+   int hA = g_cx_hAct;
+   CxBtn("close", CxX(0, 2, true), y, CxSpan(2), hA, ExTr("close"), EX_CARD, EX_NAVY2, EX_TEXT, false, 13);
+   CxBtn("closeall", CxX(2, 2, true), y, CxSpan(2), hA, ExTr("closeall"), EX_CARD, EX_NAVY2, EX_TEXT, false, 13);
+   CxBtn("kill", CxX(4, 2, true), y, CxSpan(2), hA, ExTr("kill"), EX_CORAL, EX_RED, EX_TEXT, true, 13);
+   CxHair(y + hA + gap / 2);
+   y += hA + gap;
+   // tabs: 6 equal
+   int hTb = g_cx_hTab;
+   string tk[6] = {"tab0", "tab1", "tab2", "tab3", "tab4", "tab5"};
+   for(int i = 0; i < 6; i++)
+     {
+      bool on = (g_ex_tab == i);
+      CxBtn("tab" + IntegerToString(i), CxX(i, 1, true), y, g_cx_colw, hTb, ExTr(tk[i]),
+            on ? EX_BLUE : EX_CARD, EX_NAVY, on ? EX_GOLD2 : CX_LBL, false, 12);
+     }
+   CxHair(y + hTb + gap / 2);
+   y += hTb + gap;
+   // tab content (fixed height)
+   if(g_ex_tab == 0)      CxTabTrade(y, perf, rep, daily_used, dd_used, killed, blocked);
+   else if(g_ex_tab == 1) CxTabHistory(y, perf, rep);
+   else if(g_ex_tab == 2) CxTabSignals(y, strength, linked);
+   else if(g_ex_tab == 3) CxTabReports(y, perf, rep, daily_used, dd_used, killed, blocked);
+   else if(g_ex_tab == 4) CxTabSettings(y);
+   else                   CxTabAbout(y);
+  }
+
 void ExMarkSync()
   {
    int total = ObjectsTotal(0, 0, -1);
@@ -1989,6 +2653,18 @@ void MolidoDashRedraw()
       return;
    g_ex_sig = sig;
 
+   if(!ExIsFullUi())
+     {
+      ExHitsClear();
+      ExSetOrigin(0, 0);
+      ExDrawCompact(ea_on, linked, blocked, killed, perf, rep, daily_used, dd_used, strength);
+      g_cv_h.Update();
+      ExMarkSync();
+      ChartRedraw(0);
+      ExCapture();
+      return;
+     }
+
    ExHitsClear();
    int mid_y = g_ly_hy + g_ly_hh;
    int bot_y = mid_y + g_ly_mid;
@@ -2111,8 +2787,8 @@ void ExDoAction(const string idb)
    if(idb == "closeall"){ ExpertCloseAll();       g_ex_sig = ""; MolidoDashRedraw(); return; }
    if(idb == "sc") { StratSet("scalper", !StratUseScalper()); g_ex_sig = ""; MolidoDashRedraw(); return; }
    if(idb == "tr") { StratSet("trend", !StratUseTrend()); g_ex_sig = ""; MolidoDashRedraw(); return; }
-   if(idb == "rk" || idb == "sm")
-     { g_ex_last_msg = ExTr("impl_no"); g_ex_sig = ""; MolidoDashRedraw(); return; }
+   if(idb == "rk") { StratSetRocket(!StratUseRocket()); g_ex_sig = ""; MolidoDashRedraw(); return; }
+   if(idb == "sm") { StratSetSmc(!StratUseSmc()); g_ex_sig = ""; MolidoDashRedraw(); return; }
    if(StringFind(idb, "tab") == 0)
      {
       g_ex_tab = (int)StringToInteger(StringSubstr(idb, 3));

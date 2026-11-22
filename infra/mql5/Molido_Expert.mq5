@@ -71,5 +71,5 @@ enum ENUM_DASH_UI_SIZE
   };
 input group "Expert dashboard"
 input ENUM_DASH_UI_SIZE DashboardUiSize = DASH_UI_COMPACT; // Compact / Normal / Full
-input double            DashboardScale  = 0.60;            // Scale (0.40-1.60)
+input double            DashboardScale  = 1.60;            // Scale (0.40-1.60)
 #include "MolidoRuntime.mqh"
