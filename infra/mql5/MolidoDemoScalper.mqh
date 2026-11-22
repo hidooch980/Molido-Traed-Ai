@@ -1800,7 +1800,7 @@ void DemoScalperOnTick()
    if(!AllowTrading)
       return;
 #ifdef MOLIDO_EXPERT_UI
-   if(ExpertStopNew() || !ExpertAutoOn() || !ExpertInstanceMayTrade()) return;
+   if(ExpertStopNew() || !ExpertAutoOn() || !ExpertInstanceMayTrade())
       return;
 #endif
    if(!DemoAccountOk())

@@ -129,3 +129,7 @@ Shared defaults (`MaxLots` 2.00, `UsePartialTP`/`UseTrailing`/`UseBreakEven` tru
 - **Impact:** Expert only; no change to default live behaviour until the inputs are switched on
 - **Test:** compile 0 errors; backtest variant with both filters on if feasible
 - **Rollback:** leave both inputs false, or drop the include hook
+
+## C14 - hotfix: scalper never traded in the first 2.30 build (22 Nov 2026)
+
+A stray `return;` after the single-instance gate in `DemoScalperOnTick` (under `MOLIDO_EXPERT_UI`) made the Expert return before any entry logic. Found because 12-month tester runs showed 0 trades. Removed; the gate is now a single `if(...) return;`. Rebuilt ex5 501474 bytes, 0 errors. Live demo 68531270 restarted on the fixed build. Earlier 2.30 ex5 (463110 bytes) must not be used.
