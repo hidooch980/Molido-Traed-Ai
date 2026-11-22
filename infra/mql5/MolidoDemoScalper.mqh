@@ -72,6 +72,8 @@ bool ProfileTargetReached();
 double ProfileProfitPct(double &start_eq);
 double PropClampedRiskPct();
 bool DemoSmartAllowEntry(const string symbol, const string side, string &why);
+int  SmartCooldownLeftSec();
+void DemoSmartRefresh(const string symbol);
 void DemoManagePositions();
 bool DemoProtectAllowEntry(const string symbol, const string side, string &why);
 void DemoProtectOnTick();
@@ -198,6 +200,16 @@ void MolidoStratInit()
       g_rt_auto = (GlobalVariableGet("Molido.Strat.Auto") > 0.5);
    if(GlobalVariableCheck("Molido.Strat.Fibo"))
       g_rt_fibo = (GlobalVariableGet("Molido.Strat.Fibo") > 0.5);
+#ifdef MOLIDO_EXPERT_UI
+   SmcStratInit();      // 2.31 Smart Money toggle (input + persisted GV)
+   RocketStratInit();   // 2.31 Rocket Hunter toggle
+   if(InpSmcRocketOnly) // variant isolation (tester): only SMC/Rocket
+     {
+      g_rt_scalper = false;
+      g_rt_trend   = false;
+      g_rt_fibo    = false;
+     }
+#endif
    //--- Profile applies the strategy stack for Master-style use:
    //--- PROP keeps news trading off (avoid-only) even if the toggle is later re-enabled
    //--- via Advanced inputs; the dashboard can still turn legs on/off.
@@ -1707,13 +1719,29 @@ void DemoEvaluateSymbol(const string raw_name)
    string side, why;
    double entry, sl, tp, spread, atr;
    bool got = false;
+#ifdef MOLIDO_EXPERT_UI
+   //--- 2.31 additive: Smart Money and Rocket Hunter candidates (default off);
+   //--- they pass the same Smart/Protect/Risk Brain/Expert policy gates below.
+   bool mx_sig = false;
+   if(StratUseSmc())
+      got = SmcSignal(symbol, side, entry, sl, tp, spread, atr, why);
+   if(!got && StratUseRocket())
+      got = RocketSignal(symbol, side, entry, sl, tp, spread, atr, why);
+   mx_sig = got;
+   if(!got && StratUseTrend())
+#else
    if(StratUseTrend())
+#endif
       got = DemoTrendSignal(symbol, side, entry, sl, tp, spread, atr, why);
    if(!got && StratUseFibo())
       got = DemoFiboSignal(symbol, side, entry, sl, tp, spread, atr, why);
    if(!got && StratUseScalper())
       got = DemoSignal(symbol, side, entry, sl, tp, spread, atr, why);
+#ifdef MOLIDO_EXPERT_UI
+   if(!got && !StratUseTrend() && !StratUseFibo() && !StratUseScalper() && !StratUseSmc() && !StratUseRocket())
+#else
    if(!got && !StratUseTrend() && !StratUseFibo() && !StratUseScalper())
+#endif
       why = "no entry strategy enabled";
    if(!got)
      {
@@ -1721,6 +1749,22 @@ void DemoEvaluateSymbol(const string raw_name)
       return;
      }
 
+#ifdef MOLIDO_EXPERT_UI
+   //--- SMC/Rocket carry their own structure/momentum rules, so the scalper's
+   //--- session/ADX/ATR-percentile/M15-H1/consensus quality gate is optional for
+   //--- them (InpMxUseScalperFilters). The loss cooldown always applies, and so do
+   //--- Protect, Risk Brain review and Expert policy below.
+   if(mx_sig && !InpMxUseScalperFilters)
+     {
+      DemoSmartRefresh(symbol);
+      if(SmartCooldownLeftSec() > 0)
+        {
+         DemoLog(symbol, side, DEMO_BLOCK, "cooldown after loss", 0, entry, sl, tp, spread, atr, 0, 0, 0);
+         return;
+        }
+     }
+   else
+#endif
    if(!DemoSmartAllowEntry(symbol, side, why))
      {
       DemoLog(symbol, side, DEMO_BLOCK, why, 0, entry, sl, tp, spread, atr, 0, 0, 0);
