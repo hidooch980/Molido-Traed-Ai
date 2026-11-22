@@ -62,4 +62,14 @@ input int    ExpertSafeModeCooldownHours= 24;    // also clear this many hours a
 input group "Expert 2.30 V2 confirmation (optional, default off)"
 input bool   InpUseSP2LFilter           = false; // confirm with SP2L structure (closed bars)
 input bool   InpUseFVGFilter            = false; // confirm with unmitigated FVG reaction
+//--- Dashboard size only. These do not change trading logic.
+enum ENUM_DASH_UI_SIZE
+  {
+   DASH_UI_COMPACT = 0, // Compact corner panel (~28% width)
+   DASH_UI_NORMAL  = 1, // Medium corner panel
+   DASH_UI_FULL    = 2  // Full-frame layout (previous default)
+  };
+input group "Expert dashboard"
+input ENUM_DASH_UI_SIZE DashboardUiSize = DASH_UI_COMPACT; // Compact / Normal / Full
+input double            DashboardScale  = 0.60;            // Scale (0.40-1.60)
 #include "MolidoRuntime.mqh"
