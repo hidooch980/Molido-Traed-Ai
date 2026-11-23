@@ -144,4 +144,31 @@ void CoordUnlock()
       GlobalVariableDel(COORD_LOCK);
   }
 
+
+//--- Common\\Files names shared by every terminal on the same Windows
+//--- profile. Two live demos were overwriting molido_account.json,
+//--- heartbeat, daily_summary and the scalper logs (error 5004). The
+//--- account login is inserted before the final extension; callers may
+//--- still try the unsuffixed name for older readers.
+string MolidoCommonFileName(const string base)
+  {
+   string tag = "_" + IntegerToString((long)AccountInfoInteger(ACCOUNT_LOGIN));
+   int n = StringLen(base);
+   int dot = -1;
+   for(int i = n - 1; i >= 0; i--)
+     {
+      ushort c = StringGetCharacter(base, i);
+      if(c == '\\' || c == '/')
+         break;
+      if(c == '.')
+        {
+         dot = i;
+         break;
+        }
+     }
+   if(dot <= 0)
+      return(base + tag);
+   return(StringSubstr(base, 0, dot) + tag + StringSubstr(base, dot));
+  }
+
 #endif

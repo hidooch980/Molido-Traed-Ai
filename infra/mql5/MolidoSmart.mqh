@@ -214,7 +214,10 @@ bool SmartInSession(string &label)
 #endif
    MqlDateTime dt;
    TimeToStruct(gmt, dt);
-   if(dt.day_of_week == 0 || dt.day_of_week == 6)
+   //--- Trading week starts Sunday 22:00 UTC. Saturday stays closed.
+   //--- Sunday before 22:00 UTC is still the weekend. After the open,
+   //--- London/NY rules (and therefore Asian off-session) are unchanged.
+   if(dt.day_of_week == 6 || (dt.day_of_week == 0 && dt.hour < 22))
      {
       label = "weekend";
       return(false);

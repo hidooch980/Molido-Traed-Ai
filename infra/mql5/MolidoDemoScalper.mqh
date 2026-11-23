@@ -858,9 +858,10 @@ void DemoLog(const string symbol, const string side, const ENUM_DEMO_VERDICT ver
    line += "\"balance\":" + DoubleToString(AccountInfoDouble(ACCOUNT_BALANCE), 2);
    line += "}";
 
-   int handle = FileOpen(DEMO_LOG_FILE, FILE_READ | FILE_WRITE | FILE_TXT | FILE_ANSI | FILE_COMMON);
+   string log_file = MolidoCommonFileName(DEMO_LOG_FILE);
+   int handle = FileOpen(log_file, FILE_READ | FILE_WRITE | FILE_TXT | FILE_ANSI | FILE_COMMON);
    if(handle == INVALID_HANDLE)
-      handle = FileOpen(DEMO_LOG_FILE, FILE_WRITE | FILE_TXT | FILE_ANSI | FILE_COMMON);
+      handle = FileOpen(log_file, FILE_WRITE | FILE_TXT | FILE_ANSI | FILE_COMMON);
    if(handle == INVALID_HANDLE)
      {
       Print("MolidoScalper: cannot write log (", GetLastError(), ")");
@@ -872,7 +873,7 @@ void DemoLog(const string symbol, const string side, const ENUM_DEMO_VERDICT ver
       FileClose(handle);
      }
 
-   int last = FileOpen(DEMO_LAST_FILE, FILE_WRITE | FILE_TXT | FILE_ANSI | FILE_COMMON);
+   int last = FileOpen(MolidoCommonFileName(DEMO_LAST_FILE), FILE_WRITE | FILE_TXT | FILE_ANSI | FILE_COMMON);
    if(last != INVALID_HANDLE)
      {
       FileWriteString(last, line);
@@ -1514,7 +1515,7 @@ bool DemoScalperOnInit()
          if(!SymbolSelect(g_demo_syms[i], true))
             Print("MolidoScalper: ", g_demo_syms[i], " not offered by this broker (", GetLastError(), ")");
         }
-      Print("MolidoScalper: armed on demo ", DEMO_SCALPER_LOGIN,
+      Print("MolidoScalper: armed on demo ", AccountInfoInteger(ACCOUNT_LOGIN),
             " risk=", DoubleToString(DEMO_RISK_PCT, 2), "% max lots=",
             DoubleToString(DemoEffectiveMaxLots(), 2),
             " daily cap=", DoubleToString(DEMO_DAILY_LOSS_PCT, 2),

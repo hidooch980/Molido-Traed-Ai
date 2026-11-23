@@ -131,6 +131,26 @@ input bool HideUnlistedSymbols = true;
 //--- ScalperKillSwitch, RehearsalMode, AutoUpdateEnabled - have no runtime
 //--- copy, so no remote message can change them.
 #include "MolidoShared.mqh"
+
+void WriteCommonPayload(const string base, const string text, const bool also_legacy)
+  {
+   int handle = FileOpen(MolidoCommonFileName(base), FLAGS);
+   if(handle != INVALID_HANDLE)
+     {
+      FileWriteString(handle, text);
+      FileClose(handle);
+     }
+   if(!also_legacy)
+      return;
+   //--- Best-effort unsuffixed copy for older readers. Skip quietly if
+   //--- the other terminal already has the file open (error 5004).
+   handle = FileOpen(base, FLAGS);
+   if(handle == INVALID_HANDLE)
+      return;
+   FileWriteString(handle, text);
+   FileClose(handle);
+  }
+
 #ifndef MOLIDO_EA_VERSION
 #define MOLIDO_EA_VERSION "1.46"
 #endif
@@ -264,11 +284,7 @@ string AccountJson()
 
 void WriteAccount()
   {
-   int handle = FileOpen("molido_account.json", FLAGS);
-   if(handle == INVALID_HANDLE)
-      return;
-   FileWriteString(handle, AccountJson());
-   FileClose(handle);
+   WriteCommonPayload("molido_account.json", AccountJson(), true);
   }
 
 //+------------------------------------------------------------------+
@@ -478,20 +494,14 @@ void WriteDailySummary()
    json += "\"connected\":" + (TerminalInfoInteger(TERMINAL_CONNECTED) ? "true" : "false") + ",";
    json += "\"link_healthy\":" + (MolidoLinkHealthy() ? "true" : "false");
    json += "}";
-   int handle = FileOpen("molido_daily_summary.json", FLAGS);
-   if(handle == INVALID_HANDLE)
-      return;
-   FileWriteString(handle, json);
-   FileClose(handle);
+   WriteCommonPayload("molido_daily_summary.json", json, true);
   }
 
 void WriteHeartbeat(int cycle)
   {
-   int handle = FileOpen("molido_heartbeat.json", FLAGS);
-   if(handle == INVALID_HANDLE)
-      return;
    string json = "{";
    json += "\"published_at\":\"" + TimeToString(TimeGMT(), TIME_DATE | TIME_SECONDS) + "\",";
+   json += "\"login\":" + IntegerToString(AccountInfoInteger(ACCOUNT_LOGIN)) + ",";
    json += "\"cycle\":" + IntegerToString(cycle) + ",";
    json += "\"connected\":" + (TerminalInfoInteger(TERMINAL_CONNECTED) ? "true" : "false") + ",";
    json += "\"trade_allowed\":" + (TerminalInfoInteger(TERMINAL_TRADE_ALLOWED) ? "true" : "false") + ",";
@@ -500,8 +510,7 @@ void WriteHeartbeat(int cycle)
    json += "\"ea_version\":\"" + MOLIDO_EA_VERSION + "\",";
    json += "\"places_orders\":" + ((AllowTrading && EnableDemoScalper) ? "true" : "false");
    json += "}";
-   FileWriteString(handle, json);
-   FileClose(handle);
+   WriteCommonPayload("molido_heartbeat.json", json, true);
   }
 
 //+------------------------------------------------------------------+
