@@ -3,7 +3,7 @@
 //| Upgrade of Molido_Master: same safety, auto-detect, real block.  |
 //+------------------------------------------------------------------+
 #property copyright   "MolidoTrade AI"
-#property version     "2.31"
+#property version     "2.40"
 #property description "Molido Expert – AI Trading Power. Demo only; real accounts blocked."
 #define MOLIDO_EXPERT_UI
 #define MOLIDO_EA_NAME          "Molido_Expert"
@@ -20,11 +20,11 @@
 #define MOLIDO_DEFAULT_REHEARSAL true
 #define MOLIDO_USE_FIBO         false
 #define MOLIDO_REAL_SUPPORTED   false
-#define MOLIDO_EA_VERSION       "2.31"
+#define MOLIDO_EA_VERSION       "2.40"
 //--- Expert 2.30 safety (demo). These only tighten shared Risk Brain caps.
 input group "Expert 2.30 safety"
 input double ExpertMetalRiskPct         = 0.15;  // XAU/XAG risk % (never above the 0.5% hard cap)
-input bool   ExpertBlockMetalsInLondon  = true;  // block new metal entries in London
+input bool   ExpertBlockMetalsInLondon  = false; // block new metal entries in London (2.40: off, IS+OOS positive config)
 input int    ExpertMetalLondonOpenGMT   = 7;
 input int    ExpertMetalLondonCloseGMT  = 16;
 input double ExpertMaxLossPct           = 0.25;  // per-trade loss cap, % of balance
@@ -39,7 +39,7 @@ input bool   ExpertUseBreakEven         = false;
 input double ExpertMinTpR               = 1.5;   // require TP >= this R
 input bool   ExpertSingleInstance       = true;  // one Molido_Expert per account
 input group "Expert 2.30 quality"
-input bool   ExpertUseTrendFilter       = true;  // only with H1/H4 EMA trend
+input bool   ExpertUseTrendFilter       = false; // only with H1/H4 EMA trend (2.40: off, IS+OOS positive config)
 input int    ExpertTrendFastEma         = 50;
 input int    ExpertTrendSlowEma         = 200;
 input bool   ExpertTrendRequireBoth     = true;  // H1 and H4 must agree

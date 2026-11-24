@@ -11,7 +11,7 @@
 #define MOLIDO_SMC_MQH
 
 input group "Expert 2.31 Smart Money (SMC) - default off"
-input bool            InpUseSmartMoney    = false;        // Smart Money strategy (BOS/CHoCH, OB, sweep, FVG)
+input bool            InpUseSmartMoney    = true;         // 2.40 default ON. Smart Money strategy (BOS/CHoCH, OB, sweep, FVG)
 input ENUM_TIMEFRAMES InpSmcTF            = PERIOD_CURRENT; // SMC entry timeframe (current = chart)
 input ENUM_TIMEFRAMES InpSmcHtf           = PERIOD_H1;    // HTF bias timeframe (swing structure)
 input int             InpSmcSwingK        = 2;            // swing pivot: k closed bars each side
@@ -24,7 +24,7 @@ input double          InpSmcSlBufferAtr   = 0.10;         // SL buffer beyond OB
 input double          InpSmcMinRR         = 2.0;          // minimum R for the liquidity target
 input bool            InpSmcRequireDiscount = true;       // buys only in discount, sells only in premium
 input bool            InpSmcUseFvgZone    = true;         // accept an FVG retest when no OB retest
-input bool            InpSmcRocketOnly    = false;        // variant isolation: run only SMC/Rocket (scalper/trend/fibo off)
+input bool            InpSmcRocketOnly    = true;         // 2.40 default ON. variant isolation: run only SMC/Rocket (scalper/trend/fibo off)
 input bool            InpMxUseScalperFilters = false;     // also apply the scalper session/ADX/ATR%/M15-H1/consensus gate to SMC/Rocket
 
 bool     g_rt_smc        = false;
