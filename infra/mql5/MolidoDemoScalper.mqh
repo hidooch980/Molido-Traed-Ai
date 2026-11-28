@@ -204,11 +204,12 @@ void MolidoStratInit()
    SmcStratInit();      // 2.31 Smart Money toggle (input + persisted GV)
    MdInit();            // 3.0 analysis module toggles
    RocketStratInit();   // 2.31 Rocket Hunter toggle
-   if(InpSmcRocketOnly) // variant isolation (tester): only SMC/Rocket
+   if(InpSmcRocketOnly) // variant isolation: only SMC/Rocket (auto off too, 2.41)
      {
       g_rt_scalper = false;
       g_rt_trend   = false;
       g_rt_fibo    = false;
+      g_rt_auto    = false;
      }
 #endif
    //--- Profile applies the strategy stack for Master-style use:
@@ -224,6 +225,10 @@ bool StratUseFibo()    { return(g_rt_fibo); }
 
 void StratSet(const string which, const bool on)
   {
+#ifdef MOLIDO_EXPERT_UI
+   if(InpSmcRocketOnly && on && (which == "scalper" || which == "trend" || which == "fibo" || which == "auto"))
+      return; // 2.41: isolation stays on even if a dashboard toggle or stale GV tries to re-enable
+#endif
    if(which == "scalper") g_rt_scalper = on;
    if(which == "news")    g_rt_news = on;
    if(which == "trend")   g_rt_trend = on;
@@ -1709,6 +1714,14 @@ bool DemoSend(const string symbol, const string side, const double lots,
   }
 
 //+------------------------------------------------------------------+
+void SmcSignalBlocked(const string symbol, const string side, const string why)
+  {
+#ifdef MOLIDO_EXPERT_UI
+   if(g_mx_last_strat == "smc")
+      Print("MolidoSMC: SMC signal blocked by ", why, " ", side, " ", symbol);
+#endif
+  }
+
 void DemoEvaluateSymbol(const string raw_name)
   {
    string symbol;
@@ -1744,6 +1757,7 @@ void DemoEvaluateSymbol(const string raw_name)
    //--- 3.0 decision layer / analysis modules (each defaults off); Risk Brain runs after
    if(got && !MdDecide(symbol, side, g_demo_syms, g_demo_n, why))
      {
+      SmcSignalBlocked(symbol, side, why);
       DemoLog(symbol, side, DEMO_BLOCK, why, 0, entry, sl, tp, spread, atr, 0, 0, 0);
       return;
      }
@@ -1779,6 +1793,7 @@ void DemoEvaluateSymbol(const string raw_name)
       DemoSmartRefresh(symbol);
       if(SmartCooldownLeftSec() > 0)
         {
+         SmcSignalBlocked(symbol, side, "cooldown after loss");
          DemoLog(symbol, side, DEMO_BLOCK, "cooldown after loss", 0, entry, sl, tp, spread, atr, 0, 0, 0);
          return;
         }
@@ -1787,11 +1802,13 @@ void DemoEvaluateSymbol(const string raw_name)
 #endif
    if(!DemoSmartAllowEntry(symbol, side, why))
      {
+      SmcSignalBlocked(symbol, side, why);
       DemoLog(symbol, side, DEMO_BLOCK, why, 0, entry, sl, tp, spread, atr, 0, 0, 0);
       return;
      }
    if(!DemoProtectAllowEntry(symbol, side, why))
      {
+      SmcSignalBlocked(symbol, side, why);
       DemoLog(symbol, side, DEMO_BLOCK, why, 0, entry, sl, tp, spread, atr, 0, 0, 0);
       return;
      }
@@ -1802,6 +1819,7 @@ void DemoEvaluateSymbol(const string raw_name)
                                           risk_pct, size_factor, daily_pnl_pct, reasons);
    if(verdict == DEMO_BLOCK)
      {
+      SmcSignalBlocked(symbol, side, reasons);
       DemoLog(symbol, side, verdict, reasons, 0, entry, sl, tp, spread, atr,
               daily_pnl_pct, risk_pct, size_factor);
       return;
@@ -1820,12 +1838,14 @@ void DemoEvaluateSymbol(const string raw_name)
                               tick_size, tick_value, lot_step, min_lot, max_lot);
    if(lots <= 0.0)
      {
+      SmcSignalBlocked(symbol, side, "size failed (missing tick value or budget too small)");
       DemoLog(symbol, side, DEMO_BLOCK, "size failed (missing tick value or budget too small)",
               0, entry, sl, tp, spread, atr, daily_pnl_pct, risk_pct, size_factor);
       return;
      }
    if(lots > DemoEffectiveMaxLots() + 1e-12)
      {
+      SmcSignalBlocked(symbol, side, "size exceeds hard max lots");
       DemoLog(symbol, side, DEMO_BLOCK, "size exceeds hard max lots",
               lots, entry, sl, tp, spread, atr, daily_pnl_pct, risk_pct, size_factor);
       return;
@@ -1834,6 +1854,7 @@ void DemoEvaluateSymbol(const string raw_name)
    //--- Re-check the account and kill switch immediately before the send.
    if(!DemoTradingAllowed() || !DemoTerminalTradable())
      {
+      SmcSignalBlocked(symbol, side, "pre-send gate refused (AllowTrading, account, kill or AutoTrading)");
       DemoLog(symbol, side, DEMO_BLOCK, "pre-send gate refused (AllowTrading, account, kill or AutoTrading)",
               lots, entry, sl, tp, spread, atr, daily_pnl_pct, risk_pct, size_factor);
       return;
@@ -1844,8 +1865,11 @@ void DemoEvaluateSymbol(const string raw_name)
 
    int digits = (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS);
    if(!DemoSend(symbol, side, lots, NormalizeDouble(sl, digits), NormalizeDouble(tp, digits)))
+     {
+      SmcSignalBlocked(symbol, side, "OrderSend failed or was rejected by the broker");
       DemoLog(symbol, side, DEMO_BLOCK, "OrderSend failed or was rejected by the broker",
               lots, entry, sl, tp, spread, atr, daily_pnl_pct, risk_pct, size_factor);
+     }
   }
 
 //+------------------------------------------------------------------+

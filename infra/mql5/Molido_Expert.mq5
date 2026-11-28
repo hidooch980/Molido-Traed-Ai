@@ -3,7 +3,7 @@
 //| Upgrade of Molido_Master: same safety, auto-detect, real block.  |
 //+------------------------------------------------------------------+
 #property copyright   "MolidoTrade AI"
-#property version     "2.40"
+#property version     "2.41"
 #property description "Molido Expert – AI Trading Power. Demo only; real accounts blocked."
 #define MOLIDO_EXPERT_UI
 #define MOLIDO_EA_NAME          "Molido_Expert"
@@ -20,7 +20,7 @@
 #define MOLIDO_DEFAULT_REHEARSAL true
 #define MOLIDO_USE_FIBO         false
 #define MOLIDO_REAL_SUPPORTED   false
-#define MOLIDO_EA_VERSION       "2.40"
+#define MOLIDO_EA_VERSION       "2.41"
 //--- Expert 2.30 safety (demo). These only tighten shared Risk Brain caps.
 input group "Expert 2.30 safety"
 input double ExpertMetalRiskPct         = 0.15;  // XAU/XAG risk % (never above the 0.5% hard cap)

@@ -59,8 +59,13 @@ void MdInit()
    g_md_sent   = MdGv("Molido.Mod.Sentiment", InpUseSentiment);
    g_md_opp    = MdGv("Molido.Mod.Opportunity", InpUseOpportunity);
    g_md_dec    = MdGv("Molido.Mod.Decision", InpUseDecisionLayer);
-   g_md_sp2l   = MdGv("Molido.Mod.SP2L", InpUseSP2LFilter);
-   g_md_fvg    = MdGv("Molido.Mod.FVG", InpUseFVGFilter);
+   // 2.41: a leftover GV must not turn SP2L/FVG on when the input is false
+   g_md_sp2l   = (InpUseSP2LFilter ? MdGv("Molido.Mod.SP2L", true) : false);
+   g_md_fvg    = (InpUseFVGFilter ? MdGv("Molido.Mod.FVG", true) : false);
+   if(!InpUseSP2LFilter && GlobalVariableCheck("Molido.Mod.SP2L"))
+      GlobalVariableSet("Molido.Mod.SP2L", 0.0);
+   if(!InpUseFVGFilter && GlobalVariableCheck("Molido.Mod.FVG"))
+      GlobalVariableSet("Molido.Mod.FVG", 0.0);
   }
 bool MdUseMarket()   { return(g_md_market); }
 bool MdUseNews()     { return(g_md_news); }
@@ -76,8 +81,16 @@ void MdToggle(const string id)
    if(id == "sent")    { g_md_sent = !g_md_sent;     MdSetGv("Molido.Mod.Sentiment", g_md_sent); }
    if(id == "opp")     { g_md_opp = !g_md_opp;       MdSetGv("Molido.Mod.Opportunity", g_md_opp); }
    if(id == "dec")     { g_md_dec = !g_md_dec;       MdSetGv("Molido.Mod.Decision", g_md_dec); }
-   if(id == "sp2l")    { g_md_sp2l = !g_md_sp2l;     MdSetGv("Molido.Mod.SP2L", g_md_sp2l); }
-   if(id == "fvg")     { g_md_fvg = !g_md_fvg;       MdSetGv("Molido.Mod.FVG", g_md_fvg); }
+   if(id == "sp2l")
+     {
+      if(!InpUseSP2LFilter) { g_md_sp2l = false; MdSetGv("Molido.Mod.SP2L", false); }
+      else { g_md_sp2l = !g_md_sp2l; MdSetGv("Molido.Mod.SP2L", g_md_sp2l); }
+     }
+   if(id == "fvg")
+     {
+      if(!InpUseFVGFilter) { g_md_fvg = false; MdSetGv("Molido.Mod.FVG", false); }
+      else { g_md_fvg = !g_md_fvg; MdSetGv("Molido.Mod.FVG", g_md_fvg); }
+     }
   }
 //--- dashboard analysis buttons ag0..ag7 -> module id ("" = display only)
 string MdAgModule(const int i)
